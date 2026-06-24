@@ -45,6 +45,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   type ApiError,
   type AiUsageSummaryView,
@@ -432,22 +433,16 @@ export function WorkspaceShell() {
       />
 
       <section className="min-w-0 border-x border-[var(--border)] bg-[var(--panel-soft)]">
-        <RoleDashboard
-          role={role}
-          user={user}
-          config={config}
-          dashboard={dashboard}
-          loading={loading}
-          error={dashboardError}
-          onSelectProject={setSelectedProjectId}
-          onRefresh={() => void refreshDashboard()}
-        />
         <WorkspaceCenter
           project={selectedProject}
           projects={projects}
+          role={role}
           user={user}
           loading={loading}
           error={error}
+          config={config}
+          dashboard={dashboard}
+          dashboardError={dashboardError}
           assets={workspaceData?.assets ?? []}
           assetAnalyses={workspaceData?.assetAnalyses ?? []}
           creativeDirections={workspaceData?.creativeDirections ?? []}
@@ -472,6 +467,8 @@ export function WorkspaceShell() {
             if (!selectedProject) return;
             await Promise.all([refreshWorkspace(selectedProject.id), refreshDashboard(), refreshGovernance()]);
           }}
+          onDashboardRefresh={() => void refreshDashboard()}
+          onSelectProject={setSelectedProjectId}
         />
       </section>
 
@@ -959,9 +956,13 @@ function dashboardBadgeVariant(tone?: string) {
 function WorkspaceCenter({
   project,
   projects,
+  role,
   user,
   loading,
   error,
+  config,
+  dashboard,
+  dashboardError,
   assets,
   assetAnalyses,
   creativeDirections,
@@ -983,12 +984,18 @@ function WorkspaceCenter({
   onGovernanceRefresh,
   onProjectUpdated,
   onWorkspaceRefresh,
+  onDashboardRefresh,
+  onSelectProject,
 }: {
   project: ProjectSummary | null;
   projects: ProjectSummary[];
+  role: Role;
   user: CurrentUser;
   loading: boolean;
   error: ApiError | null;
+  config: ConfigStatus | null;
+  dashboard: RoleDashboardView | null;
+  dashboardError: ApiError | null;
   assets: AssetView[];
   assetAnalyses: AssetAnalysisView[];
   creativeDirections: CreativeDirectionView[];
@@ -1010,13 +1017,41 @@ function WorkspaceCenter({
   onGovernanceRefresh: () => Promise<void>;
   onProjectUpdated: (project: ProjectSummary) => Promise<void>;
   onWorkspaceRefresh: () => Promise<void>;
+  onDashboardRefresh: () => void;
+  onSelectProject: (projectId: string) => void;
 }) {
   if (loading) {
     return <CenterState icon={<Loader2 className="animate-spin" size={22} />} title="正在恢复工作台" detail="系统正在从后端读取项目、阶段和产物状态。" />;
   }
 
   if (!project) {
-    return <CenterState icon={<ClipboardList size={22} />} title="选择或创建一个项目" detail="项目会从数据库读取；这里不会显示静态演示项目。" />;
+    return (
+      <div>
+        <RoleDashboard
+          role={role}
+          user={user}
+          config={config}
+          dashboard={dashboard}
+          loading={loading}
+          error={dashboardError}
+          onSelectProject={onSelectProject}
+          onRefresh={onDashboardRefresh}
+        />
+        <div className="p-5 pt-0">
+          <Card size="sm" className="rounded-md border-[var(--border)] bg-white">
+            <CardContent className="flex items-start gap-3">
+              <ClipboardList className="mt-0.5 shrink-0 text-[var(--muted-foreground)]" size={18} />
+              <div className="min-w-0">
+                <p className="text-sm font-medium">从左侧选择一个项目进入工作流</p>
+                <p className="mt-1 text-xs leading-5 text-[var(--muted-foreground)]">
+                  当前先展示角色概览；选中项目后，中间栏会切到项目标题、阶段导航和当前阶段工作区。
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -1044,75 +1079,95 @@ function WorkspaceCenter({
         </CardContent>
       </Card>
 
-      <StageNavigator currentStage={project.currentStage} stageStates={stageStates} />
+      <Tabs defaultValue="workflow" className="mt-5">
+        <TabsList variant="line" className="w-full justify-start border-b border-[var(--border)]">
+          <TabsTrigger value="workflow" className="max-w-32 flex-none px-3">工作流</TabsTrigger>
+          <TabsTrigger value="overview" className="max-w-32 flex-none px-3">概览</TabsTrigger>
+        </TabsList>
+        <TabsContent value="workflow" className="mt-4">
+          <StageNavigator currentStage={project.currentStage} stageStates={stageStates} />
 
-      <div className="mt-5 grid gap-4 lg:grid-cols-2">
-        <ProjectBasicsCard project={project} user={user} onProjectUpdated={onProjectUpdated} />
-        {user.role === "admin" && <ProjectMembersCard project={project} />}
-        {user.role === "admin" && <ScoringRulesCard />}
-        {user.role === "admin" && (
-          <AdminGovernanceCard governance={governance} error={governanceError} onRefresh={onGovernanceRefresh} />
-        )}
-        {user.role === "admin" && <AuditSearchCard projects={projects} />}
-        <AssetCenter project={project} assets={assets} assetAnalyses={assetAnalyses} onRefresh={onWorkspaceRefresh} />
-        <WorkCard
-          icon={<FileText size={18} />}
-          title="需求整理工作区"
-          detail="支持文本、PDF、Word、图片、视频和飞书链接。真实上传与解析会通过 OSS、数据库和 AI 任务记录完成。"
-          items={["标准需求模板", "样片标签", "待确认问题"]}
-        />
-        <RequirementStructuringCard project={project} artifacts={artifacts} onRefresh={onWorkspaceRefresh} />
-        <AssetAnalysisResults analyses={assetAnalyses} artifacts={artifacts} />
-        <TechnicalFeasibilityReviewCard project={project} user={user} stageStates={stageStates} onRefresh={onWorkspaceRefresh} />
-        <CreativeDirectionsCard
-          project={project}
-          user={user}
-          directions={creativeDirections}
-          expansions={creativeExpansions}
-          generatedImages={generatedImages}
-          artifacts={artifacts}
-          onRefresh={onWorkspaceRefresh}
-        />
-        <BusinessDocumentDraftCard project={project} user={user} onRefresh={onWorkspaceRefresh} />
-        <ProposalEditorCard
-          project={project}
-          user={user}
-          proposal={proposal}
-          snapshots={proposalSnapshots}
-          onRefresh={onWorkspaceRefresh}
-        />
-        <QuoteEditorCard
-          project={project}
-          user={user}
-          quote={quote}
-          snapshots={quoteSnapshots}
-          onRefresh={onWorkspaceRefresh}
-        />
-        <ContractEditorCard
-          project={project}
-          user={user}
-          assets={assets}
-          proposal={proposal}
-          quote={quote}
-          contract={contract}
-          snapshots={contractSnapshots}
-          exports={contractExports}
-          onRefresh={onWorkspaceRefresh}
-        />
-        <FeishuDeliveryCard
-          project={project}
-          user={user}
-          proposal={proposal}
-          quote={quote}
-          contract={contract}
-          proposalSnapshots={proposalSnapshots}
-          quoteSnapshots={quoteSnapshots}
-          contractSnapshots={contractSnapshots}
-          deliveries={feishuDeliveries}
-          receivers={feishuReceivers}
-          onRefresh={onWorkspaceRefresh}
-        />
-      </div>
+          <div className="mt-5 grid gap-4 lg:grid-cols-2">
+            <ProjectBasicsCard project={project} user={user} onProjectUpdated={onProjectUpdated} />
+            {user.role === "admin" && <ProjectMembersCard project={project} />}
+            {user.role === "admin" && <ScoringRulesCard />}
+            {user.role === "admin" && (
+              <AdminGovernanceCard governance={governance} error={governanceError} onRefresh={onGovernanceRefresh} />
+            )}
+            {user.role === "admin" && <AuditSearchCard projects={projects} />}
+            <AssetCenter project={project} assets={assets} assetAnalyses={assetAnalyses} onRefresh={onWorkspaceRefresh} />
+            <WorkCard
+              icon={<FileText size={18} />}
+              title="需求整理工作区"
+              detail="支持文本、PDF、Word、图片、视频和飞书链接。真实上传与解析会通过 OSS、数据库和 AI 任务记录完成。"
+              items={["标准需求模板", "样片标签", "待确认问题"]}
+            />
+            <RequirementStructuringCard project={project} artifacts={artifacts} onRefresh={onWorkspaceRefresh} />
+            <AssetAnalysisResults analyses={assetAnalyses} artifacts={artifacts} />
+            <TechnicalFeasibilityReviewCard project={project} user={user} stageStates={stageStates} onRefresh={onWorkspaceRefresh} />
+            <CreativeDirectionsCard
+              project={project}
+              user={user}
+              directions={creativeDirections}
+              expansions={creativeExpansions}
+              generatedImages={generatedImages}
+              artifacts={artifacts}
+              onRefresh={onWorkspaceRefresh}
+            />
+            <BusinessDocumentDraftCard project={project} user={user} onRefresh={onWorkspaceRefresh} />
+            <ProposalEditorCard
+              project={project}
+              user={user}
+              proposal={proposal}
+              snapshots={proposalSnapshots}
+              onRefresh={onWorkspaceRefresh}
+            />
+            <QuoteEditorCard
+              project={project}
+              user={user}
+              quote={quote}
+              snapshots={quoteSnapshots}
+              onRefresh={onWorkspaceRefresh}
+            />
+            <ContractEditorCard
+              project={project}
+              user={user}
+              assets={assets}
+              proposal={proposal}
+              quote={quote}
+              contract={contract}
+              snapshots={contractSnapshots}
+              exports={contractExports}
+              onRefresh={onWorkspaceRefresh}
+            />
+            <FeishuDeliveryCard
+              project={project}
+              user={user}
+              proposal={proposal}
+              quote={quote}
+              contract={contract}
+              proposalSnapshots={proposalSnapshots}
+              quoteSnapshots={quoteSnapshots}
+              contractSnapshots={contractSnapshots}
+              deliveries={feishuDeliveries}
+              receivers={feishuReceivers}
+              onRefresh={onWorkspaceRefresh}
+            />
+          </div>
+        </TabsContent>
+        <TabsContent value="overview" className="mt-4 overflow-hidden rounded-md border border-[var(--border)] bg-white">
+          <RoleDashboard
+            role={role}
+            user={user}
+            config={config}
+            dashboard={dashboard}
+            loading={loading}
+            error={dashboardError}
+            onSelectProject={onSelectProject}
+            onRefresh={onDashboardRefresh}
+          />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
