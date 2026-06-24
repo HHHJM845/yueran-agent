@@ -705,11 +705,11 @@ function RoleDashboard({
   const metricBySectionKey = new Map(cards.map((card) => [dashboardSectionKeyForCard(card.key), card]));
 
   return (
-    <header className="border-b border-[var(--border)] bg-[var(--panel)] p-4">
+    <header className="border-b border-[var(--border)] bg-[var(--panel)] p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-sm text-[var(--muted-foreground)]">角色仪表盘</p>
-          <h2 className="mt-1 text-2xl font-semibold">{roleLabels[role]}</h2>
+          <h2 className="mt-1 text-3xl font-semibold leading-tight">{roleLabels[role]}</h2>
           <p className="mt-2 text-sm text-[var(--muted-foreground)]">当前登录：{user.name}</p>
         </div>
         <button
@@ -930,9 +930,9 @@ function splitDashboardTaskTitle(title: string) {
 }
 
 function dashboardSectionGridClass(sectionCount: number) {
-  if (sectionCount <= 1) return "mt-5 grid gap-3";
-  if (sectionCount === 2) return "mt-5 grid gap-3 xl:grid-cols-2";
-  return "mt-5 grid gap-3 xl:grid-cols-3";
+  if (sectionCount <= 1) return "mt-6 grid gap-4";
+  if (sectionCount === 2) return "mt-6 grid gap-4 xl:grid-cols-2";
+  return "mt-6 grid gap-4 xl:grid-cols-3";
 }
 
 function dashboardSectionKeyForCard(cardKey: string) {
@@ -1081,7 +1081,7 @@ function WorkspaceCenter({
   }
 
   return (
-    <div className="p-5">
+    <div className="p-6">
       {error && (
         <div className="mb-4 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-4 text-sm text-[var(--warning)]">
           {error.message}
@@ -1093,25 +1093,25 @@ function WorkspaceCenter({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <p className="truncate text-sm text-[var(--muted-foreground)]">{project.brandName}</p>
-            <h2 className="mt-1 truncate text-2xl font-semibold">{project.projectName}</h2>
+            <h2 className="mt-1 truncate text-3xl font-semibold leading-tight">{project.projectName}</h2>
             <p className="mt-2 truncate text-sm text-[var(--muted-foreground)]">
               当前阶段：{stageLabels[project.currentStage]} · {statusLabels[project.status]}
             </p>
           </div>
-          <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] px-3 py-2 text-sm text-[var(--muted-foreground)]">
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--panel-soft)] px-3 py-2 text-xs leading-5 text-[var(--muted-foreground)]">
             通过下方需求文本表单创建真实 AI 任务
           </div>
         </div>
         </CardContent>
       </Card>
 
-      <Tabs defaultValue="workflow" className="mt-5">
+      <Tabs defaultValue="workflow" className="mt-6">
         <TabsList variant="line" className="w-full justify-start border-b border-[var(--border)]">
           <TabsTrigger value="workflow" className="max-w-32 flex-none px-3">工作流</TabsTrigger>
           <TabsTrigger value="overview" className="max-w-32 flex-none px-3">概览</TabsTrigger>
         </TabsList>
-        <TabsContent value="workflow" className="mt-4">
-          <div className="sticky top-0 z-20 -mx-5 bg-[var(--panel-soft)] px-5 pb-4">
+        <TabsContent value="workflow" className="mt-5">
+          <div className="sticky top-0 z-20 -mx-6 bg-[var(--panel-soft)] px-6 pb-5">
             <StageNavigator
               currentStage={project.currentStage}
               selectedStage={selectedStage}
@@ -1122,7 +1122,7 @@ function WorkspaceCenter({
 
           <div className="mt-1">
             <StagePanel stage="brand_requirement_intake" selectedStage={selectedStage}>
-              <div className="grid gap-4 lg:grid-cols-2">
+              <div className="grid gap-5 lg:grid-cols-2">
                 <ProjectBasicsCard project={project} user={user} onProjectUpdated={onProjectUpdated} />
                 <AssetCenter project={project} assets={assets} assetAnalyses={assetAnalyses} onRefresh={onWorkspaceRefresh} />
                 <WorkCard
@@ -1135,13 +1135,13 @@ function WorkspaceCenter({
               </div>
             </StagePanel>
             <StagePanel stage="technical_feasibility" selectedStage={selectedStage}>
-              <div className="grid gap-4 lg:grid-cols-2">
+              <div className="grid gap-5 lg:grid-cols-2">
                 <AssetAnalysisResults analyses={assetAnalyses} artifacts={artifacts} />
                 <TechnicalFeasibilityReviewCard project={project} user={user} stageStates={stageStates} onRefresh={onWorkspaceRefresh} />
               </div>
             </StagePanel>
             <StagePanel stage="creative_direction_proposal" selectedStage={selectedStage}>
-              <div className="grid gap-4 lg:grid-cols-2">
+              <div className="grid gap-5 lg:grid-cols-2">
                 <CreativeDirectionsCard
                   project={project}
                   user={user}
@@ -1154,7 +1154,7 @@ function WorkspaceCenter({
               </div>
             </StagePanel>
             <StagePanel stage="selection_quote_contract" selectedStage={selectedStage}>
-              <div className="grid gap-4 lg:grid-cols-2">
+              <div className="grid gap-5 lg:grid-cols-2">
                 <BusinessDocumentDraftCard project={project} user={user} onRefresh={onWorkspaceRefresh} />
                 <ProposalEditorCard
                   project={project}
@@ -1203,7 +1203,7 @@ function WorkspaceCenter({
             ))}
           </div>
         </TabsContent>
-        <TabsContent value="overview" className="mt-4 overflow-hidden rounded-md border border-[var(--border)] bg-white">
+        <TabsContent value="overview" className="mt-5 overflow-hidden rounded-xl border border-[var(--border)] bg-white">
           <RoleDashboard
             role={role}
             user={user}
@@ -1228,7 +1228,7 @@ function WorkspaceCenter({
                   </CollapsibleTrigger>
                 </div>
                 <CollapsibleContent>
-                  <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                  <div className="mt-5 grid gap-5 lg:grid-cols-2">
                     <ProjectMembersCard project={project} />
                     <ScoringRulesCard />
                     <AdminGovernanceCard governance={governance} error={governanceError} onRefresh={onGovernanceRefresh} />
@@ -5492,16 +5492,16 @@ function ProgressPanel({
 
   return (
     <aside className="progress-panel flex min-h-screen flex-col bg-[var(--panel)] min-[1181px]:sticky min-[1181px]:top-0 min-[1181px]:h-screen min-[1181px]:min-h-0">
-      <div className="border-b border-[var(--border)] p-5">
+      <div className="border-b border-[var(--border)] p-6">
         <div className="flex items-center gap-2">
           <Bot size={18} />
-          <h2 className="text-lg font-semibold">AI 真实进度</h2>
+          <h2 className="text-xl font-semibold">AI 真实进度</h2>
         </div>
         <p className="mt-2 text-sm text-[var(--muted-foreground)]">这里只展示后端事件、数据库写入和 provider 调用状态，不展示虚假百分比。</p>
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
-        <div className="space-y-4 p-4">
+        <div className="space-y-5 p-5">
         <Card size="sm" className="rounded-2xl border-[var(--border)] bg-[var(--panel-soft)]">
           <CardContent>
           <p className="truncate text-sm font-medium">连接状态</p>
