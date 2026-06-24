@@ -684,7 +684,7 @@ function RoleDashboard({
   const showEmptySectionsState = Boolean(dashboard && sections.length > 0 && activeSections.length === 0);
 
   return (
-    <header className="border-b border-[var(--border)] bg-[var(--panel)] p-5">
+    <header className="border-b border-[var(--border)] bg-[var(--panel)] p-4">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-sm text-[var(--muted-foreground)]">角色仪表盘</p>
@@ -704,7 +704,7 @@ function RoleDashboard({
       {error && <div className="mt-4 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm text-[var(--warning)]">{error.message}</div>}
 
       {loading && !dashboard ? (
-        <div className="mt-5 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-4 text-sm text-[var(--muted-foreground)]">
+        <div className="mt-5 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3 text-sm text-[var(--muted-foreground)]">
           正在从服务端聚合角色待办。
         </div>
       ) : (
@@ -736,7 +736,7 @@ function RoleDashboard({
           )}
 
           {dashboard?.recentProjects.length ? (
-            <div className="mt-4 rounded-md border border-[var(--border)] bg-white p-4">
+            <div className="mt-4 rounded-md border border-[var(--border)] bg-white p-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <p className="text-sm font-medium">最近项目</p>
                 <span className="text-xs text-[var(--muted-foreground)]">更新时间 {formatDateTime(dashboard.generatedAt)}</span>
@@ -794,14 +794,14 @@ function RoleDashboard({
 
 function DashboardMetricCard({ card }: { card: DashboardCardView }) {
   return (
-    <div className={cn("rounded-md border p-4", dashboardToneClass(card.tone))}>
-      <p className="text-sm font-medium">{card.title}</p>
-      <div className="mt-3 flex items-end justify-between gap-3">
+    <Card size="sm" className={cn("rounded-md border p-3", dashboardToneClass(card.tone))}>
+      <p className="truncate text-sm font-medium">{card.title}</p>
+      <div className="mt-2 flex items-end justify-between gap-3">
         <span className="text-3xl font-semibold">{card.value}</span>
         <span className="rounded bg-white/70 px-2 py-1 text-xs">{dashboardToneLabel(card.tone)}</span>
       </div>
-      <p className="mt-2 text-sm opacity-80">{card.detail}</p>
-    </div>
+      <p className="mt-1 truncate text-sm opacity-80">{card.detail}</p>
+    </Card>
   );
 }
 
@@ -813,27 +813,28 @@ function DashboardSectionCard({
   onSelectProject: (projectId: string) => void;
 }) {
   return (
-    <div className="rounded-md border border-[var(--border)] bg-white p-4">
+    <Card size="sm" className="rounded-md border-[var(--border)] bg-white">
+      <CardContent>
       <div>
-        <p className="text-sm font-medium">{section.title}</p>
-        <p className="mt-1 text-xs leading-5 text-[var(--muted-foreground)]">{section.description}</p>
+        <p className="truncate text-sm font-medium">{section.title}</p>
+        <p className="mt-1 truncate text-xs leading-5 text-[var(--muted-foreground)]">{section.description}</p>
       </div>
       {section.items.length === 0 ? (
-        <p className="mt-4 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3 text-xs leading-5 text-[var(--muted-foreground)]">
+        <p className="mt-3 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-2.5 text-xs leading-5 text-[var(--muted-foreground)]">
           {section.emptyMessage}
         </p>
       ) : (
-        <div className="mt-4 grid gap-2">
+        <div className="mt-3 grid gap-2">
           {section.items.slice(0, 5).map((item) => (
             <button
               key={item.id}
               type="button"
               disabled={!item.projectId}
               onClick={() => item.projectId && onSelectProject(item.projectId)}
-              className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3 text-left text-xs hover:border-[var(--accent)] disabled:cursor-default disabled:hover:border-[var(--border)]"
+              className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-2.5 text-left text-xs hover:border-[var(--accent)] disabled:cursor-default disabled:hover:border-[var(--border)]"
             >
               <div className="flex items-start justify-between gap-2">
-                <p className="min-w-0 font-medium leading-5">{item.title}</p>
+                <p className="min-w-0 truncate font-medium leading-5">{item.title}</p>
                 <span className={cn("shrink-0 rounded px-2 py-1", taskPriorityClass(item.priority))}>{taskPriorityLabel(item.priority)}</span>
               </div>
               {item.projectLabel && <p className="mt-1 truncate text-[var(--muted-foreground)]">{item.projectLabel}</p>}
@@ -846,7 +847,8 @@ function DashboardSectionCard({
           ))}
         </div>
       )}
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -963,12 +965,13 @@ function WorkspaceCenter({
         </div>
       )}
 
-      <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-5">
+      <Card size="sm" className="rounded-md border-[var(--border)] bg-[var(--panel)]">
+        <CardContent>
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p className="text-sm text-[var(--muted-foreground)]">{project.brandName}</p>
-            <h2 className="mt-1 text-2xl font-semibold">{project.projectName}</h2>
-            <p className="mt-2 text-sm text-[var(--muted-foreground)]">
+          <div className="min-w-0">
+            <p className="truncate text-sm text-[var(--muted-foreground)]">{project.brandName}</p>
+            <h2 className="mt-1 truncate text-2xl font-semibold">{project.projectName}</h2>
+            <p className="mt-2 truncate text-sm text-[var(--muted-foreground)]">
               当前阶段：{stageLabels[project.currentStage]} · {statusLabels[project.status]}
             </p>
           </div>
@@ -976,7 +979,8 @@ function WorkspaceCenter({
             通过下方需求文本表单创建真实 AI 任务
           </div>
         </div>
-      </div>
+        </CardContent>
+      </Card>
 
       <StageNavigator currentStage={project.currentStage} stageStates={stageStates} />
 
@@ -1092,7 +1096,7 @@ function RequirementStructuringCard({
   }
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-5">
+    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4">
       <div className="flex items-center gap-2">
         <WandSparkles size={18} />
         <h3 className="font-semibold">需求结构化</h3>
@@ -1143,7 +1147,7 @@ function AdminGovernanceCard({
   }
 
   return (
-    <section className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-5">
+    <section className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-sm font-medium">治理与审计</p>
@@ -1177,7 +1181,7 @@ function AdminGovernanceCard({
 
 function AiUsagePanel({ usage }: { usage: AiUsageSummaryView }) {
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-4">
+    <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
       <div className="grid gap-3 sm:grid-cols-4">
         <MiniMetric label="AI 调用" value={String(usage.totalCalls)} />
         <MiniMetric label="成功 / 失败" value={`${usage.succeededCalls} / ${usage.failedCalls}`} />
@@ -1204,7 +1208,7 @@ function AiUsagePanel({ usage }: { usage: AiUsageSummaryView }) {
 
 function AuditLogPanel({ logs }: { logs: AuditLogView[] }) {
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-4">
+    <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm font-medium">最近审计</p>
         <span className="text-xs text-[var(--muted-foreground)]">仅展示摘要，不暴露合同正文和签名 URL</span>
@@ -1298,7 +1302,7 @@ function AuditSearchCard({ projects }: { projects: ProjectSummary[] }) {
   const rangeEnd = page ? page.offset + logs.length : 0;
 
   return (
-    <section className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-5 lg:col-span-2">
+    <section className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4 lg:col-span-2">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-sm font-medium">审计查询</p>
@@ -1317,7 +1321,7 @@ function AuditSearchCard({ projects }: { projects: ProjectSummary[] }) {
         </button>
       </div>
 
-      <form action={handleFilter} className="mt-4 grid gap-3 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-4 md:grid-cols-3">
+      <form action={handleFilter} className="mt-4 grid gap-3 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3 md:grid-cols-3">
         <label className="grid gap-1 text-sm">
           <span className="font-medium">项目</span>
           <select name="projectId" defaultValue={filters.projectId} className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm">
@@ -1385,7 +1389,7 @@ function AuditSearchCard({ projects }: { projects: ProjectSummary[] }) {
 
       {auditError && <div className="mt-3 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm text-[var(--warning)]">{auditError}</div>}
 
-      <div className="mt-4 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-4">
+      <div className="mt-4 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm font-medium">
             查询结果 {page ? `${rangeStart}-${rangeEnd} / ${page.total}` : ""}
@@ -1457,7 +1461,7 @@ function StructuredRequirementPreview({ artifact }: { artifact: ArtifactView }) 
   ];
 
   return (
-    <div className="mt-4 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-4">
+    <div className="mt-4 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm font-medium">{artifact.title}</p>
         <span className="rounded bg-[var(--muted)] px-2 py-1 text-xs">v{artifact.version}</span>
@@ -1626,7 +1630,7 @@ function AssetCenter({
   }
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-5 lg:col-span-2">
+    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4 lg:col-span-2">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
@@ -1644,7 +1648,7 @@ function AssetCenter({
       </div>
 
       <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-4">
+        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
           <p className="text-sm font-medium">上传文件</p>
           <div className="mt-3 grid gap-3">
             <select
@@ -1660,7 +1664,7 @@ function AssetCenter({
               <option value="video">视频</option>
               <option value="text">文本资料</option>
             </select>
-            <label className="flex min-h-28 cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-[var(--border)] bg-white p-4 text-center text-sm">
+            <label className="flex min-h-28 cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-[var(--border)] bg-white p-3 text-center text-sm">
               {uploadState === "idle" ? <Upload size={22} /> : <Loader2 className="animate-spin" size={22} />}
               <span className="mt-2 font-medium">{uploadLabel(uploadState)}</span>
               <span className="mt-1 text-xs text-[var(--muted-foreground)]">支持 PDF、Word、图片、视频和文本资料</span>
@@ -1675,7 +1679,7 @@ function AssetCenter({
           </div>
         </div>
 
-        <form action={handleExternalLink} className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-4">
+        <form action={handleExternalLink} className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
           <p className="text-sm font-medium">录入飞书/外部链接</p>
           <div className="mt-3 grid gap-3">
             <input name="title" placeholder="标题或来源说明" className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm" />
@@ -1705,7 +1709,7 @@ function AssetCenter({
       <div className="mt-5">
         <p className="mb-3 text-sm font-medium">资产列表</p>
         {assets.length === 0 ? (
-          <div className="rounded-md border border-[var(--border)] bg-white p-4 text-sm text-[var(--muted-foreground)]">
+          <div className="rounded-md border border-[var(--border)] bg-white p-3 text-sm text-[var(--muted-foreground)]">
             当前项目还没有资料。上传客户需求、样片、参考图，或先保存飞书文档链接。
           </div>
         ) : (
@@ -1765,7 +1769,7 @@ function ProjectBasicsCard({
   }
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-5 lg:col-span-2">
+    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4 lg:col-span-2">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
@@ -1802,7 +1806,7 @@ function ProjectBasicsCard({
       </div>
 
       {editing && (
-        <form action={handleSubmit} className="mt-4 grid gap-3 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-4 md:grid-cols-2">
+        <form action={handleSubmit} className="mt-4 grid gap-3 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3 md:grid-cols-2">
           <label className="grid gap-1 text-sm">
             <span className="font-medium">品牌名</span>
             <input
@@ -1952,7 +1956,7 @@ function ProjectMembersCard({ project }: { project: ProjectSummary }) {
   }
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-5 lg:col-span-2">
+    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4 lg:col-span-2">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
@@ -1967,7 +1971,7 @@ function ProjectMembersCard({ project }: { project: ProjectSummary }) {
         </button>
       </div>
 
-      <form action={handleCreateUser} className="mt-4 grid gap-3 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-4">
+      <form action={handleCreateUser} className="mt-4 grid gap-3 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
         <div>
           <p className="text-sm font-medium">创建系统用户</p>
           <p className="mt-1 text-xs leading-5 text-[var(--muted-foreground)]">
@@ -2153,7 +2157,7 @@ function ScoringRulesCard() {
   }
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-5 lg:col-span-2">
+    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4 lg:col-span-2">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
@@ -2272,7 +2276,7 @@ function AssetAnalysisResults({ analyses, artifacts }: { analyses: AssetAnalysis
   const scoreArtifacts = artifacts.filter((artifact) => artifact.kind === "score_result");
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-5 lg:col-span-2">
+    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4 lg:col-span-2">
       <div className="flex items-center gap-2">
         <ClipboardList size={18} />
         <h3 className="font-semibold">资料解析与标签评分结果</h3>
@@ -2281,10 +2285,10 @@ function AssetAnalysisResults({ analyses, artifacts }: { analyses: AssetAnalysis
 
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         {analyses.length === 0 ? (
-          <div className="rounded-md border border-[var(--border)] bg-white p-4 text-sm text-[var(--muted-foreground)]">还没有资料解析结果。请在项目资料中心点击“开始解析”。</div>
+          <div className="rounded-md border border-[var(--border)] bg-white p-3 text-sm text-[var(--muted-foreground)]">还没有资料解析结果。请在项目资料中心点击“开始解析”。</div>
         ) : (
           analyses.map((analysis) => (
-            <div key={analysis.id} className="rounded-md border border-[var(--border)] bg-white p-4 text-sm">
+            <div key={analysis.id} className="rounded-md border border-[var(--border)] bg-white p-3 text-sm">
               <div className="flex items-center justify-between gap-3">
                 <p className="font-medium">{analysis.status === "succeeded" ? "解析完成" : parseStatusLabel(analysis.status)}</p>
                 {analysis.modelName && <span className="rounded bg-[var(--muted)] px-2 py-1 text-xs">{analysis.modelName}</span>}
@@ -2377,7 +2381,7 @@ function TechnicalFeasibilityReviewCard({
   }
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-5 lg:col-span-2">
+    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4 lg:col-span-2">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
@@ -2406,7 +2410,7 @@ function TechnicalFeasibilityReviewCard({
         </div>
       )}
 
-      <form action={handleReview} className="mt-4 grid gap-3 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-4">
+      <form action={handleReview} className="mt-4 grid gap-3 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
         <div className="grid gap-3 md:grid-cols-2">
           <label className="grid gap-1 text-sm">
             <span className="font-medium">原因 / 复核结论</span>
@@ -2612,7 +2616,7 @@ function CreativeDirectionsCard({
   }
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-5 lg:col-span-2">
+    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4 lg:col-span-2">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
@@ -2644,7 +2648,7 @@ function CreativeDirectionsCard({
       {message && <div className="mt-3 rounded-md border border-[#bbf7d0] bg-[#f0fdf4] p-3 text-sm text-[var(--success)]">{message}</div>}
 
       {directions.length === 0 ? (
-        <div className="mt-4 rounded-md border border-[var(--border)] bg-white p-4 text-sm text-[var(--muted-foreground)]">
+        <div className="mt-4 rounded-md border border-[var(--border)] bg-white p-3 text-sm text-[var(--muted-foreground)]">
           还没有创意方向。请先完成需求结构化或资料解析，再由创意团队/管理员发起 Top 5 生成。
         </div>
       ) : (
@@ -2716,7 +2720,7 @@ function CreativeDirectionCard({
 }) {
   if (editing) {
     return (
-      <form action={onSave} className="rounded-md border border-[var(--border)] bg-white p-4 text-sm">
+      <form action={onSave} className="rounded-md border border-[var(--border)] bg-white p-3 text-sm">
         <div className="flex items-center justify-between gap-3">
           <p className="font-medium">人工改写创意方向</p>
           <span className="rounded bg-[var(--muted)] px-2 py-1 text-xs">#{direction.sortOrder}</span>
@@ -2749,7 +2753,7 @@ function CreativeDirectionCard({
   }
 
   return (
-    <div className={cn("rounded-md border bg-white p-4 text-sm", direction.isSelected ? "border-[var(--accent)]" : "border-[var(--border)]")}>
+    <div className={cn("rounded-md border bg-white p-3 text-sm", direction.isSelected ? "border-[var(--accent)]" : "border-[var(--border)]")}>
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">
@@ -3223,7 +3227,7 @@ function BusinessDocumentDraftCard({
   }
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-5 lg:col-span-2">
+    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4 lg:col-span-2">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -3293,7 +3297,7 @@ function ProposalEditorCard({
   }
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-5 lg:col-span-2">
+    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4 lg:col-span-2">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
@@ -3354,13 +3358,13 @@ function ProposalEditorCard({
       {message && <div className="mt-3 rounded-md border border-[#bbf7d0] bg-[#f0fdf4] p-3 text-sm text-[var(--success)]">{message}</div>}
 
       <div className="mt-5 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(260px,0.65fr)]">
-        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-4">
+        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
           <p className="text-sm font-medium">当前提案摘要</p>
           <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">
             {proposal ? summarizeText(proposal.content, 180) : "还没有保存过提案。保存后这里会显示最新内容摘要。"}
           </p>
         </div>
-        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-4">
+        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
           <p className="text-sm font-medium">历史快照</p>
           {snapshots.length === 0 ? (
             <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">还没有提案快照。每次保存都会新增一个版本。</p>
@@ -3492,7 +3496,7 @@ function QuoteEditorCard({
   }
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-5 lg:col-span-2">
+    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4 lg:col-span-2">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
@@ -3584,7 +3588,7 @@ function QuoteEditorCard({
       />
 
       <div className="mt-5 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(260px,0.65fr)]">
-        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-4">
+        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
           <p className="text-sm font-medium">当前报价</p>
           {quote ? (
             <div className="mt-3 grid gap-2 text-sm">
@@ -3603,7 +3607,7 @@ function QuoteEditorCard({
             <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">还没有保存过报价。保存后这里会显示最新合计。</p>
           )}
         </div>
-        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-4">
+        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
           <p className="text-sm font-medium">报价快照</p>
           {snapshots.length === 0 ? (
             <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">还没有报价快照。每次保存都会新增一个版本。</p>
@@ -3796,7 +3800,7 @@ function ContractEditorCard({
   }
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-5 lg:col-span-2">
+    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4 lg:col-span-2">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
@@ -3868,7 +3872,7 @@ function ContractEditorCard({
           </div>
         </div>
 
-        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-4">
+        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.6fr)]">
             <label className="grid gap-1 text-sm">
               <span className="font-medium">甲方合同资产</span>
@@ -3999,13 +4003,13 @@ function ContractEditorCard({
       />
 
       <div className="mt-5 grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(260px,0.65fr)_minmax(260px,0.65fr)]">
-        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-4">
+        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
           <p className="text-sm font-medium">当前合同摘要</p>
           <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">
             {contract ? summarizeText(contract.content, 180) : "还没有保存过合同。保存后这里会显示最新合同摘要。"}
           </p>
         </div>
-        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-4">
+        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
           <p className="text-sm font-medium">合同快照</p>
           {snapshots.length === 0 ? (
             <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">还没有合同快照。每次保存都会新增一个版本。</p>
@@ -4023,7 +4027,7 @@ function ContractEditorCard({
             </div>
           )}
         </div>
-        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-4">
+        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
           <p className="text-sm font-medium">历史导出</p>
           {exports.length === 0 ? (
             <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">还没有导出记录。保存合同快照后可以导出 PDF 或 Word。</p>
@@ -4210,7 +4214,7 @@ function FeishuDeliveryCard({
   }
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-5 lg:col-span-2">
+    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4 lg:col-span-2">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
@@ -4233,7 +4237,7 @@ function FeishuDeliveryCard({
         </div>
       )}
 
-      <form action={handleSubmit} className="mt-4 grid gap-3 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-4">
+      <form action={handleSubmit} className="mt-4 grid gap-3 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
         <div className="grid gap-3 md:grid-cols-[180px_minmax(0,1fr)]">
           <select
             value={selectedDocument?.type ?? documentType}
@@ -4333,7 +4337,7 @@ function FeishuDeliveryCard({
       {deliveryError && <div className="mt-3 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm text-[var(--warning)]">{deliveryError}</div>}
       {message && <div className="mt-3 rounded-md border border-[#bbf7d0] bg-[#f0fdf4] p-3 text-sm text-[var(--success)]">{message}</div>}
 
-      <div className="mt-5 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-4">
+      <div className="mt-5 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
         <p className="text-sm font-medium">飞书交付历史</p>
         {deliveries.length === 0 ? (
           <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">还没有飞书交付记录。发送后这里会显示文档链接、发送对象和状态。</p>
@@ -4794,7 +4798,7 @@ function CommercialReviewPanel({
   }
 
   return (
-    <div className="mt-4 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-4">
+    <div className="mt-4 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-sm font-medium">{documentLabel}审核与签署流转</p>
@@ -5143,8 +5147,9 @@ function StageNavigator({
   const stageStateByKey = new Map(stageStates.map((item) => [item.stageKey, item]));
 
   return (
-    <div className="mt-5 rounded-md border border-[var(--border)] bg-[var(--panel)] p-4">
-      <p className="mb-3 text-sm font-medium">12 步阶段导航</p>
+    <Card size="sm" className="mt-5 rounded-md border-[var(--border)] bg-[var(--panel)]">
+      <CardContent>
+      <p className="mb-3 truncate text-sm font-medium">12 步阶段导航</p>
       <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
         {projectStages.map((stage, index) => {
           const persisted = stageStateByKey.get(stage);
@@ -5162,8 +5167,8 @@ function StageNavigator({
             >
               <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-[var(--muted)] text-xs">{index + 1}</span>
               <div className="min-w-0">
-                <p className="font-medium">{stageLabels[stage]}</p>
-                <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                <p className="truncate font-medium">{stageLabels[stage]}</p>
+                <p className="mt-1 truncate text-xs text-[var(--muted-foreground)]">
                   {statusLabels[inferredStatus]}{index === currentIndex ? " · 当前阶段" : ""}
                 </p>
                 {persisted?.errorMessage && <p className="mt-1 text-xs leading-5 text-[var(--warning)]">{persisted.errorMessage}</p>}
@@ -5172,7 +5177,8 @@ function StageNavigator({
           );
         })}
       </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -5225,15 +5231,18 @@ function ProgressPanel({
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-4 p-4">
-        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-4">
-          <p className="text-sm font-medium">连接状态</p>
-          <p className="mt-2 text-sm text-[var(--muted-foreground)]">
+        <Card size="sm" className="rounded-md border-[var(--border)] bg-[var(--panel-soft)]">
+          <CardContent>
+          <p className="truncate text-sm font-medium">连接状态</p>
+          <p className="mt-2 truncate text-sm text-[var(--muted-foreground)]">
             {selectedProject ? connectionLabel(state.connection) : "选择项目后会读取任务事件。"}
           </p>
-        </div>
+          </CardContent>
+        </Card>
 
-        <div className="rounded-md border border-[var(--border)] bg-white p-4">
-          <p className="text-sm font-medium">任务</p>
+        <Card size="sm" className="rounded-md border-[var(--border)] bg-white">
+          <CardContent>
+          <p className="truncate text-sm font-medium">任务</p>
           {jobActionError && <div className="mt-3 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm text-[var(--warning)]">{jobActionError}</div>}
           {jobActionMessage && <div className="mt-3 rounded-md border border-[#bbf7d0] bg-[#f0fdf4] p-3 text-sm text-[var(--success)]">{jobActionMessage}</div>}
           {jobs.length === 0 ? (
@@ -5266,12 +5275,14 @@ function ProgressPanel({
               ))}
             </div>
           )}
-        </div>
+          </CardContent>
+        </Card>
 
-        <div className="rounded-md border border-[var(--border)] bg-white p-4">
-          <p className="text-sm font-medium">事件时间线</p>
+        <Card size="sm" className="rounded-md border-[var(--border)] bg-white">
+          <CardContent>
+          <p className="truncate text-sm font-medium">事件时间线</p>
           {state.timeline.length === 0 ? (
-            <p className="mt-2 text-sm text-[var(--muted-foreground)]">还没有持久化事件。任务开始后会按真实步骤出现。</p>
+            <p className="mt-2 truncate text-sm text-[var(--muted-foreground)]">还没有持久化事件。任务开始后会按真实步骤出现。</p>
           ) : (
             <div className="mt-3 space-y-3">
               {state.timeline.map((item) => (
@@ -5286,7 +5297,8 @@ function ProgressPanel({
               ))}
             </div>
           )}
-        </div>
+          </CardContent>
+        </Card>
         </div>
       </ScrollArea>
     </aside>
@@ -5302,20 +5314,22 @@ function TimelineDot({ status }: { status: "running" | "done" | "error" | "info"
 
 function WorkCard({ icon, title, detail, items }: { icon: React.ReactNode; title: string; detail: string; items: string[] }) {
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-5">
+    <Card size="sm" className="rounded-md border-[var(--border)] bg-[var(--panel)]">
+      <CardContent>
       <div className="flex items-center gap-2">
         {icon}
-        <h3 className="font-semibold">{title}</h3>
+        <h3 className="min-w-0 truncate font-semibold">{title}</h3>
       </div>
-      <p className="mt-3 text-sm leading-6 text-[var(--muted-foreground)]">{detail}</p>
-      <div className="mt-4 flex flex-wrap gap-2">
+      <p className="mt-2 truncate text-sm leading-6 text-[var(--muted-foreground)]">{detail}</p>
+      <div className="mt-3 flex flex-wrap gap-2">
         {items.map((item) => (
           <span key={item} className="rounded bg-[var(--muted)] px-2 py-1 text-xs">
             {item}
           </span>
         ))}
       </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 
