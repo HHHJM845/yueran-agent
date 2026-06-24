@@ -1256,6 +1256,22 @@ function ReservedStageCard({ stage }: { stage: ProjectStage }) {
   );
 }
 
+function WorkspaceCard({
+  children,
+  className,
+  contentClassName,
+}: {
+  children: ReactNode;
+  className?: string;
+  contentClassName?: string;
+}) {
+  return (
+    <Card size="sm" className={cn("rounded-md border-[var(--border)] bg-[var(--panel)]", className)}>
+      <CardContent className={contentClassName}>{children}</CardContent>
+    </Card>
+  );
+}
+
 function RequirementStructuringCard({
   project,
   artifacts,
@@ -1297,7 +1313,7 @@ function RequirementStructuringCard({
   }
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4">
+    <WorkspaceCard>
       <div className="flex items-center gap-2">
         <WandSparkles size={18} />
         <h3 className="font-semibold">需求结构化</h3>
@@ -1326,7 +1342,7 @@ function RequirementStructuringCard({
       {message && <div className="mt-3 rounded-md border border-[#bbf7d0] bg-[#f0fdf4] p-3 text-sm text-[var(--success)]">{message}</div>}
 
       {latest ? <StructuredRequirementPreview artifact={latest} /> : null}
-    </div>
+    </WorkspaceCard>
   );
 }
 
@@ -1831,7 +1847,7 @@ function AssetCenter({
   }
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4 lg:col-span-2">
+    <WorkspaceCard className="lg:col-span-2">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
@@ -1927,7 +1943,7 @@ function AssetCenter({
           </div>
         )}
       </div>
-    </div>
+    </WorkspaceCard>
   );
 }
 
@@ -1970,7 +1986,7 @@ function ProjectBasicsCard({
   }
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4 lg:col-span-2">
+    <WorkspaceCard className="lg:col-span-2">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
@@ -2063,7 +2079,7 @@ function ProjectBasicsCard({
 
       {projectError && <div className="mt-3 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm text-[var(--warning)]">{projectError}</div>}
       {message && <div className="mt-3 rounded-md border border-[#bbf7d0] bg-[#f0fdf4] p-3 text-sm text-[var(--success)]">{message}</div>}
-    </div>
+    </WorkspaceCard>
   );
 }
 
@@ -2157,7 +2173,7 @@ function ProjectMembersCard({ project }: { project: ProjectSummary }) {
   }
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4 lg:col-span-2">
+    <WorkspaceCard className="lg:col-span-2">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
@@ -2264,7 +2280,7 @@ function ProjectMembersCard({ project }: { project: ProjectSummary }) {
           </div>
         )}
       </div>
-    </div>
+    </WorkspaceCard>
   );
 }
 
@@ -2358,7 +2374,7 @@ function ScoringRulesCard() {
   }
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4 lg:col-span-2">
+    <WorkspaceCard className="lg:col-span-2">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
@@ -2469,7 +2485,7 @@ function ScoringRulesCard() {
           </div>
         )}
       </div>
-    </div>
+    </WorkspaceCard>
   );
 }
 
@@ -2477,7 +2493,7 @@ function AssetAnalysisResults({ analyses, artifacts }: { analyses: AssetAnalysis
   const scoreArtifacts = artifacts.filter((artifact) => artifact.kind === "score_result");
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4 lg:col-span-2">
+    <WorkspaceCard className="lg:col-span-2">
       <div className="flex items-center gap-2">
         <ClipboardList size={18} />
         <h3 className="font-semibold">资料解析与标签评分结果</h3>
@@ -2534,7 +2550,7 @@ function AssetAnalysisResults({ analyses, artifacts }: { analyses: AssetAnalysis
           </div>
         </div>
       )}
-    </div>
+    </WorkspaceCard>
   );
 }
 
@@ -2582,7 +2598,7 @@ function TechnicalFeasibilityReviewCard({
   }
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4 lg:col-span-2">
+    <WorkspaceCard className="lg:col-span-2">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
@@ -2672,7 +2688,7 @@ function TechnicalFeasibilityReviewCard({
 
       {reviewError && <div className="mt-3 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm text-[var(--warning)]">{reviewError}</div>}
       {message && <div className="mt-3 rounded-md border border-[#bbf7d0] bg-[#f0fdf4] p-3 text-sm text-[var(--success)]">{message}</div>}
-    </div>
+    </WorkspaceCard>
   );
 }
 
@@ -2817,7 +2833,7 @@ function CreativeDirectionsCard({
   }
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4 lg:col-span-2">
+    <WorkspaceCard className="lg:col-span-2">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
@@ -2878,7 +2894,7 @@ function CreativeDirectionsCard({
           ))}
         </div>
       )}
-    </div>
+    </WorkspaceCard>
   );
 }
 
