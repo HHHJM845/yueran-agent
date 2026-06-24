@@ -33,6 +33,7 @@ import {
 import type { ProjectSummary, Role } from "@/domain/types";
 import { projectStages } from "@/domain/types";
 import { stageLabels, statusLabels } from "@/domain/stage-machine";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -682,6 +683,7 @@ function RoleDashboard({
   const sections = dashboard?.sections ?? [];
   const activeSections = sections.filter((section) => section.items.length > 0);
   const showEmptySectionsState = Boolean(dashboard && sections.length > 0 && activeSections.length === 0);
+  const metricBySectionKey = new Map(cards.map((card) => [dashboardSectionKeyForCard(card.key), card]));
 
   return (
     <header className="border-b border-[var(--border)] bg-[var(--panel)] p-4">
@@ -709,12 +711,6 @@ function RoleDashboard({
         </div>
       ) : (
         <>
-          <div className="mt-5 grid gap-3 md:grid-cols-3">
-            {cards.map((card) => (
-              <DashboardMetricCard key={card.key} card={card} />
-            ))}
-          </div>
-
           {showEmptySectionsState ? (
             <Card size="sm" className="mt-4 border-[var(--border)] bg-white">
               <CardContent className="flex items-start gap-3">
@@ -728,15 +724,20 @@ function RoleDashboard({
               </CardContent>
             </Card>
           ) : (
-            <div className="mt-4 grid gap-3 xl:grid-cols-3">
+            <div className="mt-5 grid gap-3 xl:grid-cols-3">
               {activeSections.map((section) => (
-              <DashboardSectionCard key={section.key} section={section} onSelectProject={onSelectProject} />
+                <DashboardSectionCard
+                  key={section.key}
+                  section={section}
+                  metric={metricBySectionKey.get(section.key)}
+                  onSelectProject={onSelectProject}
+                />
               ))}
             </div>
           )}
 
           {dashboard?.recentProjects.length ? (
-            <div className="mt-4 rounded-md border border-[var(--border)] bg-white p-3">
+            <div className="mt-4 rounded-md border border-[var(--border)] bg-white p-3 min-[821px]:hidden">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <p className="text-sm font-medium">最近项目</p>
                 <span className="text-xs text-[var(--muted-foreground)]">更新时间 {formatDateTime(dashboard.generatedAt)}</span>
@@ -792,31 +793,32 @@ function RoleDashboard({
   );
 }
 
-function DashboardMetricCard({ card }: { card: DashboardCardView }) {
-  return (
-    <Card size="sm" className={cn("rounded-md border p-3", dashboardToneClass(card.tone))}>
-      <p className="truncate text-sm font-medium">{card.title}</p>
-      <div className="mt-2 flex items-end justify-between gap-3">
-        <span className="text-3xl font-semibold">{card.value}</span>
-        <span className="rounded bg-white/70 px-2 py-1 text-xs">{dashboardToneLabel(card.tone)}</span>
-      </div>
-      <p className="mt-1 truncate text-sm opacity-80">{card.detail}</p>
-    </Card>
-  );
-}
-
 function DashboardSectionCard({
   section,
+  metric,
   onSelectProject,
 }: {
   section: DashboardSectionView;
+  metric?: DashboardCardView;
   onSelectProject: (projectId: string) => void;
 }) {
+  const primaryProjectId = section.items.find((item) => item.projectId)?.projectId ?? null;
+  const itemCount = metric?.value ?? section.items.length;
+
   return (
     <Card size="sm" className="rounded-md border-[var(--border)] bg-white">
       <CardContent>
-      <div>
-        <p className="truncate text-sm font-medium">{section.title}</p>
+      <div className="min-w-0">
+        <button
+          type="button"
+          disabled={!primaryProjectId}
+          onClick={() => primaryProjectId && onSelectProject(primaryProjectId)}
+          className="flex w-full min-w-0 items-center justify-between gap-3 text-left disabled:cursor-default"
+          title={primaryProjectId ? `打开最新${section.title}` : section.title}
+        >
+          <span className="min-w-0 truncate text-sm font-medium">{section.title}</span>
+          <Badge variant={dashboardBadgeVariant(metric?.tone)}>{itemCount}</Badge>
+        </button>
         <p className="mt-1 truncate text-xs leading-5 text-[var(--muted-foreground)]">{section.description}</p>
       </div>
       {section.items.length === 0 ? (
@@ -852,26 +854,6 @@ function DashboardSectionCard({
   );
 }
 
-function dashboardToneClass(tone: string) {
-  const classes: Record<string, string> = {
-    neutral: "border-[var(--border)] bg-[var(--panel-soft)]",
-    success: "border-[#bbf7d0] bg-[#f0fdf4] text-[var(--success)]",
-    warning: "border-[#f3d08a] bg-[#fff8e6] text-[var(--warning)]",
-    danger: "border-[#fecaca] bg-[#fff1f2] text-[#b91c1c]",
-  };
-  return classes[tone] ?? classes.neutral;
-}
-
-function dashboardToneLabel(tone: string) {
-  const labels: Record<string, string> = {
-    neutral: "正常",
-    success: "良好",
-    warning: "待处理",
-    danger: "高优先",
-  };
-  return labels[tone] ?? "正常";
-}
-
 function taskPriorityClass(priority: string) {
   const classes: Record<string, string> = {
     normal: "bg-[var(--muted)] text-[var(--muted-foreground)]",
@@ -892,6 +874,27 @@ function taskPriorityLabel(priority: string) {
 
 function dashboardStatusLabel(status: string) {
   return statusLabels[status as keyof typeof statusLabels] ?? quoteStatusLabel(status);
+}
+
+function dashboardSectionKeyForCard(cardKey: string) {
+  const mapping: Record<string, string> = {
+    requirement: "business_requirements",
+    contract: "business_quote_contract",
+    feishu: "business_feishu",
+    evaluation: "creative_evaluation",
+    deepening: "creative_deepening",
+    atmosphere: "creative_atmosphere",
+    blocked: "admin_blocked",
+    jobs: "admin_failed_jobs",
+    rules: "admin_governance",
+  };
+  return mapping[cardKey] ?? cardKey;
+}
+
+function dashboardBadgeVariant(tone?: string) {
+  if (tone === "danger") return "destructive";
+  if (tone === "success") return "secondary";
+  return "outline";
 }
 
 function WorkspaceCenter({
