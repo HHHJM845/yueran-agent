@@ -432,7 +432,7 @@ export function WorkspaceShell() {
         onLogout={() => void handleLogout()}
       />
 
-      <section className="min-w-0 border-x border-[var(--border)] bg-[var(--panel-soft)]">
+      <section className="min-w-0 border-x border-[var(--border)] bg-[var(--panel-soft)] min-[821px]:h-screen min-[821px]:overflow-y-auto">
         <WorkspaceCenter
           project={selectedProject}
           projects={projects}
@@ -1091,14 +1091,16 @@ function WorkspaceCenter({
           <TabsTrigger value="overview" className="max-w-32 flex-none px-3">概览</TabsTrigger>
         </TabsList>
         <TabsContent value="workflow" className="mt-4">
-          <StageNavigator
-            currentStage={project.currentStage}
-            selectedStage={selectedStage}
-            stageStates={stageStates}
-            onStageSelect={setSelectedStage}
-          />
+          <div className="sticky top-0 z-20 -mx-5 bg-[var(--panel-soft)] px-5 pb-4">
+            <StageNavigator
+              currentStage={project.currentStage}
+              selectedStage={selectedStage}
+              stageStates={stageStates}
+              onStageSelect={setSelectedStage}
+            />
+          </div>
 
-          <div className="mt-5">
+          <div className="mt-1">
             <StagePanel stage="brand_requirement_intake" selectedStage={selectedStage}>
               <div className="grid gap-4 lg:grid-cols-2">
                 <ProjectBasicsCard project={project} user={user} onProjectUpdated={onProjectUpdated} />
