@@ -846,26 +846,38 @@ function DashboardSectionCard({
         </p>
       ) : (
         <div className="mt-3 grid gap-2">
-          {section.items.slice(0, 5).map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              disabled={!item.projectId}
-              onClick={() => item.projectId && onSelectProject(item.projectId)}
-              className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-2.5 text-left text-xs hover:border-[var(--accent)] disabled:cursor-default disabled:hover:border-[var(--border)]"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <p className="min-w-0 truncate font-medium leading-5">{item.title}</p>
-                <span className={cn("shrink-0 rounded px-2 py-1", taskPriorityClass(item.priority))}>{taskPriorityLabel(item.priority)}</span>
-              </div>
-              {item.projectLabel && <p className="mt-1 truncate text-[var(--muted-foreground)]">{item.projectLabel}</p>}
-              <p className="mt-2 line-clamp-2 leading-5 text-[var(--muted-foreground)]">{item.detail}</p>
-              <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[var(--muted-foreground)]">
-                <span>{dashboardStatusLabel(item.status)}</span>
-                {item.updatedAt && <span>{formatDateTime(item.updatedAt)}</span>}
-              </div>
-            </button>
-          ))}
+          {section.items.slice(0, 5).map((item) => {
+            const titleParts = splitDashboardTaskTitle(item.title);
+            return (
+              <button
+                key={item.id}
+                type="button"
+                disabled={!item.projectId}
+                onClick={() => item.projectId && onSelectProject(item.projectId)}
+                className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-2.5 text-left text-xs hover:border-[var(--accent)] disabled:cursor-default disabled:hover:border-[var(--border)]"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="line-clamp-2 font-medium leading-5">{titleParts.primary}</p>
+                    {titleParts.secondary && (
+                      <p className="mt-0.5 line-clamp-2 leading-5 text-[var(--muted-foreground)]">{titleParts.secondary}</p>
+                    )}
+                  </div>
+                  <span className={cn("shrink-0 rounded px-2 py-1", taskPriorityClass(item.priority))}>{taskPriorityLabel(item.priority)}</span>
+                </div>
+                {item.projectLabel && (
+                  <Badge variant="outline" className="mt-2 max-w-full justify-start truncate">
+                    {item.projectLabel}
+                  </Badge>
+                )}
+                <p className="mt-2 line-clamp-2 leading-5 text-[var(--muted-foreground)]">{item.detail}</p>
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[var(--muted-foreground)]">
+                  <span>{dashboardStatusLabel(item.status)}</span>
+                  {item.updatedAt && <span>{formatDateTime(item.updatedAt)}</span>}
+                </div>
+              </button>
+            );
+          })}
         </div>
       )}
       </CardContent>
@@ -893,6 +905,16 @@ function taskPriorityLabel(priority: string) {
 
 function dashboardStatusLabel(status: string) {
   return statusLabels[status as keyof typeof statusLabels] ?? quoteStatusLabel(status);
+}
+
+function splitDashboardTaskTitle(title: string) {
+  const separator = title.includes("：") ? "：" : title.includes(":") ? ":" : null;
+  if (!separator) return { primary: title, secondary: "" };
+  const [primary, ...rest] = title.split(separator);
+  return {
+    primary: primary.trim() || title,
+    secondary: rest.join(separator).trim(),
+  };
 }
 
 function dashboardSectionKeyForCard(cardKey: string) {
