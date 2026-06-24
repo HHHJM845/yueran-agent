@@ -33,6 +33,7 @@ import {
 import type { ProjectSummary, Role } from "@/domain/types";
 import { projectStages } from "@/domain/types";
 import { stageLabels, statusLabels } from "@/domain/stage-machine";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   type ApiError,
   type AiUsageSummaryView,
@@ -561,7 +562,7 @@ function ProjectSidebar({
   const canCreateProject = user.role === "business" || user.role === "admin";
 
   return (
-    <aside className="flex min-h-screen flex-col bg-[var(--panel)]">
+    <aside className="flex min-h-screen flex-col bg-[var(--panel)] min-[821px]:sticky min-[821px]:top-0 min-[821px]:h-screen min-[821px]:min-h-0">
       <div className="border-b border-[var(--border)] p-5">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-md bg-[var(--foreground)] text-white">
@@ -604,7 +605,8 @@ function ProjectSidebar({
         </div>
       )}
 
-      <div className="flex-1 overflow-auto p-3">
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="p-3">
         {loading ? (
           <StateLine icon={<Loader2 className="animate-spin" size={16} />} text="正在读取数据库中的项目列表" />
         ) : error ? (
@@ -650,7 +652,8 @@ function ProjectSidebar({
             ))}
           </div>
         )}
-      </div>
+        </div>
+      </ScrollArea>
     </aside>
   );
 }
@@ -5194,7 +5197,7 @@ function ProgressPanel({
   }
 
   return (
-    <aside className="progress-panel min-h-screen bg-[var(--panel)]">
+    <aside className="progress-panel flex min-h-screen flex-col bg-[var(--panel)] min-[1181px]:sticky min-[1181px]:top-0 min-[1181px]:h-screen min-[1181px]:min-h-0">
       <div className="border-b border-[var(--border)] p-5">
         <div className="flex items-center gap-2">
           <Bot size={18} />
@@ -5203,7 +5206,8 @@ function ProgressPanel({
         <p className="mt-2 text-sm text-[var(--muted-foreground)]">这里只展示后端事件、数据库写入和 provider 调用状态，不展示虚假百分比。</p>
       </div>
 
-      <div className="space-y-4 p-4">
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="space-y-4 p-4">
         <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-4">
           <p className="text-sm font-medium">连接状态</p>
           <p className="mt-2 text-sm text-[var(--muted-foreground)]">
@@ -5266,7 +5270,8 @@ function ProgressPanel({
             </div>
           )}
         </div>
-      </div>
+        </div>
+      </ScrollArea>
     </aside>
   );
 }
