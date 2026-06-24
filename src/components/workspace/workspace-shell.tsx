@@ -499,7 +499,7 @@ function LoginScreen({
 }) {
   return (
     <main className="flex min-h-screen items-center justify-center bg-[var(--panel-soft)] p-6">
-      <section className="w-full max-w-sm rounded-md border border-[var(--border)] bg-[var(--panel)] p-6">
+      <section className="w-full max-w-sm rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6 shadow-[0_1px_2px_rgb(0_0_0/0.03),0_16px_44px_-28px_rgb(0_0_0/0.28)]">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-md bg-[var(--foreground)] text-white">
             <Bot size={20} />
@@ -651,10 +651,10 @@ function ProjectSidebar({
                 key={project.id}
                 onClick={() => onSelect(project.id)}
                 className={cn(
-                  "rounded-md border p-3 text-left transition",
+                  "rounded-xl border p-3 text-left shadow-[0_1px_2px_rgb(0_0_0/0.025)] transition-all",
                   selectedProjectId === project.id
-                    ? "border-[var(--accent)] bg-[#ecfdf5]"
-                    : "border-[var(--border)] bg-white hover:border-[#a7a79c]"
+                    ? "border-[var(--accent)] bg-[#ecfdf5] shadow-[0_8px_20px_-16px_rgb(0_0_0/0.25)]"
+                    : "border-[var(--border)] bg-white hover:border-[#a7a79c] hover:shadow-[0_8px_20px_-18px_rgb(0_0_0/0.22)]"
                 )}
               >
                 <div className="flex items-start justify-between gap-3">
