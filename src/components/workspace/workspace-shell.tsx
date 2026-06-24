@@ -30,7 +30,7 @@ import {
   WandSparkles,
   XCircle,
 } from "lucide-react";
-import type { JobStatus, JobType, ProjectSummary, Role } from "@/domain/types";
+import type { JobStatus, JobType, ProjectStage, ProjectSummary, Role } from "@/domain/types";
 import { projectStages } from "@/domain/types";
 import { stageLabels, statusLabels } from "@/domain/stage-machine";
 import { Badge } from "@/components/ui/badge";
@@ -1020,6 +1020,12 @@ function WorkspaceCenter({
   onDashboardRefresh: () => void;
   onSelectProject: (projectId: string) => void;
 }) {
+  const [selectedStage, setSelectedStage] = useState<ProjectStage>(project?.currentStage ?? projectStages[0]);
+
+  useEffect(() => {
+    if (project) setSelectedStage(project.currentStage);
+  }, [project?.id, project?.currentStage]);
+
   if (loading) {
     return <CenterState icon={<Loader2 className="animate-spin" size={22} />} title="正在恢复工作台" detail="系统正在从后端读取项目、阶段和产物状态。" />;
   }
@@ -1085,7 +1091,12 @@ function WorkspaceCenter({
           <TabsTrigger value="overview" className="max-w-32 flex-none px-3">概览</TabsTrigger>
         </TabsList>
         <TabsContent value="workflow" className="mt-4">
-          <StageNavigator currentStage={project.currentStage} stageStates={stageStates} />
+          <StageNavigator
+            currentStage={project.currentStage}
+            selectedStage={selectedStage}
+            stageStates={stageStates}
+            onStageSelect={setSelectedStage}
+          />
 
           <div className="mt-5 grid gap-4 lg:grid-cols-2">
             <ProjectBasicsCard project={project} user={user} onProjectUpdated={onProjectUpdated} />
@@ -5255,45 +5266,70 @@ function formatFileSize(size: number) {
 
 function StageNavigator({
   currentStage,
+  selectedStage,
   stageStates,
+  onStageSelect,
 }: {
   currentStage: ProjectSummary["currentStage"];
+  selectedStage: ProjectStage;
   stageStates: ProjectStageStateView[];
+  onStageSelect: (stage: ProjectStage) => void;
 }) {
   const currentIndex = projectStages.indexOf(currentStage);
+  const selectedIndex = projectStages.indexOf(selectedStage);
   const stageStateByKey = new Map(stageStates.map((item) => [item.stageKey, item]));
 
   return (
-    <Card size="sm" className="mt-5 rounded-md border-[var(--border)] bg-[var(--panel)]">
+    <Card size="sm" className="rounded-md border-[var(--border)] bg-[var(--panel)]">
       <CardContent>
-      <p className="mb-3 truncate text-sm font-medium">12 步阶段导航</p>
-      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-        {projectStages.map((stage, index) => {
-          const persisted = stageStateByKey.get(stage);
-          const inferredStatus =
-            persisted?.status ?? (index < currentIndex ? "completed" : index === currentIndex ? "in_progress" : "not_started");
-          return (
-            <div
-              key={stage}
-              className={cn(
-                "flex items-start gap-3 rounded-md border p-3 text-sm",
-                index === currentIndex ? "border-[var(--accent)] bg-[#ecfdf5]" : "border-[var(--border)] bg-white",
-                inferredStatus === "blocked" || inferredStatus === "needs_revision" ? "border-[#f3d08a] bg-[#fff8e6]" : "",
-                index > 3 && !persisted ? "opacity-70" : ""
-              )}
-            >
-              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-[var(--muted)] text-xs">{index + 1}</span>
-              <div className="min-w-0">
-                <p className="truncate font-medium">{stageLabels[stage]}</p>
-                <p className="mt-1 truncate text-xs text-[var(--muted-foreground)]">
-                  {statusLabels[inferredStatus]}{index === currentIndex ? " · 当前阶段" : ""}
-                </p>
-                {persisted?.errorMessage && <p className="mt-1 text-xs leading-5 text-[var(--warning)]">{persisted.errorMessage}</p>}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium">12 步阶段导航</p>
+            <p className="mt-1 truncate text-xs text-[var(--muted-foreground)]">
+              当前查看：{selectedIndex + 1}. {stageLabels[selectedStage]}
+            </p>
+          </div>
+          <Badge variant="outline">真实阶段：{stageLabels[currentStage]}</Badge>
+        </div>
+        <div className="mt-3 overflow-x-auto pb-1">
+          <div className="flex min-w-max items-stretch gap-2">
+            {projectStages.map((stage, index) => {
+              const persisted = stageStateByKey.get(stage);
+              const inferredStatus =
+                persisted?.status ?? (index < currentIndex ? "completed" : index === currentIndex ? "in_progress" : "not_started");
+              const isCurrent = index === currentIndex;
+              const isSelected = stage === selectedStage;
+              return (
+                <button
+                  key={stage}
+                  type="button"
+                  onClick={() => onStageSelect(stage)}
+                  aria-pressed={isSelected}
+                  className={cn(
+                    "group relative flex w-36 shrink-0 flex-col gap-2 rounded-md border px-3 py-2 text-left text-xs transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]",
+                    isSelected ? "border-[var(--accent)] bg-[#ecfdf5] text-[var(--foreground)]" : "border-[var(--border)] bg-white hover:border-[var(--accent)]",
+                    inferredStatus === "blocked" || inferredStatus === "needs_revision" ? "border-[#f3d08a] bg-[#fff8e6]" : "",
+                    index > 3 && !persisted ? "opacity-70" : ""
+                  )}
+                  title={`${index + 1}. ${stageLabels[stage]} · ${statusLabels[inferredStatus]}`}
+                >
+                  <span
+                    className={cn(
+                      "flex h-6 w-6 items-center justify-center rounded text-[11px] font-medium",
+                      isCurrent ? "bg-[var(--accent)] text-white" : "bg-[var(--muted)] text-[var(--muted-foreground)]"
+                    )}
+                  >
+                    {index + 1}
+                  </span>
+                  <span className="line-clamp-2 min-h-8 font-medium leading-4">{stageLabels[stage]}</span>
+                  <span className="truncate text-[var(--muted-foreground)]">
+                    {statusLabels[inferredStatus]}{isCurrent ? " · 当前" : ""}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </CardContent>
     </Card>
   );
