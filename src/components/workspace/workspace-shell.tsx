@@ -827,7 +827,7 @@ function DashboardSectionCard({
   const hasHiddenItems = itemCount > visibleItems.length;
 
   return (
-    <Card size="sm" className="rounded-md border-[var(--border)] bg-white">
+    <Card size="sm" className="rounded-2xl border-[var(--border)] bg-white">
       <CardContent>
       <div className="min-w-0">
         <button
@@ -1064,7 +1064,7 @@ function WorkspaceCenter({
           onRefresh={onDashboardRefresh}
         />
         <div className="p-5 pt-0">
-          <Card size="sm" className="rounded-md border-[var(--border)] bg-white">
+          <Card size="sm" className="rounded-2xl border-[var(--border)] bg-white">
             <CardContent className="flex items-start gap-3">
               <ClipboardList className="mt-0.5 shrink-0 text-[var(--muted-foreground)]" size={18} />
               <div className="min-w-0">
@@ -1088,7 +1088,7 @@ function WorkspaceCenter({
         </div>
       )}
 
-      <Card size="sm" className="rounded-md border-[var(--border)] bg-[var(--panel)]">
+      <Card size="sm" className="rounded-2xl border-[var(--border)] bg-[var(--panel)]">
         <CardContent>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
@@ -1262,7 +1262,7 @@ function StagePanel({
 
 function ReservedStageCard({ stage }: { stage: ProjectStage }) {
   return (
-    <Card size="sm" className="rounded-md border-[var(--border)] bg-[var(--panel)]">
+    <Card size="sm" className="rounded-2xl border-[var(--border)] bg-[var(--panel)]">
       <CardContent className="flex items-start gap-3">
         <CircleDashed className="mt-0.5 shrink-0 text-[var(--muted-foreground)]" size={18} />
         <div className="min-w-0">
@@ -1286,7 +1286,7 @@ function WorkspaceCard({
   contentClassName?: string;
 }) {
   return (
-    <Card size="sm" className={cn("rounded-md border-[var(--border)] bg-[var(--panel)]", className)}>
+    <Card size="sm" className={cn("rounded-2xl border-[var(--border)] bg-[var(--panel)]", className)}>
       <CardContent className={contentClassName}>{children}</CardContent>
     </Card>
   );
@@ -5389,7 +5389,7 @@ function StageNavigator({
   const stageStateByKey = new Map(stageStates.map((item) => [item.stageKey, item]));
 
   return (
-    <Card size="sm" className="rounded-md border-[var(--border)] bg-[var(--panel)]">
+    <Card size="sm" className="rounded-2xl border-[var(--border)] bg-[var(--panel)]">
       <CardContent>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
@@ -5502,7 +5502,7 @@ function ProgressPanel({
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-4 p-4">
-        <Card size="sm" className="rounded-md border-[var(--border)] bg-[var(--panel-soft)]">
+        <Card size="sm" className="rounded-2xl border-[var(--border)] bg-[var(--panel-soft)]">
           <CardContent>
           <p className="truncate text-sm font-medium">连接状态</p>
           <p className="mt-2 truncate text-sm text-[var(--muted-foreground)]">
@@ -5511,7 +5511,7 @@ function ProgressPanel({
           </CardContent>
         </Card>
 
-        <Card size="sm" className="rounded-md border-[var(--border)] bg-white">
+        <Card size="sm" className="rounded-2xl border-[var(--border)] bg-white">
           <CardContent>
           <p className="truncate text-sm font-medium">任务</p>
           {jobActionError && <div className="mt-3 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm text-[var(--warning)]">{jobActionError}</div>}
@@ -5572,7 +5572,7 @@ function ProgressPanel({
           </CardContent>
         </Card>
 
-        <Card size="sm" className="rounded-md border-[var(--border)] bg-white">
+        <Card size="sm" className="rounded-2xl border-[var(--border)] bg-white">
           <CardContent>
           <p className="truncate text-sm font-medium">事件时间线</p>
           {state.timeline.length === 0 ? (
@@ -5608,7 +5608,7 @@ function TimelineDot({ status }: { status: "running" | "done" | "error" | "info"
 
 function WorkCard({ icon, title, detail, items }: { icon: React.ReactNode; title: string; detail: string; items: string[] }) {
   return (
-    <Card size="sm" className="rounded-md border-[var(--border)] bg-[var(--panel)]">
+    <Card size="sm" className="rounded-2xl border-[var(--border)] bg-[var(--panel)]">
       <CardContent>
       <div className="flex items-center gap-2">
         {icon}
