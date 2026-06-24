@@ -36,6 +36,7 @@ import { stageLabels, statusLabels } from "@/domain/stage-machine";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Sheet,
@@ -509,30 +510,30 @@ function LoginScreen({
 
         <form action={needsBootstrap ? onBootstrap : onLogin} className="mt-6 grid gap-3">
           {needsBootstrap && (
-            <input
+            <Input
               name="name"
               required
               placeholder="管理员姓名"
-              className="h-10 rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+              className="h-10 bg-white"
             />
           )}
-          <input
+          <Input
             name="email"
             type="email"
             required
             placeholder="邮箱"
-            className="h-10 rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+            className="h-10 bg-white"
           />
-          <input
+          <Input
             name="password"
             type="password"
             required
             placeholder="密码"
-            className="h-10 rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+            className="h-10 bg-white"
           />
-          <button className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[var(--foreground)] px-3 text-sm font-medium text-white">
+          <Button className="h-10">
             {needsBootstrap ? "创建管理员并进入工作台" : "登录工作台"}
-          </button>
+          </Button>
         </form>
 
         {error && !needsBootstrap && <div className="mt-4 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm text-[var(--warning)]">{error}</div>}
@@ -605,10 +606,10 @@ function ProjectSidebar({
                 <SheetDescription>项目创建后会进入数据库，并出现在左侧项目列表中。</SheetDescription>
               </SheetHeader>
               <form action={onCreate} className="grid gap-3 px-4">
-                <input name="brandName" required placeholder="品牌名" className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
-                <input name="projectName" required placeholder="项目名" className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
-                <input name="ownerName" required placeholder="负责人" className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
-                <input name="dueDate" type="date" className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
+                <Input name="brandName" required placeholder="品牌名" />
+                <Input name="projectName" required placeholder="项目名" />
+                <Input name="ownerName" required placeholder="负责人" />
+                <Input name="dueDate" type="date" />
                 <Button disabled={creating} className="w-full">
                   {creating ? <Loader2 className="animate-spin" size={16} /> : <Plus size={16} />}
                   创建项目
@@ -1998,18 +1999,19 @@ function ProjectBasicsCard({
           </p>
         </div>
         {canEdit ? (
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="lg"
             onClick={() => {
               setEditing((value) => !value);
               setMessage(null);
               setProjectError(null);
             }}
-            className="inline-flex h-9 items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 text-sm font-medium"
           >
             {editing ? <XCircle size={15} /> : <BriefcaseBusiness size={15} />}
             {editing ? "收起编辑" : "编辑信息"}
-          </button>
+          </Button>
         ) : (
           <span className="rounded bg-[var(--muted)] px-2 py-1 text-xs text-[var(--muted-foreground)]">当前角色只读</span>
         )}
@@ -2026,53 +2028,52 @@ function ProjectBasicsCard({
         <form action={handleSubmit} className="mt-4 grid gap-3 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3 md:grid-cols-2">
           <label className="grid gap-1 text-sm">
             <span className="font-medium">品牌名</span>
-            <input
+            <Input
               name="brandName"
               required
               defaultValue={project.brandName}
               disabled={saving}
-              className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm disabled:bg-[var(--muted)]"
+              className="bg-white"
             />
           </label>
           <label className="grid gap-1 text-sm">
             <span className="font-medium">项目名</span>
-            <input
+            <Input
               name="projectName"
               required
               defaultValue={project.projectName}
               disabled={saving}
-              className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm disabled:bg-[var(--muted)]"
+              className="bg-white"
             />
           </label>
           <label className="grid gap-1 text-sm">
             <span className="font-medium">负责人显示名</span>
-            <input
+            <Input
               name="ownerName"
               required
               defaultValue={project.ownerName}
               disabled={saving}
-              className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm disabled:bg-[var(--muted)]"
+              className="bg-white"
             />
             <span className="text-xs leading-5 text-[var(--muted-foreground)]">这里更新展示负责人；商务编辑权限仍以创建项目的负责人账号为准。</span>
           </label>
           <label className="grid gap-1 text-sm">
             <span className="font-medium">截止时间</span>
-            <input
+            <Input
               name="dueDate"
               type="date"
               defaultValue={project.dueDate ?? ""}
               disabled={saving}
-              className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm disabled:bg-[var(--muted)]"
+              className="bg-white"
             />
           </label>
           <div className="md:col-span-2">
-            <button
+            <Button
               disabled={saving}
-              className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-[var(--foreground)] px-3 text-sm font-medium text-white disabled:opacity-60"
             >
               {saving ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
               保存项目基础信息
-            </button>
+            </Button>
           </div>
         </form>
       )}
