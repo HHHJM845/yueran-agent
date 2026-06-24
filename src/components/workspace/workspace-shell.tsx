@@ -34,8 +34,17 @@ import type { ProjectSummary, Role } from "@/domain/types";
 import { projectStages } from "@/domain/types";
 import { stageLabels, statusLabels } from "@/domain/stage-machine";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import {
   type ApiError,
   type AiUsageSummaryView,
@@ -587,20 +596,30 @@ function ProjectSidebar({
       </div>
 
       {canCreateProject ? (
-        <form action={onCreate} className="grid gap-3 border-b border-[var(--border)] p-4">
-          <p className="text-sm font-medium">创建真实项目</p>
-          <input name="brandName" required placeholder="品牌名" className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
-          <input name="projectName" required placeholder="项目名" className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
-          <input name="ownerName" required placeholder="负责人" className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
-          <input name="dueDate" type="date" className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
-          <button
-            disabled={creating}
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-[var(--foreground)] px-3 text-sm font-medium text-white disabled:opacity-60"
-          >
-            {creating ? <Loader2 className="animate-spin" size={16} /> : <Plus size={16} />}
-            创建项目
-          </button>
-        </form>
+        <div className="border-b border-[var(--border)] p-3">
+          <Sheet>
+            <SheetTrigger render={<Button className="w-full" />}>
+              <Plus size={16} />
+              新建项目
+            </SheetTrigger>
+            <SheetContent side="left" className="w-[360px] sm:max-w-md">
+              <SheetHeader>
+                <SheetTitle>创建真实项目</SheetTitle>
+                <SheetDescription>项目创建后会进入数据库，并出现在左侧项目列表中。</SheetDescription>
+              </SheetHeader>
+              <form action={onCreate} className="grid gap-3 px-4">
+                <input name="brandName" required placeholder="品牌名" className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
+                <input name="projectName" required placeholder="项目名" className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
+                <input name="ownerName" required placeholder="负责人" className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
+                <input name="dueDate" type="date" className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
+                <Button disabled={creating} className="w-full">
+                  {creating ? <Loader2 className="animate-spin" size={16} /> : <Plus size={16} />}
+                  创建项目
+                </Button>
+              </form>
+            </SheetContent>
+          </Sheet>
+        </div>
       ) : (
         <div className="border-b border-[var(--border)] p-4 text-sm text-[var(--muted-foreground)]">
           当前角色不能创建项目。你可以查看已分配项目并补充创意资料。
