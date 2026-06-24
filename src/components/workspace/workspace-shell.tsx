@@ -743,7 +743,7 @@ function RoleDashboard({
               </CardContent>
             </Card>
           ) : (
-            <div className="mt-5 grid gap-3 xl:grid-cols-3">
+            <div className={dashboardSectionGridClass(activeSections.length)}>
               {activeSections.map((section) => (
                 <DashboardSectionCard
                   key={section.key}
@@ -927,6 +927,12 @@ function splitDashboardTaskTitle(title: string) {
     primary: primary.trim() || title,
     secondary: rest.join(separator).trim(),
   };
+}
+
+function dashboardSectionGridClass(sectionCount: number) {
+  if (sectionCount <= 1) return "mt-5 grid gap-3";
+  if (sectionCount === 2) return "mt-5 grid gap-3 xl:grid-cols-2";
+  return "mt-5 grid gap-3 xl:grid-cols-3";
 }
 
 function dashboardSectionKeyForCard(cardKey: string) {
