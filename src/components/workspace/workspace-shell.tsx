@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   AlertCircle,
   Bot,
@@ -1098,72 +1098,87 @@ function WorkspaceCenter({
             onStageSelect={setSelectedStage}
           />
 
-          <div className="mt-5 grid gap-4 lg:grid-cols-2">
-            <ProjectBasicsCard project={project} user={user} onProjectUpdated={onProjectUpdated} />
-            {user.role === "admin" && <ProjectMembersCard project={project} />}
-            {user.role === "admin" && <ScoringRulesCard />}
-            {user.role === "admin" && (
-              <AdminGovernanceCard governance={governance} error={governanceError} onRefresh={onGovernanceRefresh} />
-            )}
-            {user.role === "admin" && <AuditSearchCard projects={projects} />}
-            <AssetCenter project={project} assets={assets} assetAnalyses={assetAnalyses} onRefresh={onWorkspaceRefresh} />
-            <WorkCard
-              icon={<FileText size={18} />}
-              title="需求整理工作区"
-              detail="支持文本、PDF、Word、图片、视频和飞书链接。真实上传与解析会通过 OSS、数据库和 AI 任务记录完成。"
-              items={["标准需求模板", "样片标签", "待确认问题"]}
-            />
-            <RequirementStructuringCard project={project} artifacts={artifacts} onRefresh={onWorkspaceRefresh} />
-            <AssetAnalysisResults analyses={assetAnalyses} artifacts={artifacts} />
-            <TechnicalFeasibilityReviewCard project={project} user={user} stageStates={stageStates} onRefresh={onWorkspaceRefresh} />
-            <CreativeDirectionsCard
-              project={project}
-              user={user}
-              directions={creativeDirections}
-              expansions={creativeExpansions}
-              generatedImages={generatedImages}
-              artifacts={artifacts}
-              onRefresh={onWorkspaceRefresh}
-            />
-            <BusinessDocumentDraftCard project={project} user={user} onRefresh={onWorkspaceRefresh} />
-            <ProposalEditorCard
-              project={project}
-              user={user}
-              proposal={proposal}
-              snapshots={proposalSnapshots}
-              onRefresh={onWorkspaceRefresh}
-            />
-            <QuoteEditorCard
-              project={project}
-              user={user}
-              quote={quote}
-              snapshots={quoteSnapshots}
-              onRefresh={onWorkspaceRefresh}
-            />
-            <ContractEditorCard
-              project={project}
-              user={user}
-              assets={assets}
-              proposal={proposal}
-              quote={quote}
-              contract={contract}
-              snapshots={contractSnapshots}
-              exports={contractExports}
-              onRefresh={onWorkspaceRefresh}
-            />
-            <FeishuDeliveryCard
-              project={project}
-              user={user}
-              proposal={proposal}
-              quote={quote}
-              contract={contract}
-              proposalSnapshots={proposalSnapshots}
-              quoteSnapshots={quoteSnapshots}
-              contractSnapshots={contractSnapshots}
-              deliveries={feishuDeliveries}
-              receivers={feishuReceivers}
-              onRefresh={onWorkspaceRefresh}
-            />
+          <div className="mt-5">
+            <StagePanel stage="brand_requirement_intake" selectedStage={selectedStage}>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <ProjectBasicsCard project={project} user={user} onProjectUpdated={onProjectUpdated} />
+                <AssetCenter project={project} assets={assets} assetAnalyses={assetAnalyses} onRefresh={onWorkspaceRefresh} />
+                <WorkCard
+                  icon={<FileText size={18} />}
+                  title="需求整理工作区"
+                  detail="支持文本、PDF、Word、图片、视频和飞书链接。真实上传与解析会通过 OSS、数据库和 AI 任务记录完成。"
+                  items={["标准需求模板", "样片标签", "待确认问题"]}
+                />
+                <RequirementStructuringCard project={project} artifacts={artifacts} onRefresh={onWorkspaceRefresh} />
+              </div>
+            </StagePanel>
+            <StagePanel stage="technical_feasibility" selectedStage={selectedStage}>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <AssetAnalysisResults analyses={assetAnalyses} artifacts={artifacts} />
+                <TechnicalFeasibilityReviewCard project={project} user={user} stageStates={stageStates} onRefresh={onWorkspaceRefresh} />
+              </div>
+            </StagePanel>
+            <StagePanel stage="creative_direction_proposal" selectedStage={selectedStage}>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <CreativeDirectionsCard
+                  project={project}
+                  user={user}
+                  directions={creativeDirections}
+                  expansions={creativeExpansions}
+                  generatedImages={generatedImages}
+                  artifacts={artifacts}
+                  onRefresh={onWorkspaceRefresh}
+                />
+              </div>
+            </StagePanel>
+            <StagePanel stage="selection_quote_contract" selectedStage={selectedStage}>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <BusinessDocumentDraftCard project={project} user={user} onRefresh={onWorkspaceRefresh} />
+                <ProposalEditorCard
+                  project={project}
+                  user={user}
+                  proposal={proposal}
+                  snapshots={proposalSnapshots}
+                  onRefresh={onWorkspaceRefresh}
+                />
+                <QuoteEditorCard
+                  project={project}
+                  user={user}
+                  quote={quote}
+                  snapshots={quoteSnapshots}
+                  onRefresh={onWorkspaceRefresh}
+                />
+                <ContractEditorCard
+                  project={project}
+                  user={user}
+                  assets={assets}
+                  proposal={proposal}
+                  quote={quote}
+                  contract={contract}
+                  snapshots={contractSnapshots}
+                  exports={contractExports}
+                  onRefresh={onWorkspaceRefresh}
+                />
+                <FeishuDeliveryCard
+                  project={project}
+                  user={user}
+                  proposal={proposal}
+                  quote={quote}
+                  contract={contract}
+                  proposalSnapshots={proposalSnapshots}
+                  quoteSnapshots={quoteSnapshots}
+                  contractSnapshots={contractSnapshots}
+                  deliveries={feishuDeliveries}
+                  receivers={feishuReceivers}
+                  onRefresh={onWorkspaceRefresh}
+                />
+              </div>
+            </StagePanel>
+            {projectStages.slice(4).map((stage) => (
+              <StagePanel key={stage} stage={stage} selectedStage={selectedStage}>
+                <ReservedStageCard stage={stage} />
+              </StagePanel>
+            ))}
           </div>
         </TabsContent>
         <TabsContent value="overview" className="mt-4 overflow-hidden rounded-md border border-[var(--border)] bg-white">
@@ -1177,9 +1192,49 @@ function WorkspaceCenter({
             onSelectProject={onSelectProject}
             onRefresh={onDashboardRefresh}
           />
+          {user.role === "admin" && (
+            <div className="grid gap-4 border-t border-[var(--border)] bg-[var(--panel-soft)] p-4 lg:grid-cols-2">
+              <ProjectMembersCard project={project} />
+              <ScoringRulesCard />
+              <AdminGovernanceCard governance={governance} error={governanceError} onRefresh={onGovernanceRefresh} />
+              <AuditSearchCard projects={projects} />
+            </div>
+          )}
         </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+function StagePanel({
+  stage,
+  selectedStage,
+  children,
+}: {
+  stage: ProjectStage;
+  selectedStage: ProjectStage;
+  children: ReactNode;
+}) {
+  return (
+    <section hidden={stage !== selectedStage} aria-label={stageLabels[stage]}>
+      {children}
+    </section>
+  );
+}
+
+function ReservedStageCard({ stage }: { stage: ProjectStage }) {
+  return (
+    <Card size="sm" className="rounded-md border-[var(--border)] bg-[var(--panel)]">
+      <CardContent className="flex items-start gap-3">
+        <CircleDashed className="mt-0.5 shrink-0 text-[var(--muted-foreground)]" size={18} />
+        <div className="min-w-0">
+          <p className="text-sm font-medium">{stageLabels[stage]}</p>
+          <p className="mt-1 text-xs leading-5 text-[var(--muted-foreground)]">
+            该阶段当前只保留导航与状态展示，具体业务工作区会在后续批次接入；已有持久化阶段状态仍会在上方步骤条中展示。
+          </p>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
