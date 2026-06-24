@@ -823,6 +823,8 @@ function DashboardSectionCard({
 }) {
   const primaryProjectId = section.items.find((item) => item.projectId)?.projectId ?? null;
   const itemCount = metric?.value ?? section.items.length;
+  const visibleItems = section.items.slice(0, 5);
+  const hasHiddenItems = itemCount > visibleItems.length;
 
   return (
     <Card size="sm" className="rounded-md border-[var(--border)] bg-white">
@@ -846,7 +848,7 @@ function DashboardSectionCard({
         </p>
       ) : (
         <div className="mt-3 grid gap-2">
-          {section.items.slice(0, 5).map((item) => {
+          {visibleItems.map((item) => {
             const titleParts = splitDashboardTaskTitle(item.title);
             return (
               <button
@@ -878,6 +880,16 @@ function DashboardSectionCard({
               </button>
             );
           })}
+          {hasHiddenItems && (
+            <button
+              type="button"
+              disabled={!primaryProjectId}
+              onClick={() => primaryProjectId && onSelectProject(primaryProjectId)}
+              className="rounded-md border border-dashed border-[var(--border)] bg-white px-2.5 py-2 text-left text-xs font-medium text-[var(--muted-foreground)] hover:border-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-default disabled:hover:border-[var(--border)] disabled:hover:text-[var(--muted-foreground)]"
+            >
+              显示 {visibleItems.length}/{itemCount} · 查看全部
+            </button>
+          )}
         </div>
       )}
       </CardContent>
