@@ -33,6 +33,7 @@ import {
 import type { JobStatus, JobType, ProjectStage, ProjectSummary, Role } from "@/domain/types";
 import { projectStages } from "@/domain/types";
 import { stageLabels, statusLabels } from "@/domain/stage-machine";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -141,6 +142,27 @@ const roleLabels: Record<Role, string> = {
   creative: "创意团队",
   admin: "管理团队",
 };
+
+function userInitials(name: string) {
+  return Array.from(name.trim()).slice(0, 2).join("").toUpperCase() || "U";
+}
+
+function UserIdentity({ user }: { user: CurrentUser }) {
+  return (
+    <div className="flex items-center gap-3 rounded-full border border-white/70 bg-white/80 py-1.5 pr-3 pl-1.5 shadow-[0_8px_24px_-18px_rgb(74_55_35/0.35)] backdrop-blur-sm">
+      <Avatar size="lg" className="ring-2 ring-white">
+        <AvatarFallback className="bg-[linear-gradient(135deg,var(--macaron-purple),var(--macaron-pink))] font-semibold text-[var(--foreground)]">
+          {userInitials(user.name)}
+        </AvatarFallback>
+      </Avatar>
+      <div className="min-w-0">
+        <p className="max-w-32 truncate text-sm font-semibold">{user.name}</p>
+        <p className="max-w-32 truncate text-xs text-[var(--muted-foreground)]">{roleLabels[user.role]}</p>
+      </div>
+      <ChevronDown size={15} className="shrink-0 text-[var(--muted-foreground)]" aria-hidden="true" />
+    </div>
+  );
+}
 
 export function WorkspaceShell() {
   const [user, setUser] = useState<CurrentUser | null>(null);
@@ -712,14 +734,13 @@ function RoleDashboard({
           <h2 className="mt-1 text-3xl font-semibold leading-tight">{roleLabels[role]}</h2>
           <p className="mt-2 text-sm text-[var(--muted-foreground)]">当前登录：{user.name}</p>
         </div>
-        <button
-          type="button"
-          onClick={onRefresh}
-          className="inline-flex h-9 items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 text-sm font-medium"
-        >
-          <RefreshCcw size={15} />
-          刷新仪表盘
-        </button>
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          <Button type="button" variant="outline" onClick={onRefresh}>
+            <RefreshCcw size={15} />
+            刷新仪表盘
+          </Button>
+          <UserIdentity user={user} />
+        </div>
       </div>
 
       {error && <div className="mt-4 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm text-[var(--warning)]">{error.message}</div>}
@@ -1098,8 +1119,11 @@ function WorkspaceCenter({
               当前阶段：{stageLabels[project.currentStage]} · {statusLabels[project.status]}
             </p>
           </div>
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--panel-soft)] px-3 py-2 text-xs leading-5 text-[var(--muted-foreground)]">
-            通过下方需求文本表单创建真实 AI 任务
+          <div className="grid justify-items-end gap-2">
+            <UserIdentity user={user} />
+            <div className="rounded-full border border-[var(--border)] bg-[var(--panel-soft)] px-3 py-1.5 text-xs leading-5 text-[var(--muted-foreground)]">
+              通过下方需求文本表单创建真实 AI 任务
+            </div>
           </div>
         </div>
         </CardContent>
