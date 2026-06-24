@@ -36,6 +36,7 @@ import { stageLabels, statusLabels } from "@/domain/stage-machine";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
@@ -1043,6 +1044,7 @@ function WorkspaceCenter({
     },
     [projectCurrentStage, projectId]
   );
+  const [adminToolsOpen, setAdminToolsOpen] = useState(false);
 
   if (loading) {
     return <CenterState icon={<Loader2 className="animate-spin" size={22} />} title="正在恢复工作台" detail="系统正在从后端读取项目、阶段和产物状态。" />;
@@ -1213,12 +1215,28 @@ function WorkspaceCenter({
             onRefresh={onDashboardRefresh}
           />
           {user.role === "admin" && (
-            <div className="grid gap-4 border-t border-[var(--border)] bg-[var(--panel-soft)] p-4 lg:grid-cols-2">
-              <ProjectMembersCard project={project} />
-              <ScoringRulesCard />
-              <AdminGovernanceCard governance={governance} error={governanceError} onRefresh={onGovernanceRefresh} />
-              <AuditSearchCard projects={projects} />
-            </div>
+            <Collapsible open={adminToolsOpen} onOpenChange={setAdminToolsOpen}>
+              <div className="border-t border-[var(--border)] bg-[var(--panel-soft)] p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium">管理工具</p>
+                    <p className="mt-1 text-xs text-[var(--muted-foreground)]">成员、评分规则、治理和审计收在这里，避免覆盖角色待办。</p>
+                  </div>
+                  <CollapsibleTrigger render={<Button variant="outline" size="sm" />}>
+                    {adminToolsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                    {adminToolsOpen ? "收起工具" : "展开工具"}
+                  </CollapsibleTrigger>
+                </div>
+                <CollapsibleContent>
+                  <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                    <ProjectMembersCard project={project} />
+                    <ScoringRulesCard />
+                    <AdminGovernanceCard governance={governance} error={governanceError} onRefresh={onGovernanceRefresh} />
+                    <AuditSearchCard projects={projects} />
+                  </div>
+                </CollapsibleContent>
+              </div>
+            </Collapsible>
           )}
         </TabsContent>
       </Tabs>
