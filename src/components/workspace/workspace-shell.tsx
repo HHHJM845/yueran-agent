@@ -30,7 +30,7 @@ import {
   WandSparkles,
   XCircle,
 } from "lucide-react";
-import type { ProjectSummary, Role } from "@/domain/types";
+import type { JobStatus, JobType, ProjectSummary, Role } from "@/domain/types";
 import { projectStages } from "@/domain/types";
 import { stageLabels, statusLabels } from "@/domain/stage-machine";
 import { Badge } from "@/components/ui/badge";
@@ -5214,8 +5214,14 @@ function ProgressPanel({
   onRefresh: () => Promise<void>;
 }) {
   const jobs = Object.values(state.jobsById);
+  const visibleJobs = jobs.slice(0, 5);
+  const hiddenJobCount = Math.max(0, jobs.length - visibleJobs.length);
   const [jobActionMessage, setJobActionMessage] = useState<string | null>(null);
   const [jobActionError, setJobActionError] = useState<string | null>(null);
+  const [showAllJobs, setShowAllJobs] = useState(false);
+  const [expandedJobIds, setExpandedJobIds] = useState<Record<string, boolean>>({});
+  const displayedJobs = showAllJobs ? jobs : visibleJobs;
+  const projectLabel = selectedProject ? `${selectedProject.brandName} / ${selectedProject.projectName}` : "未选择项目";
 
   async function handleRetry(jobId: string) {
     setJobActionMessage(null);
@@ -5270,31 +5276,54 @@ function ProgressPanel({
           {jobs.length === 0 ? (
             <p className="mt-2 text-sm text-[var(--muted-foreground)]">当前项目还没有真实任务记录。发起需求结构化后会从数据库读取。</p>
           ) : (
-            <div className="mt-3 space-y-2">
-              {jobs.map((job) => (
-                <div key={job.id} className="rounded border border-[var(--border)] p-3 text-sm">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="font-medium">{job.title}</span>
-                    <span className="rounded bg-[var(--muted)] px-2 py-1 text-xs">{job.status}</span>
-                  </div>
-                  <p className="mt-2 text-xs text-[var(--muted-foreground)]">
-                    {job.provider ?? "internal"} {job.modelName ? `· ${job.modelName}` : ""}
-                  </p>
-                  {job.userMessage && <p className="mt-2 text-xs text-[var(--muted-foreground)]">{job.userMessage}</p>}
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {job.status === "failed" && (
-                      <button onClick={() => void handleRetry(job.id)} className="rounded border border-[var(--border)] px-2 py-1 text-xs font-medium">
-                        重试
-                      </button>
-                    )}
-                    {(job.status === "queued" || job.status === "retrying") && (
-                      <button onClick={() => void handleCancel(job.id)} className="rounded border border-[var(--border)] px-2 py-1 text-xs font-medium">
-                        取消
-                      </button>
-                    )}
-                  </div>
+            <div className="mt-3 divide-y divide-[var(--border)] overflow-hidden rounded-md border border-[var(--border)]">
+              {displayedJobs.map((job) => (
+                <div key={job.id} className="bg-white p-2.5 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setExpandedJobIds((current) => ({ ...current, [job.id]: !current[job.id] }))}
+                    className="flex w-full items-start gap-2 text-left"
+                    aria-expanded={Boolean(expandedJobIds[job.id])}
+                  >
+                    <Badge variant={jobStatusBadgeVariant(job.status)}>{jobStatusLabel(job.status)}</Badge>
+                    <span className="min-w-0 flex-1">
+                      <span className="block font-medium leading-5">{jobTypeLabel(job.type)}</span>
+                      <span className="mt-0.5 block line-clamp-2 text-[var(--muted-foreground)]">{projectLabel}</span>
+                    </span>
+                    <span className="shrink-0 text-[var(--muted-foreground)]">{formatDateTime(job.updatedAt)}</span>
+                  </button>
+                  {expandedJobIds[job.id] && (
+                    <div className="mt-2 rounded-md bg-[var(--panel-soft)] p-2 leading-5 text-[var(--muted-foreground)]">
+                      <p className="line-clamp-2 font-medium text-[var(--foreground)]">{job.title}</p>
+                      <p className="mt-1">
+                        {job.provider ?? "internal"} {job.modelName ? `· ${job.modelName}` : ""}
+                      </p>
+                      {job.userMessage && <p className="mt-1">{job.userMessage}</p>}
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {job.status === "failed" && (
+                          <button onClick={() => void handleRetry(job.id)} className="rounded border border-[var(--border)] px-2 py-1 text-xs font-medium">
+                            重试
+                          </button>
+                        )}
+                        {(job.status === "queued" || job.status === "retrying") && (
+                          <button onClick={() => void handleCancel(job.id)} className="rounded border border-[var(--border)] px-2 py-1 text-xs font-medium">
+                            取消
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
+              {hiddenJobCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllJobs((current) => !current)}
+                  className="w-full bg-[var(--panel-soft)] px-3 py-2 text-left text-xs font-medium text-[var(--accent-foreground)] hover:bg-[var(--muted)]"
+                >
+                  {showAllJobs ? "收起任务" : `查看更多 ${hiddenJobCount} 条`}
+                </button>
+              )}
             </div>
           )}
           </CardContent>
@@ -5381,6 +5410,40 @@ function connectionLabel(connection: string) {
   if (connection === "live") return "事件流已连接，正在接收真实进度。";
   if (connection === "reconnecting") return "事件流暂时中断，正在等待重新连接。";
   return "当前没有活动事件流。";
+}
+
+function jobTypeLabel(type: JobType) {
+  const labels: Record<JobType, string> = {
+    requirement_structuring: "需求结构化",
+    asset_understanding: "资料理解",
+    tag_scoring: "标签评分",
+    creative_direction_generation: "创意方向生成",
+    creative_expansion_generation: "故事大纲生成",
+    atmosphere_image_generation: "氛围图生成",
+    proposal_generation: "提案生成",
+    quote_contract_generation: "报价合同生成",
+    document_export: "文档导出",
+    feishu_delivery: "飞书交付",
+  };
+  return labels[type];
+}
+
+function jobStatusLabel(status: JobStatus) {
+  const labels: Record<JobStatus, string> = {
+    queued: "排队",
+    processing: "处理中",
+    succeeded: "成功",
+    failed: "失败",
+    retrying: "重试",
+    cancelled: "取消",
+  };
+  return labels[status];
+}
+
+function jobStatusBadgeVariant(status: JobStatus) {
+  if (status === "failed" || status === "cancelled") return "destructive";
+  if (status === "succeeded") return "secondary";
+  return "outline";
 }
 
 function auditActionLabel(action: string) {
