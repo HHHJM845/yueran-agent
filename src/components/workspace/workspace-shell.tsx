@@ -595,10 +595,10 @@ function ProjectSidebar({
   const canCreateProject = user.role === "business" || user.role === "admin";
 
   return (
-    <aside className="flex min-h-screen flex-col bg-[var(--panel)] min-[821px]:sticky min-[821px]:top-0 min-[821px]:h-screen min-[821px]:min-h-0">
+    <aside className="flex min-h-screen flex-col bg-[var(--sidebar)] min-[821px]:sticky min-[821px]:top-0 min-[821px]:h-screen min-[821px]:min-h-0">
       <div className="border-b border-[var(--border)] p-5">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-md bg-[var(--foreground)] text-white">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[linear-gradient(135deg,var(--macaron-purple),var(--macaron-pink))] text-[var(--foreground)] shadow-[0_10px_24px_-16px_rgb(91_66_112/0.5)]">
             <Bot size={20} />
           </div>
           <div>
@@ -620,7 +620,7 @@ function ProjectSidebar({
       {canCreateProject ? (
         <div className="border-b border-[var(--border)] p-3">
           <Sheet>
-            <SheetTrigger render={<Button className="w-full" />}>
+            <SheetTrigger render={<Button className="w-full rounded-full" />}>
               <Plus size={16} />
               新建项目
             </SheetTrigger>
@@ -673,10 +673,10 @@ function ProjectSidebar({
                 key={project.id}
                 onClick={() => onSelect(project.id)}
                 className={cn(
-                  "rounded-xl border p-3 text-left shadow-[0_1px_2px_rgb(0_0_0/0.025)] transition-all",
+                  "rounded-2xl border p-3 text-left transition-all",
                   selectedProjectId === project.id
-                    ? "border-[var(--accent)] bg-[#ecfdf5] shadow-[0_8px_20px_-16px_rgb(0_0_0/0.25)]"
-                    : "border-[var(--border)] bg-white hover:border-[#a7a79c] hover:shadow-[0_8px_20px_-18px_rgb(0_0_0/0.22)]"
+                    ? "border-transparent bg-[linear-gradient(115deg,var(--nav-selected-start),var(--nav-selected-end))] shadow-[0_14px_30px_-22px_rgb(105_72_124/0.55)]"
+                    : "border-transparent bg-transparent hover:bg-white/65 hover:shadow-[0_10px_24px_-22px_rgb(74_55_35/0.35)]"
                 )}
               >
                 <div className="flex items-start justify-between gap-3">
@@ -684,7 +684,12 @@ function ProjectSidebar({
                     <p className="text-sm font-semibold">{project.brandName}</p>
                     <p className="mt-1 text-sm text-[var(--muted-foreground)]">{project.projectName}</p>
                   </div>
-                  <span className="rounded bg-[var(--muted)] px-2 py-1 text-xs">{statusLabels[project.status]}</span>
+                  <span className={cn(
+                    "rounded-full px-2.5 py-1 text-xs font-medium",
+                    selectedProjectId === project.id ? "bg-white/65 text-[var(--foreground)]" : "bg-white/80 text-[var(--muted-foreground)]"
+                  )}>
+                    {statusLabels[project.status]}
+                  </span>
                 </div>
                 <p className="mt-3 text-xs text-[var(--muted-foreground)]">{stageLabels[project.currentStage]}</p>
                 <div className="mt-2 flex items-center justify-between text-xs text-[var(--muted-foreground)]">
@@ -727,7 +732,7 @@ function RoleDashboard({
   const metricBySectionKey = new Map(cards.map((card) => [dashboardSectionKeyForCard(card.key), card]));
 
   return (
-    <header className="border-b border-[var(--border)] bg-[var(--panel)] p-6">
+    <header className="border-b border-[var(--border)] bg-transparent p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-sm text-[var(--muted-foreground)]">角色仪表盘</p>
@@ -848,7 +853,7 @@ function DashboardSectionCard({
   const hasHiddenItems = itemCount > visibleItems.length;
 
   return (
-    <Card size="sm" className="rounded-2xl border-[var(--border)] bg-white">
+    <Card size="sm" className="rounded-2xl border-white/80 bg-[var(--card)] shadow-[0_18px_40px_-32px_rgb(74_55_35/0.42)]">
       <CardContent>
       <div className="min-w-0">
         <button
@@ -859,7 +864,12 @@ function DashboardSectionCard({
           title={primaryProjectId ? `打开最新${section.title}` : section.title}
         >
           <span className="min-w-0 truncate text-sm font-medium">{section.title}</span>
-          <Badge variant={dashboardBadgeVariant(metric?.tone)}>{itemCount}</Badge>
+          <Badge
+            variant={dashboardBadgeVariant(metric?.tone)}
+            className={cn("border-transparent px-2.5 text-[var(--foreground)] shadow-none", dashboardMetricAccentClass(metric?.tone, section.key))}
+          >
+            {itemCount}
+          </Badge>
         </button>
         <p className="mt-1 truncate text-xs leading-5 text-[var(--muted-foreground)]">{section.description}</p>
       </div>
@@ -975,6 +985,24 @@ function dashboardBadgeVariant(tone?: string) {
   if (tone === "danger") return "destructive";
   if (tone === "success") return "secondary";
   return "outline";
+}
+
+function dashboardMetricAccentClass(tone: string | undefined, sectionKey: string) {
+  if (tone === "danger") return "bg-[var(--macaron-pink)]";
+  if (tone === "success") return "bg-[var(--macaron-blue)]";
+
+  const accents: Record<string, string> = {
+    business_requirements: "bg-[var(--macaron-yellow)]",
+    business_quote_contract: "bg-[var(--macaron-purple)]",
+    business_feishu: "bg-[var(--macaron-blue)]",
+    creative_evaluation: "bg-[var(--macaron-purple)]",
+    creative_deepening: "bg-[var(--macaron-pink)]",
+    creative_atmosphere: "bg-[var(--macaron-yellow)]",
+    admin_blocked: "bg-[var(--macaron-pink)]",
+    admin_failed_jobs: "bg-[var(--macaron-yellow)]",
+    admin_governance: "bg-[var(--macaron-blue)]",
+  };
+  return accents[sectionKey] ?? "bg-[var(--macaron-purple)]";
 }
 
 function WorkspaceCenter({
@@ -1109,15 +1137,23 @@ function WorkspaceCenter({
         </div>
       )}
 
-      <Card size="sm" className="rounded-2xl border-[var(--border)] bg-[var(--panel)]">
+      <Card
+        size="sm"
+        className="rounded-2xl border-white/80 bg-[linear-gradient(135deg,var(--card)_62%,var(--secondary))] shadow-[0_18px_42px_-30px_rgb(90_63_100/0.35)]"
+      >
         <CardContent>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <p className="truncate text-sm text-[var(--muted-foreground)]">{project.brandName}</p>
             <h2 className="mt-1 truncate text-3xl font-semibold leading-tight">{project.projectName}</h2>
-            <p className="mt-2 truncate text-sm text-[var(--muted-foreground)]">
-              当前阶段：{stageLabels[project.currentStage]} · {statusLabels[project.status]}
-            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Badge className="border-transparent bg-[var(--macaron-purple)] text-[var(--foreground)] shadow-none">
+                {stageLabels[project.currentStage]}
+              </Badge>
+              <Badge className="border-transparent bg-[var(--macaron-yellow)] text-[var(--foreground)] shadow-none">
+                {statusLabels[project.status]}
+              </Badge>
+            </div>
           </div>
           <div className="grid justify-items-end gap-2">
             <UserIdentity user={user} />
