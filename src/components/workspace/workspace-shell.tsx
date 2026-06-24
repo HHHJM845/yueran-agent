@@ -1020,11 +1020,27 @@ function WorkspaceCenter({
   onDashboardRefresh: () => void;
   onSelectProject: (projectId: string) => void;
 }) {
-  const [selectedStage, setSelectedStage] = useState<ProjectStage>(project?.currentStage ?? projectStages[0]);
-
-  useEffect(() => {
-    if (project) setSelectedStage(project.currentStage);
-  }, [project?.id, project?.currentStage]);
+  const projectId = project?.id ?? null;
+  const projectCurrentStage = project?.currentStage ?? projectStages[0];
+  const [stageSelection, setStageSelection] = useState<{
+    projectId: string | null;
+    currentStage: ProjectStage;
+    selectedStage: ProjectStage;
+  }>({
+    projectId,
+    currentStage: projectCurrentStage,
+    selectedStage: projectCurrentStage,
+  });
+  const selectedStage =
+    stageSelection.projectId === projectId && stageSelection.currentStage === projectCurrentStage
+      ? stageSelection.selectedStage
+      : projectCurrentStage;
+  const handleStageSelect = useCallback(
+    (stage: ProjectStage) => {
+      setStageSelection({ projectId, currentStage: projectCurrentStage, selectedStage: stage });
+    },
+    [projectCurrentStage, projectId]
+  );
 
   if (loading) {
     return <CenterState icon={<Loader2 className="animate-spin" size={22} />} title="正在恢复工作台" detail="系统正在从后端读取项目、阶段和产物状态。" />;
@@ -1096,7 +1112,7 @@ function WorkspaceCenter({
               currentStage={project.currentStage}
               selectedStage={selectedStage}
               stageStates={stageStates}
-              onStageSelect={setSelectedStage}
+              onStageSelect={handleStageSelect}
             />
           </div>
 
