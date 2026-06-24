@@ -38,6 +38,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 import {
   Sheet,
   SheetContent,
@@ -5381,7 +5382,8 @@ function StageNavigator({
           </div>
           <Badge variant="outline">真实阶段：{stageLabels[currentStage]}</Badge>
         </div>
-        <div className="mt-3 overflow-x-auto pb-1">
+        <Separator className="my-3" />
+        <div className="overflow-x-auto pb-1">
           <div className="flex min-w-max items-stretch gap-2">
             {projectStages.map((stage, index) => {
               const persisted = stageStateByKey.get(stage);
@@ -5390,14 +5392,15 @@ function StageNavigator({
               const isCurrent = index === currentIndex;
               const isSelected = stage === selectedStage;
               return (
-                <button
+                <Button
                   key={stage}
                   type="button"
+                  variant={isSelected ? "default" : "outline"}
                   onClick={() => onStageSelect(stage)}
                   aria-pressed={isSelected}
                   className={cn(
-                    "group relative flex w-36 shrink-0 flex-col gap-2 rounded-md border px-3 py-2 text-left text-xs transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]",
-                    isSelected ? "border-[var(--accent)] bg-[#ecfdf5] text-[var(--foreground)]" : "border-[var(--border)] bg-white hover:border-[var(--accent)]",
+                    "h-auto w-36 shrink-0 flex-col items-start justify-start gap-2 whitespace-normal px-3 py-2 text-left text-xs",
+                    isSelected ? "border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-foreground)] hover:bg-[var(--accent)]" : "bg-white hover:border-[var(--accent)]",
                     inferredStatus === "blocked" || inferredStatus === "needs_revision" ? "border-[#f3d08a] bg-[#fff8e6]" : "",
                     index > 3 && !persisted ? "opacity-70" : ""
                   )}
@@ -5406,7 +5409,8 @@ function StageNavigator({
                   <span
                     className={cn(
                       "flex h-6 w-6 items-center justify-center rounded text-[11px] font-medium",
-                      isCurrent ? "bg-[var(--accent)] text-white" : "bg-[var(--muted)] text-[var(--muted-foreground)]"
+                      isCurrent ? "bg-[var(--foreground)] text-white" : "bg-[var(--muted)] text-[var(--muted-foreground)]",
+                      isSelected && !isCurrent ? "bg-white/20 text-current" : ""
                     )}
                   >
                     {index + 1}
@@ -5415,7 +5419,7 @@ function StageNavigator({
                   <span className="truncate text-[var(--muted-foreground)]">
                     {statusLabels[inferredStatus]}{isCurrent ? " · 当前" : ""}
                   </span>
-                </button>
+                </Button>
               );
             })}
           </div>
