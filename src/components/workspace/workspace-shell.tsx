@@ -33,6 +33,7 @@ import {
 import type { ProjectSummary, Role } from "@/domain/types";
 import { projectStages } from "@/domain/types";
 import { stageLabels, statusLabels } from "@/domain/stage-machine";
+import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   type ApiError,
@@ -679,6 +680,8 @@ function RoleDashboard({
 }) {
   const cards = dashboard?.cards ?? [];
   const sections = dashboard?.sections ?? [];
+  const activeSections = sections.filter((section) => section.items.length > 0);
+  const showEmptySectionsState = Boolean(dashboard && sections.length > 0 && activeSections.length === 0);
 
   return (
     <header className="border-b border-[var(--border)] bg-[var(--panel)] p-5">
@@ -712,11 +715,25 @@ function RoleDashboard({
             ))}
           </div>
 
-          <div className="mt-4 grid gap-3 xl:grid-cols-3">
-            {sections.map((section) => (
+          {showEmptySectionsState ? (
+            <Card size="sm" className="mt-4 border-[var(--border)] bg-white">
+              <CardContent className="flex items-start gap-3">
+                <CircleDashed className="mt-0.5 shrink-0 text-[var(--muted-foreground)]" size={16} />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">当前没有待处理事项</p>
+                  <p className="mt-1 text-xs leading-5 text-[var(--muted-foreground)]">
+                    角色队列暂时为空；有新的项目、异常任务或交付事项时会在这里聚合展示。
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="mt-4 grid gap-3 xl:grid-cols-3">
+              {activeSections.map((section) => (
               <DashboardSectionCard key={section.key} section={section} onSelectProject={onSelectProject} />
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
 
           {dashboard?.recentProjects.length ? (
             <div className="mt-4 rounded-md border border-[var(--border)] bg-white p-4">
