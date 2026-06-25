@@ -18,7 +18,7 @@ const envSchema = z.object({
   ARK_BASE_URL: z.string().default("https://ark.cn-beijing.volces.com/api/v3"),
   ARK_TEXT_STRUCTURING_MODEL: z.string().default("doubao-seed-2-1-pro-260628"),
   ARK_IMAGE_VIDEO_UNDERSTANDING_MODEL: z.string().default("doubao-seed-2-0-lite-260215"),
-  ARK_VIDEO_GENERATION_MODEL: z.string().default("doubao-seedance-2-0-fast"),
+  ARK_VIDEO_GENERATION_MODEL: z.string().default("doubao-seedance-1-5-pro-251215"),
   ARK_MATERIAL_EMBEDDING_MODEL: z.string().default("doubao-embedding-vision-251215"),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_BASE_URL: z.string().optional(),

@@ -34,7 +34,7 @@ export async function POST(request: Request, context: { params: Promise<{ projec
         ok: true,
         data: {
           jobId: result.jobId,
-          message: "需求结构化任务已创建。你可以在右侧进度面板查看真实处理进度。",
+          message: "需求结构化任务已创建。系统会写入后端任务日志，完成后刷新工作台即可查看结果。",
         },
       },
       { status: 202 }

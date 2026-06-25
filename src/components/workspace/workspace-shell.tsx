@@ -1,9 +1,9 @@
 "use client";
 
-import { type ReactNode, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import Image from "next/image";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
-  Bot,
   BriefcaseBusiness,
   Bold,
   CheckCircle2,
@@ -20,19 +20,23 @@ import {
   List,
   ListOrdered,
   Loader2,
+  LogOut,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pilcrow,
   Plus,
   RefreshCcw,
   Send,
   Sparkles,
   Upload,
+  UserPlus,
   Video,
   WandSparkles,
   XCircle,
 } from "lucide-react";
-import type { JobStatus, JobType, ProjectStage, ProjectSummary, Role } from "@/domain/types";
+import type { ProjectStage, ProjectSummary, Role } from "@/domain/types";
 import { projectStages } from "@/domain/types";
-import { stageLabels, statusLabels } from "@/domain/stage-machine";
+import { stageLabels, stageStepLabels, statusLabels, workflowModules } from "@/domain/stage-machine";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -40,7 +44,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import {
   Sheet,
   SheetContent,
@@ -49,38 +52,30 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   type ApiError,
-  type AiUsageSummaryView,
-  type AuditLogView,
+  type ApiResult,
   type ConfigStatus,
   type CurrentUser,
   type DashboardCardView,
   type DashboardSectionView,
-  type ProjectMember,
-  type ScoringRuleView,
-  addProjectMember,
   analyzeAsset,
   bootstrapAdmin,
-  cancelJob,
   createAssetAccess,
   createDocumentExportAccess,
   createProject,
+  createReviewCut,
   createSystemUser,
   createUploadUrl,
+  createWorkflowClientReview,
   deliverToFeishu,
   exportContract,
   fetchBootstrapStatus,
-  fetchAuditLogs,
   fetchConfig,
   fetchCurrentUser,
   fetchGovernance,
-  fetchProjectMembers,
   fetchProjects,
   fetchRoleDashboard,
-  fetchScoringRuleVersions,
-  fetchScoringRules,
   fetchWorkspace,
   generateAtmosphereImage,
   generateCreativeDirections,
@@ -90,24 +85,25 @@ import {
   logout,
   registerExternalAsset,
   registerUploadedAsset,
+  approveReviewCut,
+  confirmStoryboardImage,
+  confirmStoryboardVideo,
+  createStoryboardSceneClientReview,
   reviewGeneratedImage,
   reviewCreativeDirection,
   reviewContract,
   reviewQuote,
   reviewTechnicalFeasibility,
   retryFeishuDelivery,
-  retryJob,
   saveContract,
   saveFeishuReceiver,
   saveProposal,
   saveQuote,
-  saveScoringRule,
+  saveScriptPackage,
   structureRequirement,
-  subscribeToJobEvents,
   type AssetAnalysisView,
   type AssetView,
   type ArtifactView,
-  type AuditLogPageView,
   type CreativeDirectionView,
   type CreativeDirectionReviewAction,
   type CreativeExpansionView,
@@ -122,19 +118,31 @@ import {
   type FeishuReceiverType,
   type GeneratedImageView,
   type GovernanceView,
+  type ClientReviewItemView,
+  type ClientReviewTaskView,
+  type CreateClientReviewType,
   type ProjectStageStateView,
   type ProposalView,
   type QuoteItemView,
   type QuoteView,
   type RoleDashboardView,
-  type ScoringRuleVersionView,
+  type ReviewCutAnnotationView,
+  type ReviewCutView,
+  type ScriptDirectionPackageView,
+  type ScriptReferenceAssetView,
+  type StoryboardImageView,
+  type StoryboardSceneView,
+  type StoryboardShotView,
+  type StoryboardVideoView,
   type TechnicalFeasibilityAction,
   type WorkspaceData,
   updateProjectBasics,
   updateCreativeDirectionContent,
   updateCreativeDirectionSelection,
+  generateStoryboardImage,
+  generateStoryboardVideo,
+  splitScriptPackage,
 } from "@/components/workspace/api";
-import { initialWorkspaceState, workspaceReducer } from "@/components/workspace/progress-reducer";
 import { cn } from "@/lib/utils";
 
 const roleLabels: Record<Role, string> = {
@@ -143,24 +151,137 @@ const roleLabels: Record<Role, string> = {
   admin: "管理团队",
 };
 
-function userInitials(name: string) {
-  return Array.from(name.trim()).slice(0, 2).join("").toUpperCase() || "U";
+function BrandLogo({ className, size = 30 }: { className?: string; size?: number }) {
+  return (
+    <Image
+      src="/logo.png"
+      alt="MOPHRO"
+      width={size}
+      height={size}
+      priority
+      className={cn("size-[30px] object-contain", className)}
+    />
+  );
 }
 
-function UserIdentity({ user }: { user: CurrentUser }) {
+function AccountSidebarCard({
+  user,
+  onLogout,
+}: {
+  user: CurrentUser;
+  onLogout: () => void;
+}) {
+  const [creatingUser, setCreatingUser] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [accountError, setAccountError] = useState<string | null>(null);
+  const canCreateUser = user.role === "admin";
+
+  async function handleCreateUser(formData: FormData) {
+    setCreatingUser(true);
+    setMessage(null);
+    setAccountError(null);
+
+    const result = await createSystemUser({
+      name: String(formData.get("name") ?? ""),
+      email: String(formData.get("email") ?? ""),
+      password: String(formData.get("password") ?? ""),
+      role: String(formData.get("role") ?? "creative") as Role,
+    });
+
+    if (result.ok) {
+      setMessage(result.data.message);
+    } else {
+      setAccountError(result.error.message);
+    }
+
+    setCreatingUser(false);
+  }
+
   return (
-    <div className="flex items-center gap-3 rounded-full border border-white/70 bg-white/80 py-1.5 pr-3 pl-1.5 shadow-[0_8px_24px_-18px_rgb(74_55_35/0.35)] backdrop-blur-sm">
-      <Avatar size="lg" className="ring-2 ring-white">
-        <AvatarFallback className="bg-[linear-gradient(135deg,var(--macaron-purple),var(--macaron-pink))] font-semibold text-[var(--foreground)]">
-          {userInitials(user.name)}
-        </AvatarFallback>
-      </Avatar>
-      <div className="min-w-0">
-        <p className="max-w-32 truncate text-sm font-semibold">{user.name}</p>
-        <p className="max-w-32 truncate text-xs text-[var(--muted-foreground)]">{roleLabels[user.role]}</p>
-      </div>
-      <ChevronDown size={15} className="shrink-0 text-[var(--muted-foreground)]" aria-hidden="true" />
-    </div>
+    <Sheet>
+      <SheetTrigger
+        render={
+          <button
+            type="button"
+            className="group flex w-full items-center gap-3 rounded-[1rem] px-2.5 py-2 text-left transition hover:bg-[var(--surface-card)]/72"
+          />
+        }
+      >
+        <div className="flex min-w-0 items-center gap-3">
+          <Avatar className="size-9 shrink-0 ring-1 ring-white shadow-[0_8px_18px_-14px_rgb(38_48_55/0.55)]">
+            <AvatarFallback className="bg-[var(--surface-soft)] text-[0.78rem] font-semibold text-[var(--text-primary)]">
+              JM
+            </AvatarFallback>
+          </Avatar>
+          <div className="min-w-0">
+            <p className="truncate text-[0.95rem] font-semibold leading-5 tracking-[-0.018em] text-[var(--text-primary)]">JM</p>
+            <p className="truncate text-[0.82rem] leading-4 text-[var(--text-secondary)]">{roleLabels[user.role]}</p>
+          </div>
+        </div>
+        <ChevronDown size={14} className="ml-auto shrink-0 text-[var(--text-secondary)] opacity-65 transition group-hover:text-[var(--text-primary)] group-hover:opacity-100" />
+      </SheetTrigger>
+      <SheetContent side="left" className="w-[380px] sm:max-w-md">
+        <SheetHeader>
+          <SheetTitle>账户管理</SheetTitle>
+          <SheetDescription>用户创建和退出登录收纳在这里，左侧工作台保持干净。</SheetDescription>
+        </SheetHeader>
+
+        <div className="grid gap-4 px-4 pb-4">
+          <div className="ds-card-soft p-4">
+            <div className="flex items-center gap-3">
+              <Avatar size="lg">
+                <AvatarFallback className="bg-[var(--surface-soft)] font-semibold text-[var(--text-primary)]">
+                  JM
+                </AvatarFallback>
+              </Avatar>
+              <div className="min-w-0">
+                <p className="font-semibold text-[var(--text-primary)]">JM</p>
+                <p className="text-sm text-[var(--text-secondary)]">{roleLabels[user.role]}</p>
+                {user.email && <p className="mt-1 truncate text-xs text-[var(--text-secondary)]">{user.email}</p>}
+              </div>
+            </div>
+          </div>
+
+          {canCreateUser ? (
+            <form action={handleCreateUser} className="grid gap-3 ds-card-soft p-4">
+              <div>
+                <p className="flex items-center gap-2 text-sm font-semibold">
+                  <UserPlus size={15} />
+                  添加用户
+                </p>
+                <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
+                  创建真实系统账号；创建后可在项目成员管理里加入具体项目。
+                </p>
+              </div>
+              <Input name="name" required disabled={creatingUser} placeholder="成员姓名" />
+              <Input name="email" type="email" required disabled={creatingUser} placeholder="成员邮箱" />
+              <Input name="password" type="password" required minLength={12} disabled={creatingUser} placeholder="至少 12 位密码" />
+              <select name="role" disabled={creatingUser} defaultValue="creative" className="h-9 ds-card-sm px-3 text-sm disabled:bg-[var(--muted)]">
+                <option value="business">商务团队</option>
+                <option value="creative">创意团队</option>
+                <option value="admin">管理团队</option>
+              </select>
+              <Button type="submit" disabled={creatingUser} className="w-full">
+                {creatingUser ? <Loader2 className="animate-spin" size={16} /> : <UserPlus size={16} />}
+                创建用户
+              </Button>
+            </form>
+          ) : (
+            <div className="ds-card-soft p-4 text-sm leading-6 text-[var(--text-secondary)]">
+              当前角色不能创建系统用户。如需添加成员，请联系管理团队。
+            </div>
+          )}
+
+          {accountError && <div className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm text-[var(--warning)]">{accountError}</div>}
+          {message && <div className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-3 text-sm text-[var(--success)]">{message}</div>}
+
+          <Button type="button" variant="outline" onClick={onLogout} className="w-full justify-center text-[var(--accent)]">
+            <LogOut size={16} />
+            退出登录
+          </Button>
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -180,14 +301,13 @@ export function WorkspaceShell() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [workspaceData, setWorkspaceData] = useState<WorkspaceData | null>(null);
-  const [state, dispatch] = useReducer(workspaceReducer, initialWorkspaceState);
-  const lastSequenceByJobRef = useRef(state.lastSequenceByJob);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
     [projects, selectedProjectId]
   );
-  const activeJobId = useMemo(() => Object.values(state.jobsById)[0]?.id ?? null, [state.jobsById]);
+  const selectedWorkspaceData = workspaceData?.projectId === selectedProjectId ? workspaceData : null;
   const role = user?.role ?? "business";
 
   const refreshGovernance = useCallback(async () => {
@@ -239,23 +359,37 @@ export function WorkspaceShell() {
 
   useEffect(() => {
     let cancelled = false;
-
-    Promise.all([fetchCurrentUser(), fetchBootstrapStatus()]).then(([result, bootstrapResult]) => {
+    const authTimeout = window.setTimeout(() => {
       if (cancelled) return;
-      const bootstrapNeeded = bootstrapResult.ok && bootstrapResult.data.needsBootstrap;
-      if (result.ok) {
-        setUser(result.data.user);
-      } else {
-        setAuthError(bootstrapNeeded ? null : result.error.message);
-      }
-      if (bootstrapResult.ok) {
-        setNeedsBootstrap(bootstrapResult.data.needsBootstrap);
-      }
+      setAuthError("登录状态检查超时。请重新登录内部工作台。");
       setAuthLoading(false);
-    });
+    }, 4000);
+
+    Promise.all([fetchCurrentUser(), fetchBootstrapStatus()])
+      .then(([result, bootstrapResult]) => {
+        if (cancelled) return;
+        const bootstrapNeeded = bootstrapResult.ok && bootstrapResult.data.needsBootstrap;
+        if (result.ok) {
+          setUser(result.data.user);
+        } else {
+          setAuthError(bootstrapNeeded ? null : result.error.message);
+        }
+        if (bootstrapResult.ok) {
+          setNeedsBootstrap(bootstrapResult.data.needsBootstrap);
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAuthError("登录状态检查没有完成。请刷新页面或重新登录内部工作台。");
+      })
+      .finally(() => {
+        window.clearTimeout(authTimeout);
+        if (!cancelled) setAuthLoading(false);
+      });
 
     return () => {
       cancelled = true;
+      window.clearTimeout(authTimeout);
     };
   }, []);
 
@@ -304,7 +438,6 @@ export function WorkspaceShell() {
       if (cancelled) return;
       if (result.ok) {
         setWorkspaceData(result.data);
-        dispatch({ type: "hydrate", data: result.data });
       } else {
         setError(result.error);
       }
@@ -315,21 +448,16 @@ export function WorkspaceShell() {
     };
   }, [selectedProjectId]);
 
-  useEffect(() => {
-    lastSequenceByJobRef.current = state.lastSequenceByJob;
-  }, [state.lastSequenceByJob]);
-
   const refreshWorkspace = useCallback(async (projectId: string) => {
     const [workspace, projectResult] = await Promise.all([fetchWorkspace(projectId), fetchProjects()]);
     if (workspace.ok) {
       setWorkspaceData(workspace.data);
-      dispatch({ type: "hydrate", data: workspace.data });
     } else {
       setError(workspace.error);
     }
     if (projectResult.ok) {
       setProjects(projectResult.data);
-      setSelectedProjectId((current) => current ?? projectId);
+      setSelectedProjectId(projectId);
     }
   }, []);
 
@@ -342,25 +470,6 @@ export function WorkspaceShell() {
       setDashboardError(result.error);
     }
   }, []);
-
-  useEffect(() => {
-    if (!activeJobId || !selectedProjectId) return;
-    dispatch({ type: "connection", connection: "connecting" });
-    const after = lastSequenceByJobRef.current[activeJobId] ?? 0;
-    return subscribeToJobEvents(
-      activeJobId,
-      after,
-      (event) => {
-        dispatch({ type: "event", event });
-        if (event.type === "artifact.created" || event.type === "job.completed" || event.type === "job.failed" || event.type === "step.failed") {
-          void refreshWorkspace(selectedProjectId);
-          void refreshDashboard();
-          void refreshGovernance();
-        }
-      },
-      () => dispatch({ type: "connection", connection: "reconnecting" })
-    );
-  }, [activeJobId, selectedProjectId, refreshWorkspace, refreshDashboard, refreshGovernance]);
 
   async function handleCreateProject(formData: FormData) {
     setCreating(true);
@@ -443,7 +552,7 @@ export function WorkspaceShell() {
   }
 
   return (
-    <main className="shell-grid">
+    <main className={cn("shell-grid", sidebarCollapsed && "is-sidebar-collapsed")}>
       <ProjectSidebar
         projects={projects}
         selectedProjectId={selectedProjectId}
@@ -455,10 +564,25 @@ export function WorkspaceShell() {
         creating={creating}
         user={user}
         onLogout={() => void handleLogout()}
+        onToggleSidebar={() => setSidebarCollapsed(true)}
       />
 
-      <section className="min-w-0 border-x border-[var(--border)] bg-[var(--panel-soft)] min-[821px]:h-screen min-[821px]:overflow-y-auto">
+      {sidebarCollapsed && (
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="secondary"
+          onClick={() => setSidebarCollapsed(false)}
+          aria-label="展开左侧项目菜单"
+          className="fixed left-3 top-4 z-50 border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] text-[var(--macaron-yellow-fg)] shadow-[0_12px_28px_-18px_rgb(70_52_34/0.45)] hover:bg-[var(--macaron-yellow-bg)]"
+        >
+          <PanelLeftOpen size={16} />
+        </Button>
+      )}
+
+      <section className="workspace-workbench min-w-0 border-x border-[var(--border-soft)] bg-[var(--surface-soft)] min-[821px]:h-screen min-[821px]:overflow-y-auto">
         <WorkspaceCenter
+          key={selectedProject?.id ?? "dashboard"}
           project={selectedProject}
           projects={projects}
           role={role}
@@ -468,22 +592,32 @@ export function WorkspaceShell() {
           config={config}
           dashboard={dashboard}
           dashboardError={dashboardError}
-          assets={workspaceData?.assets ?? []}
-          assetAnalyses={workspaceData?.assetAnalyses ?? []}
-          creativeDirections={workspaceData?.creativeDirections ?? []}
-          creativeExpansions={workspaceData?.creativeExpansions ?? []}
-          generatedImages={workspaceData?.generatedImages ?? []}
-          proposal={workspaceData?.proposal ?? null}
-          proposalSnapshots={workspaceData?.proposalSnapshots ?? []}
-          quote={workspaceData?.quote ?? null}
-          quoteSnapshots={workspaceData?.quoteSnapshots ?? []}
-          contract={workspaceData?.contract ?? null}
-          contractSnapshots={workspaceData?.contractSnapshots ?? []}
-          contractExports={workspaceData?.contractExports ?? []}
-          feishuDeliveries={workspaceData?.feishuDeliveries ?? []}
-          feishuReceivers={workspaceData?.feishuReceivers ?? []}
-          stageStates={workspaceData?.stageStates ?? []}
-          artifacts={workspaceData?.artifacts ?? []}
+          assets={selectedWorkspaceData?.assets ?? []}
+          assetAnalyses={selectedWorkspaceData?.assetAnalyses ?? []}
+          creativeDirections={selectedWorkspaceData?.creativeDirections ?? []}
+          creativeExpansions={selectedWorkspaceData?.creativeExpansions ?? []}
+          generatedImages={selectedWorkspaceData?.generatedImages ?? []}
+          scriptPackages={selectedWorkspaceData?.scriptPackages ?? []}
+          scriptReferences={selectedWorkspaceData?.scriptReferences ?? []}
+          storyboardScenes={selectedWorkspaceData?.storyboardScenes ?? []}
+          storyboardShots={selectedWorkspaceData?.storyboardShots ?? []}
+          storyboardImages={selectedWorkspaceData?.storyboardImages ?? []}
+          storyboardVideos={selectedWorkspaceData?.storyboardVideos ?? []}
+          reviewCuts={selectedWorkspaceData?.reviewCuts ?? []}
+          reviewCutAnnotations={selectedWorkspaceData?.reviewCutAnnotations ?? []}
+          clientReviewTasks={selectedWorkspaceData?.clientReviewTasks ?? []}
+          clientReviewItems={selectedWorkspaceData?.clientReviewItems ?? []}
+          proposal={selectedWorkspaceData?.proposal ?? null}
+          proposalSnapshots={selectedWorkspaceData?.proposalSnapshots ?? []}
+          quote={selectedWorkspaceData?.quote ?? null}
+          quoteSnapshots={selectedWorkspaceData?.quoteSnapshots ?? []}
+          contract={selectedWorkspaceData?.contract ?? null}
+          contractSnapshots={selectedWorkspaceData?.contractSnapshots ?? []}
+          contractExports={selectedWorkspaceData?.contractExports ?? []}
+          feishuDeliveries={selectedWorkspaceData?.feishuDeliveries ?? []}
+          feishuReceivers={selectedWorkspaceData?.feishuReceivers ?? []}
+          stageStates={selectedWorkspaceData?.stageStates ?? []}
+          artifacts={selectedWorkspaceData?.artifacts ?? []}
           governance={governance}
           governanceError={governanceError}
           onGovernanceRefresh={refreshGovernance}
@@ -497,13 +631,6 @@ export function WorkspaceShell() {
         />
       </section>
 
-      <ProgressPanel
-        state={state}
-        selectedProject={selectedProject}
-        onRefresh={async () => {
-          if (selectedProject) await refreshWorkspace(selectedProject.id);
-        }}
-      />
     </main>
   );
 }
@@ -520,15 +647,13 @@ function LoginScreen({
   onBootstrap: (formData: FormData) => void;
 }) {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[var(--panel-soft)] p-6">
-      <section className="w-full max-w-sm rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6 shadow-[0_1px_2px_rgb(0_0_0/0.03),0_16px_44px_-28px_rgb(0_0_0/0.28)]">
+    <main className="flex min-h-screen items-center justify-center bg-[var(--surface-soft)] p-6">
+      <section className="w-full max-w-sm rounded-card border border-[var(--border-soft)] bg-[var(--surface-card)] p-6 shadow-[0_1px_2px_rgb(0_0_0/0.03),0_16px_44px_-28px_rgb(0_0_0/0.28)]">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-md bg-[var(--foreground)] text-white">
-            <Bot size={20} />
-          </div>
+          <BrandLogo />
           <div>
-            <h1 className="text-lg font-semibold">AUGC Flow</h1>
-            <p className="text-sm text-[var(--muted-foreground)]">{needsBootstrap ? "创建首个管理员" : "内部团队登录"}</p>
+            <h1 className="text-[1.5rem] font-semibold leading-none tracking-[-0.035em] text-[var(--text-primary)]">MOPHRO</h1>
+            <p className="text-sm text-[var(--text-secondary)]">{needsBootstrap ? "创建首个管理员" : "内部团队登录"}</p>
           </div>
         </div>
 
@@ -538,7 +663,7 @@ function LoginScreen({
               name="name"
               required
               placeholder="管理员姓名"
-              className="h-10 bg-white"
+              className="h-10 bg-[var(--surface-card)]"
             />
           )}
           <Input
@@ -546,22 +671,22 @@ function LoginScreen({
             type="email"
             required
             placeholder="邮箱"
-            className="h-10 bg-white"
+            className="h-10 bg-[var(--surface-card)]"
           />
           <Input
             name="password"
             type="password"
             required
             placeholder="密码"
-            className="h-10 bg-white"
+            className="h-10 bg-[var(--surface-card)]"
           />
-          <Button className="h-10">
+          <Button type="submit" className="h-10">
             {needsBootstrap ? "创建管理员并进入工作台" : "登录工作台"}
           </Button>
         </form>
 
-        {error && !needsBootstrap && <div className="mt-4 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm text-[var(--warning)]">{error}</div>}
-        <p className="mt-4 text-xs leading-5 text-[var(--muted-foreground)]">
+        {error && !needsBootstrap && <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm text-[var(--warning)]">{error}</div>}
+        <p className="mt-4 text-xs leading-5 text-[var(--text-secondary)]">
           {needsBootstrap ? "创建后，首次管理员入口会自动关闭。" : "如果还没有账号，请让管理员通过成员管理或服务端脚本创建内部成员账号。"}
         </p>
       </section>
@@ -580,6 +705,7 @@ function ProjectSidebar({
   creating,
   user,
   onLogout,
+  onToggleSidebar,
 }: {
   projects: ProjectSummary[];
   selectedProjectId: string | null;
@@ -591,37 +717,93 @@ function ProjectSidebar({
   creating: boolean;
   user: CurrentUser;
   onLogout: () => void;
+  onToggleSidebar: () => void;
 }) {
   const canCreateProject = user.role === "business" || user.role === "admin";
 
   return (
-    <aside className="flex min-h-screen flex-col bg-[var(--sidebar)] min-[821px]:sticky min-[821px]:top-0 min-[821px]:h-screen min-[821px]:min-h-0">
-      <div className="border-b border-[var(--border)] p-5">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[linear-gradient(135deg,var(--macaron-purple),var(--macaron-pink))] text-[var(--foreground)] shadow-[0_10px_24px_-16px_rgb(91_66_112/0.5)]">
-            <Bot size={20} />
+    <aside className="workspace-sidebar flex min-h-screen flex-col bg-[var(--sidebar)] min-[821px]:sticky min-[821px]:top-0 min-[821px]:h-screen min-[821px]:min-h-0">
+      <div className="border-b border-[var(--border-soft)] px-4 py-4">
+        <div className="flex h-14 items-center justify-between gap-3 overflow-visible">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <BrandLogo size={84} className="size-[84px] shrink-0 -translate-y-1" />
+            <div className="-ml-2 min-w-0">
+              <h1 className="truncate text-[1.4rem] font-semibold leading-none tracking-[-0.04em] text-[var(--text-primary)]">MOPHRO</h1>
+            </div>
           </div>
-          <div>
-            <h1 className="text-lg font-semibold">AUGC Flow</h1>
-            <p className="text-sm text-[var(--muted-foreground)]">内部项目工作台</p>
-          </div>
-        </div>
-        <div className="mt-4 flex items-center justify-between gap-3 text-sm">
-          <div className="min-w-0">
-            <p className="truncate font-medium">{user.name}</p>
-            <p className="text-xs text-[var(--muted-foreground)]">{roleLabels[user.role]}</p>
-          </div>
-          <button onClick={onLogout} className="text-xs font-medium text-[var(--accent)]">
-            退出
-          </button>
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="secondary"
+            onClick={onToggleSidebar}
+            aria-label="隐藏左侧项目菜单"
+            title="隐藏左侧项目菜单"
+            className="shrink-0 border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] text-[var(--macaron-yellow-fg)] shadow-none hover:bg-[var(--macaron-yellow-bg)]"
+          >
+            <PanelLeftClose size={16} />
+          </Button>
         </div>
       </div>
 
-      {canCreateProject ? (
-        <div className="border-b border-[var(--border)] p-3">
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="px-3 py-4">
+        {loading ? (
+          <StateLine icon={<Loader2 className="animate-spin" size={16} />} text="正在读取数据库中的项目列表" />
+        ) : error ? (
+          <div className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm">
+            <div className="flex gap-2 font-medium text-[var(--warning)]">
+              <AlertCircle size={16} />
+              项目暂时无法读取
+            </div>
+            <p className="mt-2 text-[var(--text-secondary)]">{error.message}</p>
+            <button onClick={onRetry} className="mt-3 inline-flex items-center gap-2 text-sm font-medium text-[var(--accent)]">
+              <RefreshCcw size={14} />
+              重新读取
+            </button>
+          </div>
+        ) : projects.length === 0 ? (
+          <StateLine icon={<CircleDashed size={16} />} text="数据库中还没有项目。创建后会出现在这里。" />
+        ) : (
+          <div className="grid gap-1.5">
+            {projects.map((project) => (
+              <button
+                key={project.id}
+                onClick={() => onSelect(project.id)}
+                title={`${project.brandName} / ${project.projectName} · ${stageLabels[project.currentStage]} · ${project.ownerName} · ${project.dueDate ?? "未设截止"}`}
+                className={cn(
+                  "group rounded-[0.95rem] border text-left transition-all",
+                  selectedProjectId === project.id
+                    ? "border-transparent bg-[linear-gradient(115deg,var(--nav-selected-start),var(--nav-selected-end))] px-3 py-2 shadow-[0_12px_24px_-22px_rgb(105_72_124/0.5)]"
+                    : "border-transparent bg-transparent px-3 py-2 hover:bg-[var(--surface-card)]/65"
+                )}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[0.86rem] font-semibold leading-5 text-[var(--text-primary)]">{project.projectName}</p>
+                    <p className="mt-0.5 truncate text-[0.72rem] leading-4 text-[var(--text-secondary)]">
+                      {selectedProjectId === project.id
+                        ? `${project.brandName} · ${stageLabels[project.currentStage]} · ${project.ownerName}`
+                        : project.brandName}
+                    </p>
+                  </div>
+                  <span className={cn(
+                    "shrink-0 rounded-full px-2 py-0.5 text-[0.68rem] font-medium leading-4",
+                    selectedProjectId === project.id ? "bg-[var(--surface-card)]/62 text-[var(--text-primary)]" : "bg-transparent px-0 text-[var(--text-tertiary)]"
+                  )}>
+                    {statusLabels[project.status]}
+                  </span>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+        </div>
+      </ScrollArea>
+      <div className="border-t border-[var(--border-soft)] p-3">
+        {canCreateProject ? (
           <Sheet>
-            <SheetTrigger render={<Button className="w-full rounded-full" />}>
-              <Plus size={16} />
+            <SheetTrigger render={<Button variant="outline" size="sm" className="mb-2 w-full justify-start rounded-[0.95rem] bg-transparent shadow-none" />}>
+              <Plus size={14} />
               新建项目
             </SheetTrigger>
             <SheetContent side="left" className="w-[360px] sm:max-w-md">
@@ -634,74 +816,20 @@ function ProjectSidebar({
                 <Input name="projectName" required placeholder="项目名" />
                 <Input name="ownerName" required placeholder="负责人" />
                 <Input name="dueDate" type="date" />
-                <Button disabled={creating} className="w-full">
+                <Button type="submit" disabled={creating} className="w-full">
                   {creating ? <Loader2 className="animate-spin" size={16} /> : <Plus size={16} />}
                   创建项目
                 </Button>
               </form>
             </SheetContent>
           </Sheet>
-        </div>
-      ) : (
-        <div className="border-b border-[var(--border)] p-4 text-sm text-[var(--muted-foreground)]">
-          当前角色不能创建项目。你可以查看已分配项目并补充创意资料。
-        </div>
-      )}
-
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="p-3">
-        {loading ? (
-          <StateLine icon={<Loader2 className="animate-spin" size={16} />} text="正在读取数据库中的项目列表" />
-        ) : error ? (
-          <div className="rounded-md border border-[var(--border)] bg-[#fff8e6] p-3 text-sm">
-            <div className="flex gap-2 font-medium text-[var(--warning)]">
-              <AlertCircle size={16} />
-              项目暂时无法读取
-            </div>
-            <p className="mt-2 text-[var(--muted-foreground)]">{error.message}</p>
-            <button onClick={onRetry} className="mt-3 inline-flex items-center gap-2 text-sm font-medium text-[var(--accent)]">
-              <RefreshCcw size={14} />
-              重新读取
-            </button>
-          </div>
-        ) : projects.length === 0 ? (
-          <StateLine icon={<CircleDashed size={16} />} text="数据库中还没有项目。创建后会出现在这里。" />
         ) : (
-          <div className="grid gap-2">
-            {projects.map((project) => (
-              <button
-                key={project.id}
-                onClick={() => onSelect(project.id)}
-                className={cn(
-                  "rounded-2xl border p-3 text-left transition-all",
-                  selectedProjectId === project.id
-                    ? "border-transparent bg-[linear-gradient(115deg,var(--nav-selected-start),var(--nav-selected-end))] shadow-[0_14px_30px_-22px_rgb(105_72_124/0.55)]"
-                    : "border-transparent bg-transparent hover:bg-white/65 hover:shadow-[0_10px_24px_-22px_rgb(74_55_35/0.35)]"
-                )}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold">{project.brandName}</p>
-                    <p className="mt-1 text-sm text-[var(--muted-foreground)]">{project.projectName}</p>
-                  </div>
-                  <span className={cn(
-                    "rounded-full px-2.5 py-1 text-xs font-medium",
-                    selectedProjectId === project.id ? "bg-white/65 text-[var(--foreground)]" : "bg-white/80 text-[var(--muted-foreground)]"
-                  )}>
-                    {statusLabels[project.status]}
-                  </span>
-                </div>
-                <p className="mt-3 text-xs text-[var(--muted-foreground)]">{stageLabels[project.currentStage]}</p>
-                <div className="mt-2 flex items-center justify-between text-xs text-[var(--muted-foreground)]">
-                  <span>{project.ownerName}</span>
-                  <span>{project.dueDate ?? "未设截止"}</span>
-                </div>
-              </button>
-            ))}
-          </div>
+          <p className="mb-2 rounded-[0.95rem] bg-[var(--surface-soft)] px-3 py-2 text-xs leading-5 text-[var(--text-secondary)]">
+            当前角色不能创建项目
+          </p>
         )}
-        </div>
-      </ScrollArea>
+        <AccountSidebarCard user={user} onLogout={onLogout} />
+      </div>
     </aside>
   );
 }
@@ -732,37 +860,39 @@ function RoleDashboard({
   const metricBySectionKey = new Map(cards.map((card) => [dashboardSectionKeyForCard(card.key), card]));
 
   return (
-    <header className="border-b border-[var(--border)] bg-transparent p-6">
+    <header className="border-b border-[var(--border-soft)] bg-transparent p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-sm text-[var(--muted-foreground)]">角色仪表盘</p>
-          <h2 className="mt-1 text-3xl font-semibold leading-tight">{roleLabels[role]}</h2>
-          <p className="mt-2 text-sm text-[var(--muted-foreground)]">当前登录：{user.name}</p>
+          <p className="text-sm text-[var(--text-secondary)]">角色仪表盘</p>
+          <h2 className="mt-1 ds-text-page-title">{roleLabels[role]}</h2>
+          <p className="mt-2 text-sm text-[var(--text-secondary)]">当前登录：{user.name}</p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-3">
           <Button type="button" variant="outline" onClick={onRefresh}>
             <RefreshCcw size={15} />
             刷新仪表盘
           </Button>
-          <UserIdentity user={user} />
+          <span className="rounded-pill bg-[var(--surface-card)] px-3 py-1.5 text-xs font-medium text-[var(--text-secondary)]">
+            {user.name} · {roleLabels[user.role]}
+          </span>
         </div>
       </div>
 
-      {error && <div className="mt-4 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm text-[var(--warning)]">{error.message}</div>}
+      {error && <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm text-[var(--warning)]">{error.message}</div>}
 
       {loading && !dashboard ? (
-        <div className="mt-5 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3 text-sm text-[var(--muted-foreground)]">
+        <div className="mt-5 ds-card-soft p-3 text-sm text-[var(--text-secondary)]">
           正在从服务端聚合角色待办。
         </div>
       ) : (
         <>
           {showEmptySectionsState ? (
-            <Card size="sm" className="mt-4 border-[var(--border)] bg-white">
+            <Card size="sm" className="mt-4 border-[var(--border-soft)] bg-[var(--surface-card)]">
               <CardContent className="flex items-start gap-3">
-                <CircleDashed className="mt-0.5 shrink-0 text-[var(--muted-foreground)]" size={16} />
+                <CircleDashed className="mt-0.5 shrink-0 text-[var(--text-secondary)]" size={16} />
                 <div className="min-w-0">
                   <p className="text-sm font-medium">当前没有待处理事项</p>
-                  <p className="mt-1 text-xs leading-5 text-[var(--muted-foreground)]">
+                  <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
                     角色队列暂时为空；有新的项目、异常任务或交付事项时会在这里聚合展示。
                   </p>
                 </div>
@@ -782,10 +912,10 @@ function RoleDashboard({
           )}
 
           {dashboard?.recentProjects.length ? (
-            <div className="mt-4 rounded-md border border-[var(--border)] bg-white p-3 min-[821px]:hidden">
+            <div className="mt-4 ds-card-sm p-3 min-[821px]:hidden">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <p className="text-sm font-medium">最近项目</p>
-                <span className="text-xs text-[var(--muted-foreground)]">更新时间 {formatDateTime(dashboard.generatedAt)}</span>
+                <span className="text-xs text-[var(--text-secondary)]">更新时间 {formatDateTime(dashboard.generatedAt)}</span>
               </div>
               <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
                 {dashboard.recentProjects.map((project) => (
@@ -793,16 +923,16 @@ function RoleDashboard({
                     key={project.id}
                     type="button"
                     onClick={() => onSelectProject(project.id)}
-                    className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3 text-left text-sm hover:border-[var(--accent)]"
+                    className="ds-card-soft p-3 text-left text-sm hover:border-[var(--accent)]"
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <p className="truncate font-medium">{project.brandName} / {project.projectName}</p>
-                        <p className="mt-1 truncate text-xs text-[var(--muted-foreground)]">{stageLabels[project.currentStage]}</p>
+                        <p className="mt-1 truncate text-xs text-[var(--text-secondary)]">{stageLabels[project.currentStage]}</p>
                       </div>
-                      <span className="shrink-0 rounded bg-[var(--muted)] px-2 py-1 text-xs">{statusLabels[project.status]}</span>
+                      <span className="shrink-0 ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">{statusLabels[project.status]}</span>
                     </div>
-                    <p className="mt-2 text-xs text-[var(--muted-foreground)]">
+                    <p className="mt-2 text-xs text-[var(--text-secondary)]">
                       {project.ownerName} · {project.dueDate ?? "未设截止"}
                     </p>
                   </button>
@@ -814,7 +944,7 @@ function RoleDashboard({
       )}
 
       {config && (
-        <div className="mt-4 rounded-md border border-[var(--border)] bg-white p-3">
+        <div className="mt-4 ds-card-sm p-3">
           <div className="flex items-center gap-2 text-sm font-medium">
             {config.ready ? <CheckCircle2 size={16} className="text-[var(--success)]" /> : <AlertCircle size={16} className="text-[var(--warning)]" />}
             {config.ready ? "服务端配置已就绪" : "服务端配置未完整，真实能力会按需阻塞"}
@@ -824,8 +954,8 @@ function RoleDashboard({
               <span
                 key={check.key}
                 className={cn(
-                  "rounded px-2 py-1 text-xs",
-                  check.configured ? "bg-[#dcfce7] text-[var(--success)]" : "bg-[#fef3c7] text-[var(--warning)]"
+                  "ds-pill",
+                  check.configured ? "ds-pill-teal" : "ds-pill-yellow"
                 )}
               >
                 {check.label}
@@ -853,7 +983,7 @@ function DashboardSectionCard({
   const hasHiddenItems = itemCount > visibleItems.length;
 
   return (
-    <Card size="sm" className="rounded-2xl border-white/80 bg-[var(--card)] shadow-[0_18px_40px_-32px_rgb(74_55_35/0.42)]">
+    <Card size="sm" className="ds-card">
       <CardContent>
       <div className="min-w-0">
         <button
@@ -866,15 +996,15 @@ function DashboardSectionCard({
           <span className="min-w-0 truncate text-sm font-medium">{section.title}</span>
           <Badge
             variant={dashboardBadgeVariant(metric?.tone)}
-            className={cn("border-transparent px-2.5 text-[var(--foreground)] shadow-none", dashboardMetricAccentClass(metric?.tone, section.key))}
+            className={cn("border-transparent px-2.5 text-[var(--text-primary)] shadow-none", dashboardMetricAccentClass(metric?.tone, section.key))}
           >
             {itemCount}
           </Badge>
         </button>
-        <p className="mt-1 truncate text-xs leading-5 text-[var(--muted-foreground)]">{section.description}</p>
+        <p className="mt-1 truncate text-xs leading-5 text-[var(--text-secondary)]">{section.description}</p>
       </div>
       {section.items.length === 0 ? (
-        <p className="mt-3 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-2.5 text-xs leading-5 text-[var(--muted-foreground)]">
+        <p className="mt-3 ds-card-soft p-2.5 text-xs leading-5 text-[var(--text-secondary)]">
           {section.emptyMessage}
         </p>
       ) : (
@@ -887,24 +1017,24 @@ function DashboardSectionCard({
                 type="button"
                 disabled={!item.projectId}
                 onClick={() => item.projectId && onSelectProject(item.projectId)}
-                className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-2.5 text-left text-xs hover:border-[var(--accent)] disabled:cursor-default disabled:hover:border-[var(--border)]"
+                className="ds-card-soft p-2.5 text-left text-xs hover:border-[var(--accent)] disabled:cursor-default disabled:hover:border-[var(--border-soft)]"
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <p className="line-clamp-2 font-medium leading-5">{titleParts.primary}</p>
                     {titleParts.secondary && (
-                      <p className="mt-0.5 line-clamp-2 leading-5 text-[var(--muted-foreground)]">{titleParts.secondary}</p>
+                      <p className="mt-0.5 line-clamp-2 leading-5 text-[var(--text-secondary)]">{titleParts.secondary}</p>
                     )}
                   </div>
-                  <span className={cn("shrink-0 rounded px-2 py-1", taskPriorityClass(item.priority))}>{taskPriorityLabel(item.priority)}</span>
+                  <span className={cn("shrink-0 ds-pill", taskPriorityClass(item.priority))}>{taskPriorityLabel(item.priority)}</span>
                 </div>
                 {item.projectLabel && (
                   <Badge variant="outline" className="mt-2 max-w-full justify-start truncate">
                     {item.projectLabel}
                   </Badge>
                 )}
-                <p className="mt-2 line-clamp-2 leading-5 text-[var(--muted-foreground)]">{item.detail}</p>
-                <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[var(--muted-foreground)]">
+                <p className="mt-2 line-clamp-2 leading-5 text-[var(--text-secondary)]">{item.detail}</p>
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[var(--text-secondary)]">
                   <span>{dashboardStatusLabel(item.status)}</span>
                   {item.updatedAt && <span>{formatDateTime(item.updatedAt)}</span>}
                 </div>
@@ -916,7 +1046,7 @@ function DashboardSectionCard({
               type="button"
               disabled={!primaryProjectId}
               onClick={() => primaryProjectId && onSelectProject(primaryProjectId)}
-              className="rounded-md border border-dashed border-[var(--border)] bg-white px-2.5 py-2 text-left text-xs font-medium text-[var(--muted-foreground)] hover:border-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-default disabled:hover:border-[var(--border)] disabled:hover:text-[var(--muted-foreground)]"
+              className="rounded-card-sm border border-dashed border-[var(--border-soft)] bg-[var(--surface-card)] px-2.5 py-2 text-left text-xs font-medium text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-[var(--text-primary)] disabled:cursor-default disabled:hover:border-[var(--border-soft)] disabled:hover:text-[var(--text-secondary)]"
             >
               显示 {visibleItems.length}/{itemCount} · 查看全部
             </button>
@@ -930,9 +1060,9 @@ function DashboardSectionCard({
 
 function taskPriorityClass(priority: string) {
   const classes: Record<string, string> = {
-    normal: "bg-[var(--muted)] text-[var(--muted-foreground)]",
-    warning: "bg-[#fef3c7] text-[var(--warning)]",
-    urgent: "bg-[#fee2e2] text-[#b91c1c]",
+    normal: "ds-pill-teal",
+    warning: "ds-pill-yellow",
+    urgent: "ds-pill-pink",
   };
   return classes[priority] ?? classes.normal;
 }
@@ -982,32 +1112,30 @@ function dashboardSectionKeyForCard(cardKey: string) {
 }
 
 function dashboardBadgeVariant(tone?: string) {
-  if (tone === "danger") return "destructive";
-  if (tone === "success") return "secondary";
-  return "outline";
+  if (tone === "danger") return "pink";
+  if (tone === "success") return "teal";
+  return "purple";
 }
 
 function dashboardMetricAccentClass(tone: string | undefined, sectionKey: string) {
-  if (tone === "danger") return "bg-[var(--macaron-pink)]";
-  if (tone === "success") return "bg-[var(--macaron-blue)]";
-
   const accents: Record<string, string> = {
-    business_requirements: "bg-[var(--macaron-yellow)]",
-    business_quote_contract: "bg-[var(--macaron-purple)]",
-    business_feishu: "bg-[var(--macaron-blue)]",
-    creative_evaluation: "bg-[var(--macaron-purple)]",
-    creative_deepening: "bg-[var(--macaron-pink)]",
-    creative_atmosphere: "bg-[var(--macaron-yellow)]",
-    admin_blocked: "bg-[var(--macaron-pink)]",
-    admin_failed_jobs: "bg-[var(--macaron-yellow)]",
-    admin_governance: "bg-[var(--macaron-blue)]",
+    business_requirements: "ds-pill-yellow",
+    business_quote_contract: "ds-pill-purple",
+    business_feishu: "ds-pill-teal",
+    creative_evaluation: "ds-pill-purple",
+    creative_deepening: "ds-pill-pink",
+    creative_atmosphere: "ds-pill-yellow",
+    admin_blocked: "ds-pill-pink",
+    admin_failed_jobs: "ds-pill-yellow",
+    admin_governance: "ds-pill-teal",
   };
-  return accents[sectionKey] ?? "bg-[var(--macaron-purple)]";
+  if (tone === "danger") return "ds-pill-pink";
+  if (tone === "success") return "ds-pill-teal";
+  return accents[sectionKey] ?? "ds-pill-purple";
 }
 
 function WorkspaceCenter({
   project,
-  projects,
   role,
   user,
   loading,
@@ -1020,6 +1148,16 @@ function WorkspaceCenter({
   creativeDirections,
   creativeExpansions,
   generatedImages,
+  scriptPackages,
+  scriptReferences,
+  storyboardScenes,
+  storyboardShots,
+  storyboardImages,
+  storyboardVideos,
+  reviewCuts,
+  reviewCutAnnotations,
+  clientReviewTasks,
+  clientReviewItems,
   proposal,
   proposalSnapshots,
   quote,
@@ -1031,9 +1169,6 @@ function WorkspaceCenter({
   feishuReceivers,
   stageStates,
   artifacts,
-  governance,
-  governanceError,
-  onGovernanceRefresh,
   onProjectUpdated,
   onWorkspaceRefresh,
   onDashboardRefresh,
@@ -1053,6 +1188,16 @@ function WorkspaceCenter({
   creativeDirections: CreativeDirectionView[];
   creativeExpansions: CreativeExpansionView[];
   generatedImages: GeneratedImageView[];
+  scriptPackages: ScriptDirectionPackageView[];
+  scriptReferences: ScriptReferenceAssetView[];
+  storyboardScenes: StoryboardSceneView[];
+  storyboardShots: StoryboardShotView[];
+  storyboardImages: StoryboardImageView[];
+  storyboardVideos: StoryboardVideoView[];
+  reviewCuts: ReviewCutView[];
+  reviewCutAnnotations: ReviewCutAnnotationView[];
+  clientReviewTasks: ClientReviewTaskView[];
+  clientReviewItems: ClientReviewItemView[];
   proposal: ProposalView | null;
   proposalSnapshots: DocumentSnapshotView[];
   quote: QuoteView | null;
@@ -1083,18 +1228,24 @@ function WorkspaceCenter({
     currentStage: projectCurrentStage,
     selectedStage: projectCurrentStage,
   });
-  const selectedStage =
+  const rawSelectedStage =
     stageSelection.projectId === projectId && stageSelection.currentStage === projectCurrentStage
       ? stageSelection.selectedStage
       : projectCurrentStage;
+  const rawSelectedStageIndex = projectStages.indexOf(rawSelectedStage);
+  const projectCurrentStageIndex = projectStages.indexOf(projectCurrentStage);
+  const selectedStage =
+    rawSelectedStageIndex >= 0 && rawSelectedStageIndex <= projectCurrentStageIndex
+      ? rawSelectedStage
+      : projectCurrentStage;
   const handleStageSelect = useCallback(
     (stage: ProjectStage) => {
+      const stageIndex = projectStages.indexOf(stage);
+      if (stageIndex > projectCurrentStageIndex) return;
       setStageSelection({ projectId, currentStage: projectCurrentStage, selectedStage: stage });
     },
-    [projectCurrentStage, projectId]
+    [projectCurrentStage, projectCurrentStageIndex, projectId]
   );
-  const [adminToolsOpen, setAdminToolsOpen] = useState(false);
-
   if (loading) {
     return <CenterState icon={<Loader2 className="animate-spin" size={22} />} title="正在恢复工作台" detail="系统正在从后端读取项目、阶段和产物状态。" />;
   }
@@ -1113,13 +1264,13 @@ function WorkspaceCenter({
           onRefresh={onDashboardRefresh}
         />
         <div className="p-5 pt-0">
-          <Card size="sm" className="rounded-2xl border-[var(--border)] bg-white">
+          <Card size="sm" className="ds-card">
             <CardContent className="flex items-start gap-3">
-              <ClipboardList className="mt-0.5 shrink-0 text-[var(--muted-foreground)]" size={18} />
+              <ClipboardList className="mt-0.5 shrink-0 text-[var(--text-secondary)]" size={18} />
               <div className="min-w-0">
                 <p className="text-sm font-medium">从左侧选择一个项目进入工作流</p>
-                <p className="mt-1 text-xs leading-5 text-[var(--muted-foreground)]">
-                  当前先展示角色概览；选中项目后，中间栏会切到项目标题、阶段导航和当前阶段工作区。
+                <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
+                  当前先展示角色待办；选中项目后，右侧会切到项目阶段导航和当前阶段工作区。
                 </p>
               </div>
             </CardContent>
@@ -1130,176 +1281,298 @@ function WorkspaceCenter({
   }
 
   return (
-    <div className="p-6">
+    <div className="workspace-project-page">
       {error && (
-        <div className="mb-4 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-4 text-sm text-[var(--warning)]">
+        <div className="mb-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-4 text-sm text-[var(--warning)]">
           {error.message}
         </div>
       )}
 
-      <Card
-        size="sm"
-        className="rounded-2xl border-white/80 bg-[linear-gradient(135deg,var(--card)_62%,var(--secondary))] shadow-[0_18px_42px_-30px_rgb(90_63_100/0.35)]"
-      >
-        <CardContent>
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0">
-            <p className="truncate text-sm text-[var(--muted-foreground)]">{project.brandName}</p>
-            <h2 className="mt-1 truncate text-3xl font-semibold leading-tight">{project.projectName}</h2>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Badge className="border-transparent bg-[var(--macaron-purple)] text-[var(--foreground)] shadow-none">
-                {stageLabels[project.currentStage]}
-              </Badge>
-              <Badge className="border-transparent bg-[var(--macaron-yellow)] text-[var(--foreground)] shadow-none">
-                {statusLabels[project.status]}
-              </Badge>
-            </div>
-          </div>
-          <div className="grid justify-items-end gap-2">
-            <UserIdentity user={user} />
-            <div className="rounded-full border border-[var(--border)] bg-[var(--panel-soft)] px-3 py-1.5 text-xs leading-5 text-[var(--muted-foreground)]">
-              通过下方需求文本表单创建真实 AI 任务
-            </div>
-          </div>
-        </div>
-        </CardContent>
-      </Card>
+      <ProjectWorkspaceHeader project={project} />
 
-      <Tabs defaultValue="workflow" className="mt-6">
-        <TabsList variant="line" className="w-full justify-start border-b border-[var(--border)]">
-          <TabsTrigger value="workflow" className="max-w-32 flex-none px-3">工作流</TabsTrigger>
-          <TabsTrigger value="overview" className="max-w-32 flex-none px-3">概览</TabsTrigger>
-        </TabsList>
-        <TabsContent value="workflow" className="mt-5">
-          <div className="sticky top-0 z-20 -mx-6 bg-[var(--panel-soft)] px-6 pb-5">
-            <StageNavigator
-              currentStage={project.currentStage}
-              selectedStage={selectedStage}
-              stageStates={stageStates}
-              onStageSelect={handleStageSelect}
-            />
-          </div>
+      <div className="workspace-module-sticky">
+        <StageNavigator
+          currentStage={project.currentStage}
+          selectedStage={selectedStage}
+          stageStates={stageStates}
+          onStageSelect={handleStageSelect}
+        />
+      </div>
 
-          <div className="mt-1">
+      <div className="workspace-main-area">
             <StagePanel stage="brand_requirement_intake" selectedStage={selectedStage}>
               <div className="grid gap-5 lg:grid-cols-2">
-                <ProjectBasicsCard project={project} user={user} onProjectUpdated={onProjectUpdated} />
-                <AssetCenter project={project} assets={assets} assetAnalyses={assetAnalyses} onRefresh={onWorkspaceRefresh} />
-                <WorkCard
+                <StageWorkCard
+                  icon={<BriefcaseBusiness size={18} />}
+                  title="项目基础信息"
+                  detail="维护品牌、项目名、负责人和截止时间，保存后同步左侧项目列表。"
+                  badges={["真实入库", "项目列表同步"]}
+                  className="lg:col-span-2"
+                >
+                  <ProjectBasicsCard project={project} user={user} clientReviewTasks={clientReviewTasks} onProjectUpdated={onProjectUpdated} onRefresh={onWorkspaceRefresh} />
+                </StageWorkCard>
+                <StageWorkCard
+                  icon={<FileUp size={18} />}
+                  title="项目资料中心"
+                  detail="上传客户资料或登记飞书链接，资料会进入资产表并触发后续解析。"
+                  badges={["OSS 上传", "资产入库", "受控打开"]}
+                  className="lg:col-span-2"
+                >
+                  <AssetCenter project={project} assets={assets} assetAnalyses={assetAnalyses} onRefresh={onWorkspaceRefresh} />
+                </StageWorkCard>
+                <StageWorkCard
                   icon={<FileText size={18} />}
                   title="需求整理工作区"
                   detail="支持文本、PDF、Word、图片、视频和飞书链接。真实上传与解析会通过 OSS、数据库和 AI 任务记录完成。"
-                  items={["标准需求模板", "样片标签", "待确认问题"]}
-                />
-                <RequirementStructuringCard project={project} artifacts={artifacts} onRefresh={onWorkspaceRefresh} />
+                  badges={["标准需求模板", "样片标签", "待确认问题"]}
+                >
+                  <WorkCard
+                    icon={<FileText size={18} />}
+                    title="需求整理工作区"
+                    detail="支持文本、PDF、Word、图片、视频和飞书链接。真实上传与解析会通过 OSS、数据库和 AI 任务记录完成。"
+                    items={["标准需求模板", "样片标签", "待确认问题"]}
+                  />
+                </StageWorkCard>
+                <StageWorkCard
+                  icon={<WandSparkles size={18} />}
+                  title="需求结构化"
+                  detail="粘贴客户原始需求，创建后台任务并生成统一需求模板。"
+                  badges={["豆包 Seed", "产物快照", "可刷新恢复"]}
+                >
+                  <RequirementStructuringCard project={project} artifacts={artifacts} onRefresh={onWorkspaceRefresh} />
+                </StageWorkCard>
               </div>
             </StagePanel>
             <StagePanel stage="technical_feasibility" selectedStage={selectedStage}>
               <div className="grid gap-5 lg:grid-cols-2">
-                <AssetAnalysisResults analyses={assetAnalyses} artifacts={artifacts} />
-                <TechnicalFeasibilityReviewCard project={project} user={user} stageStates={stageStates} onRefresh={onWorkspaceRefresh} />
+                <StageWorkCard
+                  icon={<ClipboardList size={18} />}
+                  title="资料解析与标签评分结果"
+                  detail="查看数据库中的解析摘要、标签命中和评分产物。"
+                  badges={["解析结果", "标签评分", "数据库产物"]}
+                  className="lg:col-span-2"
+                >
+                  <AssetAnalysisResults analyses={assetAnalyses} artifacts={artifacts} />
+                </StageWorkCard>
+                <StageWorkCard
+                  icon={<AlertCircle size={18} />}
+                  title="技术不可行 / 阻塞管理"
+                  detail="记录不可行原因、下一步和恢复路径，阶段状态会真实持久化。"
+                  badges={["状态机", "阻塞闭环", "管理员复核"]}
+                  className="lg:col-span-2"
+                >
+                  <TechnicalFeasibilityReviewCard project={project} user={user} stageStates={stageStates} onRefresh={onWorkspaceRefresh} />
+                </StageWorkCard>
               </div>
             </StagePanel>
             <StagePanel stage="creative_direction_proposal" selectedStage={selectedStage}>
               <div className="grid gap-5 lg:grid-cols-2">
-                <CreativeDirectionsCard
-                  project={project}
-                  user={user}
-                  directions={creativeDirections}
-                  expansions={creativeExpansions}
-                  generatedImages={generatedImages}
-                  artifacts={artifacts}
-                  onRefresh={onWorkspaceRefresh}
-                />
+                <StageWorkCard
+                  icon={<Sparkles size={18} />}
+                  title="Top 5 创意方向"
+                  detail="生成、选择、改写创意方向，并管理故事大纲和氛围图审核。"
+                  badges={["Top 5", "人工选择", "大纲深化", "氛围图状态"]}
+                  className="lg:col-span-2"
+                >
+                  <CreativeDirectionsCard
+                    project={project}
+                    user={user}
+                    directions={creativeDirections}
+                    expansions={creativeExpansions}
+                    generatedImages={generatedImages}
+                    artifacts={artifacts}
+                    onRefresh={onWorkspaceRefresh}
+                  />
+                </StageWorkCard>
               </div>
             </StagePanel>
             <StagePanel stage="selection_quote_contract" selectedStage={selectedStage}>
               <div className="grid gap-5 lg:grid-cols-2">
-                <BusinessDocumentDraftCard project={project} user={user} onRefresh={onWorkspaceRefresh} />
-                <ProposalEditorCard
-                  project={project}
-                  user={user}
-                  proposal={proposal}
-                  snapshots={proposalSnapshots}
-                  onRefresh={onWorkspaceRefresh}
-                />
-                <QuoteEditorCard
-                  project={project}
-                  user={user}
-                  quote={quote}
-                  snapshots={quoteSnapshots}
-                  onRefresh={onWorkspaceRefresh}
-                />
-                <ContractEditorCard
-                  project={project}
-                  user={user}
-                  assets={assets}
-                  proposal={proposal}
-                  quote={quote}
-                  contract={contract}
-                  snapshots={contractSnapshots}
-                  exports={contractExports}
-                  onRefresh={onWorkspaceRefresh}
-                />
-                <FeishuDeliveryCard
-                  project={project}
-                  user={user}
-                  proposal={proposal}
-                  quote={quote}
-                  contract={contract}
-                  proposalSnapshots={proposalSnapshots}
-                  quoteSnapshots={quoteSnapshots}
-                  contractSnapshots={contractSnapshots}
-                  deliveries={feishuDeliveries}
-                  receivers={feishuReceivers}
-                  onRefresh={onWorkspaceRefresh}
-                />
+                <StageWorkCard
+                  icon={<WandSparkles size={18} />}
+                  title="Agent 商务文档草稿"
+                  detail="基于已选方向和阶段产物生成提案、报价与合同草稿。"
+                  badges={["提案", "报价", "合同"]}
+                  className="lg:col-span-2"
+                >
+                  <BusinessDocumentDraftCard project={project} user={user} onRefresh={onWorkspaceRefresh} />
+                </StageWorkCard>
+                <StageWorkCard
+                  icon={<BriefcaseBusiness size={18} />}
+                  title="提案编辑与版本快照"
+                  detail="编辑提案正文和状态，每次保存都会生成历史快照。"
+                  badges={["富文本", `v${proposal?.version ?? 0}`, proposalStatusLabel(proposal?.status ?? "draft")]}
+                  className="lg:col-span-2"
+                >
+                  <ProposalEditorCard project={project} user={user} proposal={proposal} snapshots={proposalSnapshots} clientReviewTasks={clientReviewTasks} onRefresh={onWorkspaceRefresh} />
+                </StageWorkCard>
+                <StageWorkCard
+                  icon={<BriefcaseBusiness size={18} />}
+                  title="报价编辑与版本快照"
+                  detail="维护报价明细、合计金额、审核状态和快照记录。"
+                  badges={[`v${quote?.version ?? 0}`, quoteStatusLabel(quote?.status ?? "draft"), quote ? formatMoney(quote.totalAmount, quote.currency) : "待保存"]}
+                  className="lg:col-span-2"
+                >
+                  <QuoteEditorCard project={project} user={user} quote={quote} snapshots={quoteSnapshots} clientReviewTasks={clientReviewTasks} onRefresh={onWorkspaceRefresh} />
+                </StageWorkCard>
+                <StageWorkCard
+                  icon={<FileText size={18} />}
+                  title="合同模板填充与版本快照"
+                  detail="填写合同字段、绑定甲方资产、保存快照并导出正式文件。"
+                  badges={[`v${contract?.version ?? 0}`, quoteStatusLabel(contract?.status ?? "draft"), "PDF / Word"]}
+                  className="lg:col-span-2"
+                >
+                  <ContractEditorCard
+                    project={project}
+                    user={user}
+                    assets={assets}
+                    proposal={proposal}
+                    quote={quote}
+                    contract={contract}
+                    snapshots={contractSnapshots}
+                    exports={contractExports}
+                    clientReviewTasks={clientReviewTasks}
+                    onRefresh={onWorkspaceRefresh}
+                  />
+                </StageWorkCard>
+                <StageWorkCard
+                  icon={<Send size={18} />}
+                  title="飞书交付闭环"
+                  detail="选择文档版本和收件人，发送后回写链接、对象、时间与状态。"
+                  badges={["飞书文档", "发送记录", "失败可重试"]}
+                  className="lg:col-span-2"
+                >
+                  <FeishuDeliveryCard
+                    project={project}
+                    user={user}
+                    proposal={proposal}
+                    quote={quote}
+                    contract={contract}
+                    proposalSnapshots={proposalSnapshots}
+                    quoteSnapshots={quoteSnapshots}
+                    contractSnapshots={contractSnapshots}
+                    deliveries={feishuDeliveries}
+                    receivers={feishuReceivers}
+                    onRefresh={onWorkspaceRefresh}
+                  />
+                </StageWorkCard>
               </div>
             </StagePanel>
-            {projectStages.slice(4).map((stage) => (
-              <StagePanel key={stage} stage={stage} selectedStage={selectedStage}>
-                <ReservedStageCard stage={stage} />
-              </StagePanel>
-            ))}
-          </div>
-        </TabsContent>
-        <TabsContent value="overview" className="mt-5 overflow-hidden rounded-xl border border-[var(--border)] bg-white">
-          <RoleDashboard
-            role={role}
-            user={user}
-            config={config}
-            dashboard={dashboard}
-            loading={loading}
-            error={dashboardError}
-            onSelectProject={onSelectProject}
-            onRefresh={onDashboardRefresh}
-          />
-          {user.role === "admin" && (
-            <Collapsible open={adminToolsOpen} onOpenChange={setAdminToolsOpen}>
-              <div className="border-t border-[var(--border)] bg-[var(--panel-soft)] p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-medium">管理工具</p>
-                    <p className="mt-1 text-xs text-[var(--muted-foreground)]">成员、评分规则、治理和审计收在这里，避免覆盖角色待办。</p>
-                  </div>
-                  <CollapsibleTrigger render={<Button variant="outline" size="sm" />}>
-                    {adminToolsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                    {adminToolsOpen ? "收起工具" : "展开工具"}
-                  </CollapsibleTrigger>
-                </div>
-                <CollapsibleContent>
-                  <div className="mt-5 grid gap-5 lg:grid-cols-2">
-                    <ProjectMembersCard project={project} />
-                    <ScoringRulesCard />
-                    <AdminGovernanceCard governance={governance} error={governanceError} onRefresh={onGovernanceRefresh} />
-                    <AuditSearchCard projects={projects} />
-                  </div>
-                </CollapsibleContent>
-              </div>
-            </Collapsible>
-          )}
-        </TabsContent>
-      </Tabs>
+            <StagePanel stage="script_storyboard_confirmation" selectedStage={selectedStage}>
+              <StageWorkCard
+                icon={<ListOrdered size={18} />}
+                title="脚本、人物场景参考与文字分镜"
+                detail="确认脚本方向、参考资料、完整剧本和文字分镜。"
+                badges={["脚本包", "分镜拆分", "参考资产"]}
+              >
+                <ScriptStoryboardModule
+                  project={project}
+                  user={user}
+                  creativeDirections={creativeDirections}
+                  scriptPackages={scriptPackages}
+                  scriptReferences={scriptReferences}
+                  storyboardScenes={storyboardScenes}
+                  storyboardShots={storyboardShots}
+                  clientReviewTasks={clientReviewTasks}
+                  onRefresh={onWorkspaceRefresh}
+                />
+              </StageWorkCard>
+            </StagePanel>
+            <StagePanel stage="storyboard_image_canvas" selectedStage={selectedStage}>
+              <StageWorkCard
+                icon={<ImageIcon size={18} />}
+                title="分镜图片自由画布"
+                detail="按分镜生成图片、确认正式图并提交场次审核；图片预览已收起为状态文本。"
+                badges={["图片任务", "批注层", "场次审核"]}
+              >
+                <StoryboardImageCanvasModule
+                  project={project}
+                  user={user}
+                  scenes={storyboardScenes}
+                  shots={storyboardShots}
+                  images={storyboardImages}
+                  clientReviewTasks={clientReviewTasks}
+                  clientReviewItems={clientReviewItems}
+                  onRefresh={onWorkspaceRefresh}
+                />
+              </StageWorkCard>
+            </StagePanel>
+            <StagePanel stage="ai_video_canvas" selectedStage={selectedStage}>
+              <StageWorkCard
+                icon={<Video size={18} />}
+                title="AI 视频自由画布"
+                detail="基于已确认分镜生成视频候选并确认内部正式资产。"
+                badges={["视频候选", "内部确认", "状态入库"]}
+              >
+                <StoryboardVideoCanvasModule
+                  project={project}
+                  user={user}
+                  scenes={storyboardScenes}
+                  shots={storyboardShots}
+                  images={storyboardImages}
+                  videos={storyboardVideos}
+                  onRefresh={onWorkspaceRefresh}
+                />
+              </StageWorkCard>
+            </StagePanel>
+            <StagePanel stage="a_copy_revision" selectedStage={selectedStage}>
+              <ReviewCutStageModule
+                project={project}
+                user={user}
+                cutType="a_copy"
+                assets={assets}
+                videos={storyboardVideos}
+                reviewCuts={reviewCuts}
+                annotations={reviewCutAnnotations}
+                clientReviewTasks={clientReviewTasks}
+                onRefresh={onWorkspaceRefresh}
+              />
+            </StagePanel>
+            <StagePanel stage="b_copy_final_confirmation" selectedStage={selectedStage}>
+              <ReviewCutStageModule
+                project={project}
+                user={user}
+                cutType="b_copy"
+                assets={assets}
+                videos={storyboardVideos}
+                reviewCuts={reviewCuts}
+                annotations={reviewCutAnnotations}
+                clientReviewTasks={clientReviewTasks}
+                onRefresh={onWorkspaceRefresh}
+              />
+            </StagePanel>
+            <StagePanel stage="settlement_delivery_archive" selectedStage={selectedStage}>
+              <ReservedStageCard stage="settlement_delivery_archive" />
+            </StagePanel>
+      </div>
+    </div>
+  );
+}
+
+function ProjectWorkspaceHeader({ project }: { project: ProjectSummary }) {
+  return (
+    <section className="project-info-line" aria-label="当前项目信息">
+      <h2 className="min-w-0 truncate text-[1.35rem] font-semibold leading-7 tracking-[-0.03em] text-[var(--text-primary)]">
+        {project.projectName}
+      </h2>
+      <dl className="project-info-meta">
+        <ProjectInfoTerm label="甲方" value={project.brandName} />
+        <ProjectInfoTerm label="阶段" value={stageLabels[project.currentStage]} />
+        <ProjectInfoTerm label="负责人" value={project.ownerName} />
+        <ProjectInfoTerm label="截止" value={project.dueDate ?? "未设"} />
+        <ProjectInfoTerm label="状态" value={statusLabels[project.status]} />
+      </dl>
+    </section>
+  );
+}
+
+function ProjectInfoTerm({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex min-w-0 items-center gap-1.5">
+      <dt className="shrink-0 text-[0.72rem] font-medium text-[var(--text-tertiary)]">{label}</dt>
+      <dd className="min-w-0 truncate text-[0.78rem] font-semibold text-[var(--text-secondary)]" title={value}>
+        {value}
+      </dd>
     </div>
   );
 }
@@ -1320,20 +1593,930 @@ function StagePanel({
   );
 }
 
+function StageWorkCard({
+  icon,
+  title,
+  detail,
+  badges = [],
+  defaultOpen = false,
+  className,
+  children,
+}: {
+  icon: ReactNode;
+  title: string;
+  detail: string;
+  badges?: string[];
+  defaultOpen?: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <Card size="sm" className={cn("ds-card", className)}>
+        <CardContent>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex min-w-0 items-start gap-3">
+              <div className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full bg-[var(--surface-soft)] text-[var(--text-secondary)]">
+                {icon}
+              </div>
+              <div className="min-w-0">
+                <h3 className="truncate ds-text-section-title">{title}</h3>
+                <p className="mt-1 line-clamp-2 text-sm leading-6 text-[var(--text-secondary)]">{detail}</p>
+                {badges.length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {badges.map((badge, index) => (
+                      <span key={`${badge}-${index}`} className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)] shadow-none">
+                        {badge}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            <CollapsibleTrigger render={<Button type="button" variant={open ? "default" : "outline"} size="sm" className="shrink-0" />}>
+              {open ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+              {open ? "收起" : "展开"}
+            </CollapsibleTrigger>
+          </div>
+
+          <CollapsibleContent>
+            <div className="mt-5 border-t border-[var(--border-soft)] pt-5">
+              {children}
+            </div>
+          </CollapsibleContent>
+        </CardContent>
+      </Card>
+    </Collapsible>
+  );
+}
+
 function ReservedStageCard({ stage }: { stage: ProjectStage }) {
   return (
-    <Card size="sm" className="rounded-2xl border-[var(--border)] bg-[var(--panel)]">
+    <Card size="sm" className="ds-card">
       <CardContent className="flex items-start gap-3">
-        <CircleDashed className="mt-0.5 shrink-0 text-[var(--muted-foreground)]" size={18} />
+        <CircleDashed className="mt-0.5 shrink-0 text-[var(--text-secondary)]" size={18} />
         <div className="min-w-0">
           <p className="text-sm font-medium">{stageLabels[stage]}</p>
-          <p className="mt-1 text-xs leading-5 text-[var(--muted-foreground)]">
+          <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
             该阶段当前只保留导航与状态展示，具体业务工作区会在后续批次接入；已有持久化阶段状态仍会在上方步骤条中展示。
           </p>
         </div>
       </CardContent>
     </Card>
   );
+}
+
+function ScriptStoryboardModule({
+  project,
+  user,
+  creativeDirections,
+  scriptPackages,
+  scriptReferences,
+  storyboardScenes,
+  storyboardShots,
+  clientReviewTasks,
+  onRefresh,
+}: {
+  project: ProjectSummary;
+  user: CurrentUser;
+  creativeDirections: CreativeDirectionView[];
+  scriptPackages: ScriptDirectionPackageView[];
+  scriptReferences: ScriptReferenceAssetView[];
+  storyboardScenes: StoryboardSceneView[];
+  storyboardShots: StoryboardShotView[];
+  clientReviewTasks: ClientReviewTaskView[];
+  onRefresh: () => Promise<void>;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [splittingPackageId, setSplittingPackageId] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const canEdit = user.role === "creative" || user.role === "admin";
+  const selectedDirection = creativeDirections.find((direction) => direction.isSelected) ?? creativeDirections[0] ?? null;
+  const latestPackage = scriptPackages[0] ?? null;
+
+  async function handleSave(formData: FormData) {
+    setSaving(true);
+    setMessage(null);
+    setError(null);
+    const characterReferences = [1, 2, 3].map((index) => ({
+      title: String(formData.get(`characterTitle${index}`) ?? "").trim() || `人物参考 ${index}`,
+      styleLabel: String(formData.get(`characterStyle${index}`) ?? "").trim(),
+      prompt: String(formData.get(`characterPrompt${index}`) ?? "").trim(),
+    }));
+    const sceneReferences = [1, 2].map((index) => ({
+      title: String(formData.get(`sceneTitle${index}`) ?? "").trim() || `场景参考 ${index}`,
+      styleLabel: String(formData.get(`sceneStyle${index}`) ?? "").trim(),
+      prompt: String(formData.get(`scenePrompt${index}`) ?? "").trim(),
+    }));
+
+    const result = await saveScriptPackage(project.id, {
+      directionId: selectedDirection?.id ?? null,
+      title: String(formData.get("title") ?? ""),
+      concept: String(formData.get("concept") ?? ""),
+      fullScript: String(formData.get("fullScript") ?? ""),
+      characterReferences,
+      sceneReferences,
+    });
+    if (result.ok) {
+      setMessage(result.data.message);
+      await onRefresh();
+    } else {
+      setError(result.error.message);
+    }
+    setSaving(false);
+  }
+
+  async function handleSplit(packageId: string) {
+    setSplittingPackageId(packageId);
+    setMessage(null);
+    setError(null);
+    const result = await splitScriptPackage(project.id, packageId);
+    if (result.ok) {
+      setMessage(result.data.message);
+      await onRefresh();
+    } else {
+      setError(result.error.message);
+    }
+    setSplittingPackageId(null);
+  }
+
+  return (
+    <div className="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)]">
+      <WorkspaceCard>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <FileText size={18} />
+              <h3 className="ds-text-section-title">脚本创意与文字分镜确认</h3>
+            </div>
+            <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
+              模块一把脚本创意方向、人物参考、场景参考、完整剧本和文字分镜放在一个大流程里。人物参考图与场景参考图是并行关系，并共同挂在对应脚本创意方向下。
+            </p>
+          </div>
+          <Badge variant="outline">模块一</Badge>
+        </div>
+        {message && <Feedback tone="success" text={message} />}
+        {error && <Feedback tone="warning" text={error} />}
+        <form action={handleSave} className="mt-4 grid gap-4">
+          <label className="grid gap-1 text-xs font-medium">
+            脚本方向标题
+            <Input name="title" defaultValue={latestPackage?.title ?? selectedDirection?.title ?? ""} disabled={!canEdit || saving} />
+          </label>
+          <label className="grid gap-1 text-xs font-medium">
+            方向概念
+            <textarea
+              name="concept"
+              defaultValue={latestPackage?.concept ?? selectedDirection?.coreIdea ?? ""}
+              disabled={!canEdit || saving}
+              className="min-h-24 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-sm leading-6"
+            />
+          </label>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <ReferenceDraftGroup
+              title="并行人物参考图（3 张）"
+              prefix="character"
+              count={3}
+              references={scriptReferences.filter((item) => item.referenceType === "character")}
+              disabled={!canEdit || saving}
+            />
+            <ReferenceDraftGroup
+              title="并行场景参考图（2 张）"
+              prefix="scene"
+              count={2}
+              references={scriptReferences.filter((item) => item.referenceType === "scene")}
+              disabled={!canEdit || saving}
+            />
+          </div>
+          <label className="grid gap-1 text-xs font-medium">
+            完整剧本
+            <textarea
+              name="fullScript"
+              defaultValue={latestPackage?.fullScript ?? ""}
+              disabled={!canEdit || saving}
+              className="min-h-56 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-sm leading-6"
+              placeholder="粘贴或整理已经与甲方确认到本轮的完整剧本。"
+            />
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <Button disabled={!canEdit || saving}>
+              {saving ? <Loader2 className="animate-spin" size={15} /> : <CheckCircle2 size={15} />}
+              保存脚本方向包
+            </Button>
+            {latestPackage && (
+              <Button type="button" variant="outline" disabled={!canEdit || splittingPackageId === latestPackage.id} onClick={() => void handleSplit(latestPackage.id)}>
+                {splittingPackageId === latestPackage.id ? <Loader2 className="animate-spin" size={15} /> : <WandSparkles size={15} />}
+                自动拆分文字分镜
+              </Button>
+            )}
+          </div>
+        </form>
+        <ClientReviewLaunchBox
+          projectId={project.id}
+          reviewType="script_package"
+          targetScopeId={latestPackage?.id ?? null}
+          title="甲方脚本方向审核"
+          detail="把脚本创意方向、3 张人物参考、2 张场景参考和完整剧本打包给甲方确认；通过后再拆分文字分镜。"
+          disabled={!latestPackage}
+          disabledReason="请先保存脚本方向包，再生成甲方审核链接。"
+          tasks={clientReviewTasks}
+          onRefresh={onRefresh}
+        />
+      </WorkspaceCard>
+      <WorkspaceCard>
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="ds-text-section-title">文字分镜结果</h3>
+          <Badge variant="outline">{storyboardShots.length} 条分镜</Badge>
+        </div>
+        <div className="mt-4 space-y-3">
+          {storyboardScenes.length === 0 ? (
+            <p className="ds-card-soft p-3 text-sm leading-6 text-[var(--text-secondary)]">
+              暂无文字分镜。保存完整剧本后点击“自动拆分文字分镜”，系统会调用真实文本模型并写入数据库。
+            </p>
+          ) : (
+            storyboardScenes.map((scene) => (
+              <div key={scene.id} className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold">场次 {scene.sceneNumber}：{scene.title}</p>
+                    <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">{scene.description || "暂无场次说明"}</p>
+                  </div>
+                  <Badge variant="outline">{sceneStatusLabel(scene.status)}</Badge>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {storyboardShots.filter((shot) => shot.sceneId === scene.id).map((shot) => (
+                    <div key={shot.id} className="rounded-card-sm bg-[var(--surface-soft)] p-2 text-xs leading-5">
+                      <span className="font-semibold">{shot.shotNumber}</span>
+                      <span className="ml-2 text-[var(--text-secondary)]">{shot.visualDescription}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </WorkspaceCard>
+    </div>
+  );
+}
+
+function ReferenceDraftGroup({
+  title,
+  prefix,
+  count,
+  references,
+  disabled,
+}: {
+  title: string;
+  prefix: "character" | "scene";
+  count: number;
+  references: ScriptReferenceAssetView[];
+  disabled: boolean;
+}) {
+  return (
+    <div className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3">
+      <p className="text-xs font-semibold">{title}</p>
+      <div className="mt-3 grid gap-3">
+        {Array.from({ length: count }).map((_, index) => {
+          const ref = references[index];
+          const number = index + 1;
+          return (
+            <div key={number} className="grid gap-2 rounded-card-sm bg-[var(--surface-card)] p-2">
+              <Input name={`${prefix}Title${number}`} defaultValue={ref?.title ?? ""} placeholder={`${title} ${number}`} disabled={disabled} />
+              <Input name={`${prefix}Style${number}`} defaultValue={ref?.styleLabel ?? ""} placeholder="风格标签" disabled={disabled} />
+              <textarea
+                name={`${prefix}Prompt${number}`}
+                defaultValue={ref?.prompt ?? ""}
+                placeholder="参考描述 / Prompt"
+                disabled={disabled}
+                className="min-h-16 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-2 text-xs leading-5"
+              />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function StoryboardImageCanvasModule({
+  project,
+  user,
+  scenes,
+  shots,
+  images,
+  clientReviewTasks,
+  clientReviewItems,
+  onRefresh,
+}: {
+  project: ProjectSummary;
+  user: CurrentUser;
+  scenes: StoryboardSceneView[];
+  shots: StoryboardShotView[];
+  images: StoryboardImageView[];
+  clientReviewTasks: ClientReviewTaskView[];
+  clientReviewItems: ClientReviewItemView[];
+  onRefresh: () => Promise<void>;
+}) {
+  const [activeShotId, setActiveShotId] = useState<string | null>(shots[0]?.id ?? null);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const activeShot = shots.find((shot) => shot.id === activeShotId) ?? shots[0] ?? null;
+  const activeScene = activeShot ? scenes.find((scene) => scene.id === activeShot.sceneId) ?? null : scenes[0] ?? null;
+  const activeImages = activeShot ? images.filter((image) => image.shotId === activeShot.id) : [];
+  const selectedImage = activeImages.find((image) => image.isSelected) ?? activeImages[0] ?? null;
+  const canOperate = user.role === "creative" || user.role === "admin";
+  const latestSceneReview = activeScene
+    ? clientReviewTasks.find((task) => task.reviewType === "storyboard_scene_images" && task.targetScopeId === activeScene.id)
+    : null;
+  const latestReviewItems = latestSceneReview
+    ? clientReviewItems.filter((item) => item.reviewTaskId === latestSceneReview.id)
+    : [];
+
+  async function runAction<T extends { message?: string }>(key: string, action: () => Promise<ApiResult<T>>, success?: (data: T) => string | undefined) {
+    setBusyKey(key);
+    setMessage(null);
+    setError(null);
+    const result = await action();
+    if (result.ok) {
+      setMessage(success?.(result.data) ?? (result.data as { message?: string }).message ?? "操作已完成。");
+      await onRefresh();
+    } else {
+      setError(result.error.message);
+    }
+    setBusyKey(null);
+  }
+
+  return (
+    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_330px]">
+      <div className="grid gap-4">
+        <div className="ds-card-sm p-4">
+          <div className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-4">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm font-semibold">分镜内容与图片 Prompt</p>
+              <span className="ds-pill ds-pill-purple">{activeScene ? `场次 ${activeScene.sceneNumber}` : "未选择场次"}</span>
+            </div>
+            <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">{activeShot?.visualDescription ?? "请先在模块一拆分文字分镜。"}</p>
+            {activeShot?.imagePrompt && <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">{activeShot.imagePrompt}</p>}
+          </div>
+
+          <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold">正式分镜图片状态</p>
+                <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
+                  {selectedImage?.ossUrl ? "当前分镜已有图片资产；预览已隐藏，可继续确认或提交审核。" : "当前分镜还没有可确认的图片资产。"}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <span className={cn("ds-pill", selectedImage ? "ds-pill-teal" : "ds-pill-yellow")}>{selectedImage ? "已有候选图" : "待生成"}</span>
+                {selectedImage?.isSelected && <span className="ds-pill ds-selected-pill">正式图</span>}
+                {selectedImage?.generationStatus && <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">{parseStatusLabel(selectedImage.generationStatus)}</span>}
+              </div>
+            </div>
+            {selectedImage?.annotations.length ? (
+              <p className="mt-3 rounded-card-sm bg-[var(--surface-soft)] p-3 text-xs leading-5 text-[var(--text-secondary)]">
+                已保存 {selectedImage.annotations.length} 条批注；图片预览隐藏后，批注仍保留在数据库中。
+              </p>
+            ) : null}
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <div className="ds-card-soft p-3">
+              <p className="text-sm font-semibold">确认与修改</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  disabled={!canOperate || !activeShot || busyKey === "generate-image"}
+                  onClick={() => activeShot && void runAction("generate-image", () => generateStoryboardImage(project.id, activeShot.id))}
+                >
+                  {busyKey === "generate-image" ? <Loader2 className="animate-spin" size={15} /> : <WandSparkles size={15} />}
+                  生成图片
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={!canOperate || !selectedImage || busyKey === "confirm-image"}
+                  onClick={() => selectedImage && void runAction("confirm-image", () => confirmStoryboardImage(project.id, selectedImage.id))}
+                >
+                  <CheckCircle2 size={15} />
+                  确认为正式图
+                </Button>
+              </div>
+            </div>
+            <div className="ds-card-soft p-3">
+              <p className="text-sm font-semibold">场次审核路由</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  disabled={!canOperate || !activeScene || busyKey === "scene-review"}
+                  onClick={() => activeScene && void runAction("scene-review", () => createStoryboardSceneClientReview(project.id, activeScene.id), (data) => `${data.message} 验证码：${data.verificationCode}；链接：${data.reviewUrl}`)}
+                >
+                  {busyKey === "scene-review" ? <Loader2 className="animate-spin" size={15} /> : <Send size={15} />}
+                  提交本场甲方审核
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+        {message && <Feedback tone="success" text={message} />}
+        {error && <Feedback tone="warning" text={error} />}
+        {latestSceneReview && (
+          <WorkspaceCard>
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="ds-text-section-title">本场甲方审核明细</h3>
+              <Badge variant="outline">{clientReviewStatusLabel(latestSceneReview.status)}</Badge>
+            </div>
+            <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
+              模块二按场次整体通过或打回；打回时这里保留场内每条分镜的评分、OK/不 OK 和修改意见。
+            </p>
+            <div className="mt-3 grid gap-2">
+              {latestReviewItems.map((item) => (
+                <div key={item.id} className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3 text-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium">{item.itemLabel}</span>
+                    <span className={cn("ds-pill", item.decision === "approved" ? "ds-pill-teal" : item.decision === "rejected" ? "ds-pill-yellow" : "bg-[var(--surface-card)]")}>
+                      {item.decision === "approved" ? "OK" : item.decision === "rejected" ? "不 OK" : "待审"}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-[var(--text-secondary)]">评分：{item.score ?? "未评分"}</p>
+                  {item.feedback && <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">{item.feedback}</p>}
+                </div>
+              ))}
+            </div>
+          </WorkspaceCard>
+        )}
+      </div>
+      <StoryboardAssetRail
+        title="成果资产状态"
+        shots={shots}
+        activeShotId={activeShot?.id ?? null}
+        selectedByShotId={new Map(images.filter((image) => image.isSelected || image.ossUrl).map((image) => [image.shotId, image.ossUrl]))}
+        onSelectShot={setActiveShotId}
+      />
+    </div>
+  );
+}
+
+function StoryboardVideoCanvasModule({
+  project,
+  user,
+  scenes,
+  shots,
+  images,
+  videos,
+  onRefresh,
+}: {
+  project: ProjectSummary;
+  user: CurrentUser;
+  scenes: StoryboardSceneView[];
+  shots: StoryboardShotView[];
+  images: StoryboardImageView[];
+  videos: StoryboardVideoView[];
+  onRefresh: () => Promise<void>;
+}) {
+  const [activeShotId, setActiveShotId] = useState<string | null>(shots[0]?.id ?? null);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const activeShot = shots.find((shot) => shot.id === activeShotId) ?? shots[0] ?? null;
+  const activeScene = activeShot ? scenes.find((scene) => scene.id === activeShot.sceneId) ?? null : null;
+  const selectedImage = activeShot ? images.find((image) => image.shotId === activeShot.id && image.isSelected) : null;
+  const activeVideos = activeShot ? videos.filter((video) => video.shotId === activeShot.id) : [];
+  const selectedVideo = activeVideos.find((video) => video.isSelected) ?? activeVideos[0] ?? null;
+  const canOperate = user.role === "creative" || user.role === "admin";
+  const downloadableVideos = videos.filter((video) => video.ossUrl);
+
+  async function runAction<T extends { message?: string }>(key: string, action: () => Promise<ApiResult<T>>) {
+    setBusyKey(key);
+    setMessage(null);
+    setError(null);
+    const result = await action();
+    if (result.ok) {
+      setMessage((result.data as { message?: string }).message ?? "操作已完成。");
+      await onRefresh();
+    } else {
+      setError(result.error.message);
+    }
+    setBusyKey(null);
+  }
+
+  return (
+    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_330px]">
+      <div className="ds-card-sm p-4">
+        <div className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold">视频候选状态</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
+                视频/参考图预览已隐藏，这里只展示候选状态与操作入口。
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <span className={cn("ds-pill", selectedVideo?.ossUrl ? "ds-pill-teal" : "ds-pill-yellow")}>{selectedVideo?.ossUrl ? "已有视频候选" : "待生成"}</span>
+              {selectedVideo?.isSelected && <span className="ds-pill ds-selected-pill">正式内部视频</span>}
+              {selectedImage?.ossUrl && !selectedVideo?.ossUrl && <span className="ds-pill ds-pill-purple">已有分镜参考</span>}
+            </div>
+          </div>
+          <div className="mt-3 ds-card-soft p-3 text-sm leading-6 text-[var(--text-secondary)]">
+            {selectedVideo?.ossUrl ? (
+              <p>当前分镜已有视频资产，可在候选列表中确认内部正式视频。</p>
+            ) : selectedImage?.ossUrl ? (
+              <p>当前还没有正式视频候选；系统会使用已确认分镜图作为生成参考。</p>
+            ) : (
+              <p>模块三只做内部确认，不生成甲方外链。需要先在模块二确认分镜图片。</p>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-4">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-semibold">Prompt 与画面内容描述</p>
+            <span className="ds-pill ds-pill-purple">{activeScene ? `场次 ${activeScene.sceneNumber}` : "未选场次"}</span>
+          </div>
+          <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">{activeShot?.visualDescription ?? "请先在模块二准备分镜图片。"}</p>
+          {activeShot?.videoPrompt && <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">{activeShot.videoPrompt}</p>}
+        </div>
+
+        <div className="mt-4 flex gap-4 overflow-x-auto pb-2">
+          {activeVideos.length === 0 ? (
+            <div className="ds-card-soft p-4 text-sm text-[var(--text-secondary)]">生成第 1、2、3 个视频后，会在这里以状态卡形式显示。</div>
+          ) : (
+            activeVideos.map((video, index) => (
+              <button
+                key={video.id}
+                type="button"
+                className={cn("min-h-28 min-w-40 ds-card-soft p-3 text-left text-xs", video.isSelected ? "ds-selected-surface" : "")}
+              >
+                <p className="font-semibold">候选 {index + 1}</p>
+                <p className="mt-2 text-[var(--text-secondary)]">{parseStatusLabel(video.generationStatus)}</p>
+                {video.failureReason && <p className="mt-2 line-clamp-3 text-[var(--warning)]">{video.failureReason}</p>}
+              </button>
+            ))
+          )}
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button
+            type="button"
+            disabled={!canOperate || !activeShot || busyKey === "generate-video"}
+            onClick={() => activeShot && void runAction("generate-video", () => generateStoryboardVideo(project.id, activeShot.id))}
+          >
+            {busyKey === "generate-video" ? <Loader2 className="animate-spin" size={15} /> : <WandSparkles size={15} />}
+            生成视频候选
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={!canOperate || !selectedVideo || busyKey === "confirm-video"}
+            onClick={() => selectedVideo && void runAction("confirm-video", () => confirmStoryboardVideo(project.id, selectedVideo.id))}
+          >
+            <CheckCircle2 size={15} />
+            设为正式内部视频
+          </Button>
+          {selectedVideo?.ossUrl && (
+            <Button type="button" variant="outline" onClick={() => window.open(selectedVideo.ossUrl ?? "", "_blank", "noopener,noreferrer")}>
+              <Download size={15} />
+              下载当前视频
+            </Button>
+          )}
+          {downloadableVideos.length > 1 && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => downloadableVideos.forEach((video) => video.ossUrl && window.open(video.ossUrl, "_blank", "noopener,noreferrer"))}
+            >
+              <Download size={15} />
+              一键下载全部
+            </Button>
+          )}
+        </div>
+        <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold">导演素材下发</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">视频生成阶段不发甲方；这里按条或批量把已生成素材交给导演外部剪辑。</p>
+            </div>
+            <Badge variant="outline">{downloadableVideos.length} 条可下载</Badge>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {downloadableVideos.length === 0 ? (
+              <p className="text-xs leading-5 text-[var(--text-secondary)]">生成并保存视频后会出现下载入口。</p>
+            ) : (
+              downloadableVideos.map((video, index) => (
+                <Button key={video.id} type="button" variant="outline" size="sm" onClick={() => window.open(video.ossUrl ?? "", "_blank", "noopener,noreferrer")}>
+                  <Download size={14} />
+                  素材 {index + 1}
+                </Button>
+              ))
+            )}
+          </div>
+        </div>
+        {message && <Feedback tone="success" text={message} />}
+        {error && <Feedback tone="warning" text={error} />}
+      </div>
+      <StoryboardAssetRail
+        title="最终视频资产状态"
+        shots={shots}
+        activeShotId={activeShot?.id ?? null}
+        selectedByShotId={new Map(videos.filter((video) => video.isSelected || video.ossUrl).map((video) => [video.shotId, video.ossUrl]))}
+        onSelectShot={setActiveShotId}
+      />
+    </div>
+  );
+}
+
+function StoryboardAssetRail({
+  title,
+  shots,
+  activeShotId,
+  selectedByShotId,
+  onSelectShot,
+}: {
+  title: string;
+  shots: StoryboardShotView[];
+  activeShotId: string | null;
+  selectedByShotId: Map<string, string | null>;
+  onSelectShot: (shotId: string) => void;
+}) {
+  return (
+    <aside className="ds-card-sm p-4">
+      <p className="text-sm font-semibold">{title}</p>
+      <div className="mt-4 space-y-4">
+        {shots.length === 0 ? (
+          <p className="rounded-card-sm bg-[var(--surface-soft)] p-4 text-sm text-[var(--text-secondary)]">模块一拆出分镜后会按顺序显示资产状态。</p>
+        ) : (
+          shots.map((shot) => {
+            const url = selectedByShotId.get(shot.id);
+            return (
+              <button
+                key={shot.id}
+                type="button"
+                onClick={() => onSelectShot(shot.id)}
+                className={cn("block w-full ds-card-soft p-3 text-left", activeShotId === shot.id ? "ds-selected-surface" : "")}
+              >
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className="text-xs font-bold">{shot.shotNumber}</p>
+                  <span className={cn("ds-pill", url ? "ds-pill-teal" : "bg-[var(--surface-soft)] text-[var(--text-secondary)]")}>{url ? "有资产" : "待生成"}</span>
+                </div>
+                <p className="line-clamp-3 text-xs leading-5 text-[var(--text-secondary)]">{shot.visualDescription}</p>
+              </button>
+            );
+          })
+        )}
+      </div>
+    </aside>
+  );
+}
+
+function ReviewCutStageModule({
+  project,
+  user,
+  cutType,
+  assets,
+  videos,
+  reviewCuts,
+  annotations,
+  clientReviewTasks,
+  onRefresh,
+}: {
+  project: ProjectSummary;
+  user: CurrentUser;
+  cutType: "a_copy" | "b_copy";
+  assets: AssetView[];
+  videos: StoryboardVideoView[];
+  reviewCuts: ReviewCutView[];
+  annotations: ReviewCutAnnotationView[];
+  clientReviewTasks: ClientReviewTaskView[];
+  onRefresh: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const stageName = cutType === "a_copy" ? "A copy" : "B copy";
+  const latestCut = reviewCuts.filter((cut) => cut.cutType === cutType)[0] ?? null;
+  const cutAnnotations = latestCut ? annotations.filter((annotation) => annotation.reviewCutId === latestCut.id) : [];
+  const videoAssets = assets.filter((asset) => asset.assetType === "video");
+  const selectedVideos = videos.filter((video) => video.isSelected || video.ossUrl);
+  const canOperate = user.role === "creative" || user.role === "admin";
+  const allDownloadUrls = selectedVideos.map((video) => video.ossUrl).filter((url): url is string => Boolean(url));
+
+  async function handleSave(formData: FormData) {
+    setBusy("save");
+    setMessage(null);
+    setError(null);
+    const result = await createReviewCut(project.id, {
+      cutType,
+      title: String(formData.get("title") ?? "").trim() || `${stageName} v${reviewCuts.filter((cut) => cut.cutType === cutType).length + 1}`,
+      description: String(formData.get("description") ?? "").trim(),
+      assetId: String(formData.get("assetId") ?? "") || null,
+      videoUrl: String(formData.get("videoUrl") ?? "").trim() || null,
+      durationSeconds: Number(formData.get("durationSeconds") ?? 0) || null,
+    });
+    if (result.ok) {
+      setMessage(result.data.message);
+      await onRefresh();
+    } else {
+      setError(result.error.message);
+    }
+    setBusy(null);
+  }
+
+  async function handleApprove() {
+    if (!latestCut) return;
+    setBusy("approve");
+    setMessage(null);
+    setError(null);
+    const result = await approveReviewCut(project.id, latestCut.id);
+    if (result.ok) {
+      setMessage(result.data.message);
+      await onRefresh();
+    } else {
+      setError(result.error.message);
+    }
+    setBusy(null);
+  }
+
+  return (
+    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <WorkspaceCard>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <Video size={18} />
+              <h3 className="ds-text-section-title">{stageName} 成片审核</h3>
+            </div>
+            <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
+              {cutType === "a_copy"
+                ? "导演在外部软件剪出完整初版后上传回系统；内部先审，确认没问题后再给甲方整片链接和时间戳批注。"
+                : "基于 A copy 意见完成精剪、字幕、BGM 和声音后上传 B copy；给甲方的形式仍是完整视频加时间戳批注。"}
+            </p>
+          </div>
+          <Badge variant="outline">{reviewCutStatusLabel(latestCut?.status ?? "uploaded")}</Badge>
+        </div>
+        {message && <Feedback tone="success" text={message} />}
+        {error && <Feedback tone="warning" text={error} />}
+        <form action={handleSave} className="mt-4 grid gap-4">
+          <div className="grid gap-4 lg:grid-cols-2">
+            <label className="grid gap-1 text-xs font-medium">
+              成片标题
+              <Input name="title" defaultValue={latestCut?.title ?? `${stageName} 完整成片`} disabled={!canOperate || busy === "save"} />
+            </label>
+            <label className="grid gap-1 text-xs font-medium">
+              视频时长（秒）
+              <Input name="durationSeconds" type="number" min={1} defaultValue={latestCut?.durationSeconds ?? ""} disabled={!canOperate || busy === "save"} />
+            </label>
+          </div>
+          <label className="grid gap-1 text-xs font-medium">
+            选择已上传成片资产
+            <select name="assetId" defaultValue={latestCut?.assetId ?? ""} disabled={!canOperate || busy === "save"} className="h-10 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] px-3 text-sm">
+              <option value="">不绑定资产，使用下方视频链接</option>
+              {videoAssets.map((asset) => (
+                <option key={asset.id} value={asset.id}>
+                  {asset.fileName ?? asset.id}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-1 text-xs font-medium">
+            本地/临时视频播放链接
+            <Input name="videoUrl" defaultValue={latestCut?.videoUrl ?? ""} placeholder="例如 http://localhost:3000/api/projects/.../preview 或本地可访问链接" disabled={!canOperate || busy === "save"} />
+          </label>
+          <label className="grid gap-1 text-xs font-medium">
+            内部说明
+            <textarea
+              name="description"
+              defaultValue={latestCut?.description ?? ""}
+              disabled={!canOperate || busy === "save"}
+              className="min-h-24 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-sm leading-6"
+              placeholder={cutType === "a_copy" ? "说明这是无调色、无后期、无字幕的完整初版。" : "说明字幕、BGM、声音等精装处理情况。"}
+            />
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" disabled={!canOperate || busy === "save"}>
+              {busy === "save" ? <Loader2 className="animate-spin" size={15} /> : <Upload size={15} />}
+              保存成片版本
+            </Button>
+            <Button type="button" variant="outline" disabled={!canOperate || !latestCut || busy === "approve"} onClick={() => void handleApprove()}>
+              {busy === "approve" ? <Loader2 className="animate-spin" size={15} /> : <CheckCircle2 size={15} />}
+              内部审核通过
+            </Button>
+          </div>
+        </form>
+        <ClientReviewLaunchBox
+          projectId={project.id}
+          reviewType={cutType === "a_copy" ? "a_copy_review" : "b_copy_review"}
+          targetScopeId={latestCut?.id ?? null}
+          title={`甲方 ${stageName} 审核链接`}
+          detail="生成本地审核链接，甲方可看完整视频并在任意时间点提交批注；链接当前固定为 localhost，部署后再切服务器地址。"
+          disabled={!latestCut || latestCut.status !== "internal_approved"}
+          disabledReason={!latestCut ? "请先上传成片版本。" : "请先完成内部审核通过，再发给甲方。"}
+          tasks={clientReviewTasks}
+          onRefresh={onRefresh}
+        />
+      </WorkspaceCard>
+      <aside className="grid gap-5">
+        <WorkspaceCard>
+          <h3 className="ds-text-section-title">导演素材入口</h3>
+          <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">上一阶段已确认的视频片段可以逐条下载给导演剪辑；成片上传回本阶段。</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {selectedVideos.length === 0 ? (
+              <p className="rounded-card-sm bg-[var(--surface-soft)] p-3 text-xs leading-5 text-[var(--text-secondary)]">暂无可下发的视频片段。</p>
+            ) : (
+              selectedVideos.slice(0, 12).map((video, index) => (
+                <Button key={video.id} type="button" variant="outline" size="sm" disabled={!video.ossUrl} onClick={() => window.open(video.ossUrl ?? "", "_blank", "noopener,noreferrer")}>
+                  <Download size={14} />
+                  片段 {index + 1}
+                </Button>
+              ))
+            )}
+            {allDownloadUrls.length > 1 && (
+              <Button type="button" variant="outline" size="sm" onClick={() => allDownloadUrls.forEach((url) => window.open(url, "_blank", "noopener,noreferrer"))}>
+                <Download size={14} />
+                一键下载全部
+              </Button>
+            )}
+          </div>
+        </WorkspaceCard>
+        <WorkspaceCard>
+          <h3 className="ds-text-section-title">甲方时间戳回传</h3>
+          <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">甲方打回后，系统会把秒数粗定位到场次/分镜，供内部补改和重生成。</p>
+          <div className="mt-3 grid gap-2">
+            {cutAnnotations.length === 0 ? (
+              <p className="rounded-card-sm bg-[var(--surface-soft)] p-3 text-xs leading-5 text-[var(--text-secondary)]">暂无时间戳批注。</p>
+            ) : (
+              cutAnnotations.map((annotation) => (
+                <div key={annotation.id} className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold">{formatReviewCutTime(annotation.timeSeconds)}</span>
+                    <span className="ds-pill bg-[var(--surface-card)] text-[var(--text-secondary)]">{annotation.status === "mapped" ? "已定位" : "待人工定位"}</span>
+                  </div>
+                  <p className="mt-2 leading-5 text-[var(--text-secondary)]">{annotation.feedback}</p>
+                  <p className="mt-2 text-[var(--text-secondary)]">
+                    场次：{annotation.mappedSceneId ? annotation.mappedSceneId.slice(0, 8) : "未定位"} · 分镜：{annotation.mappedShotId ? annotation.mappedShotId.slice(0, 8) : "未定位"}
+                  </p>
+                </div>
+              ))
+            )}
+          </div>
+        </WorkspaceCard>
+      </aside>
+    </div>
+  );
+}
+
+function Feedback({ tone, text }: { tone: "success" | "warning"; text: string }) {
+  return (
+    <div
+      className={cn(
+        "mt-3 rounded-card-sm border border-[var(--border-soft)] p-3 text-sm",
+        tone === "success" ? "bg-[var(--macaron-teal-bg)] text-[var(--success)]" : "bg-[var(--macaron-yellow-bg)] text-[var(--warning)]"
+      )}
+    >
+      {text}
+    </div>
+  );
+}
+
+function sceneStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    draft: "草稿",
+    image_generating: "图片生成中",
+    internal_review: "内部审核",
+    ready_for_client_review: "待提交甲方",
+    client_reviewing: "甲方审核中",
+    client_approved: "甲方已通过",
+    client_rejected: "甲方已打回",
+    revision_required: "需要修改",
+    locked: "已锁定",
+    video_generating: "视频生成中",
+    video_internal_review: "视频内部审核",
+    video_confirmed: "视频已确认",
+  };
+  return labels[status] ?? status;
+}
+
+function reviewCutStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    uploaded: "已上传",
+    internal_review: "内部审核",
+    internal_approved: "内部已通过",
+    client_reviewing: "甲方审核中",
+    client_approved: "甲方已确认",
+    client_rejected: "甲方已打回",
+    revision_required: "需要修改",
+    archived: "已归档",
+  };
+  return labels[status] ?? status;
+}
+
+function formatReviewCutTime(seconds: number) {
+  const safe = Math.max(0, Math.floor(seconds));
+  const minutes = Math.floor(safe / 60);
+  const remain = safe % 60;
+  return `${minutes}:${String(remain).padStart(2, "0")}`;
 }
 
 function WorkspaceCard({
@@ -1346,7 +2529,7 @@ function WorkspaceCard({
   contentClassName?: string;
 }) {
   return (
-    <Card size="sm" className={cn("rounded-2xl border-[var(--border)] bg-[var(--panel)]", className)}>
+    <Card size="sm" className={cn("ds-card", className)}>
       <CardContent className={contentClassName}>{children}</CardContent>
     </Card>
   );
@@ -1396,9 +2579,9 @@ function RequirementStructuringCard({
     <WorkspaceCard>
       <div className="flex items-center gap-2">
         <WandSparkles size={18} />
-        <h3 className="font-semibold">需求结构化</h3>
+        <h3 className="ds-text-section-title">需求结构化</h3>
       </div>
-      <p className="mt-3 text-sm leading-6 text-[var(--muted-foreground)]">
+      <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">
         粘贴客户原始需求，系统会创建后台任务并真实调用豆包 Seed 2.1 Pro，生成统一需求模板后保存到项目产物。
       </p>
 
@@ -1406,341 +2589,23 @@ function RequirementStructuringCard({
         value={requirementText}
         onChange={(event) => setRequirementText(event.target.value)}
         placeholder="粘贴品牌方需求、目标、参考样片描述、交付规格、预算或时间要求..."
-        className="mt-4 min-h-36 w-full resize-y rounded-md border border-[var(--border)] bg-white p-3 text-sm leading-6"
+        className="mt-4 min-h-36 w-full resize-y ds-card-sm p-3 text-sm leading-6"
       />
 
       <button
         onClick={() => void handleSubmit()}
         disabled={submitting}
-        className="mt-3 inline-flex h-9 items-center justify-center gap-2 rounded-md bg-[var(--accent)] px-3 text-sm font-medium text-[var(--accent-foreground)] disabled:opacity-60"
+        className="mt-3 inline-flex h-9 items-center justify-center gap-2 rounded-card-sm bg-[var(--accent)] px-3 text-sm font-medium text-[var(--accent-foreground)] disabled:opacity-60"
       >
         {submitting ? <Loader2 className="animate-spin" size={16} /> : <WandSparkles size={16} />}
         {submitting ? "正在创建后台任务" : "生成标准需求模板"}
       </button>
 
-      {error && <div className="mt-3 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm text-[var(--warning)]">{error}</div>}
-      {message && <div className="mt-3 rounded-md border border-[#bbf7d0] bg-[#f0fdf4] p-3 text-sm text-[var(--success)]">{message}</div>}
+      {error && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm text-[var(--warning)]">{error}</div>}
+      {message && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-3 text-sm text-[var(--success)]">{message}</div>}
 
       {latest ? <StructuredRequirementPreview artifact={latest} /> : null}
     </WorkspaceCard>
-  );
-}
-
-function AdminGovernanceCard({
-  governance,
-  error,
-  onRefresh,
-}: {
-  governance: GovernanceView | null;
-  error: ApiError | null;
-  onRefresh: () => Promise<void>;
-}) {
-  const [refreshing, setRefreshing] = useState(false);
-
-  async function handleRefresh() {
-    setRefreshing(true);
-    await onRefresh();
-    setRefreshing(false);
-  }
-
-  return (
-    <section className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-medium">治理与审计</p>
-          <p className="mt-1 text-sm leading-6 text-[var(--muted-foreground)]">管理员查看 AI 调用计量和关键操作审计，费用字段在接入账单前不做估算。</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => void handleRefresh()}
-          className="inline-flex h-9 items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 text-sm font-medium"
-        >
-          {refreshing ? <Loader2 className="animate-spin" size={15} /> : <RefreshCcw size={15} />}
-          刷新
-        </button>
-      </div>
-
-      {error && <div className="mt-3 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm text-[var(--warning)]">{error.message}</div>}
-
-      {!governance ? (
-        <p className="mt-4 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3 text-sm text-[var(--muted-foreground)]">
-          正在读取治理数据。
-        </p>
-      ) : (
-        <div className="mt-4 grid gap-4">
-          <AiUsagePanel usage={governance.aiUsage} />
-          <AuditLogPanel logs={governance.auditLogs} />
-        </div>
-      )}
-    </section>
-  );
-}
-
-function AiUsagePanel({ usage }: { usage: AiUsageSummaryView }) {
-  return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
-      <div className="grid gap-3 sm:grid-cols-4">
-        <MiniMetric label="AI 调用" value={String(usage.totalCalls)} />
-        <MiniMetric label="成功 / 失败" value={`${usage.succeededCalls} / ${usage.failedCalls}`} />
-        <MiniMetric label="Token" value={usage.totalTokens.toLocaleString("zh-CN")} />
-        <MiniMetric label="均耗时" value={`${usage.averageDurationMs}ms`} />
-      </div>
-      <div className="mt-3 grid gap-2">
-        {usage.byProvider.length === 0 ? (
-          <p className="text-xs text-[var(--muted-foreground)]">还没有 AI 调用计量记录。</p>
-        ) : (
-          usage.byProvider.map((provider) => (
-            <div key={provider.provider} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-[var(--border)] bg-white p-2 text-xs">
-              <span className="font-medium">{provider.provider}</span>
-              <span className="text-[var(--muted-foreground)]">
-                {provider.callCount} 次 · {provider.totalTokens.toLocaleString("zh-CN")} token · {provider.totalImages} 张图
-              </span>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
-  );
-}
-
-function AuditLogPanel({ logs }: { logs: AuditLogView[] }) {
-  return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm font-medium">最近审计</p>
-        <span className="text-xs text-[var(--muted-foreground)]">仅展示摘要，不暴露合同正文和签名 URL</span>
-      </div>
-      {logs.length === 0 ? (
-        <p className="mt-3 rounded-md border border-[var(--border)] bg-white p-3 text-xs text-[var(--muted-foreground)]">还没有审计记录。</p>
-      ) : (
-        <div className="mt-3 grid gap-2">
-          {logs.slice(0, 8).map((log) => (
-            <div key={log.id} className="rounded-md border border-[var(--border)] bg-white p-3 text-xs">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="font-medium">{auditActionLabel(log.action)}</span>
-                <span className="text-[var(--muted-foreground)]">{formatDateTime(log.createdAt)}</span>
-              </div>
-              <p className="mt-1 text-[var(--muted-foreground)]">
-                {log.actorName ?? "系统"} · {log.objectType}{log.objectId ? ` · ${log.objectId.slice(0, 8)}` : ""}
-              </p>
-              <p className="mt-2 line-clamp-2 text-[var(--muted-foreground)]">{summarizeAuditAfter(log.after)}</p>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function AuditSearchCard({ projects }: { projects: ProjectSummary[] }) {
-  const [page, setPage] = useState<AuditLogPageView | null>(null);
-  const [filters, setFilters] = useState({
-    projectId: "",
-    objectType: "",
-    action: "",
-    actorId: "",
-    from: "",
-    to: "",
-  });
-  const [loadingLogs, setLoadingLogs] = useState(true);
-  const [auditError, setAuditError] = useState<string | null>(null);
-  const pageSize = 20;
-
-  const loadLogs = useCallback(
-    async (nextFilters = filters, offset = 0) => {
-      setLoadingLogs(true);
-      setAuditError(null);
-      const result = await fetchAuditLogs({
-        ...nextFilters,
-        limit: pageSize,
-        offset,
-      });
-      if (result.ok) {
-        setPage(result.data);
-      } else {
-        setAuditError(result.error.message);
-      }
-      setLoadingLogs(false);
-    },
-    [filters]
-  );
-
-  useEffect(() => {
-    let cancelled = false;
-    fetchAuditLogs({ limit: pageSize, offset: 0 }).then((result) => {
-      if (cancelled) return;
-      if (result.ok) {
-        setPage(result.data);
-      } else {
-        setAuditError(result.error.message);
-      }
-      setLoadingLogs(false);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  async function handleFilter(formData: FormData) {
-    const nextFilters = {
-      projectId: String(formData.get("projectId") ?? ""),
-      objectType: String(formData.get("objectType") ?? ""),
-      action: String(formData.get("action") ?? "").trim(),
-      actorId: String(formData.get("actorId") ?? "").trim(),
-      from: String(formData.get("from") ?? ""),
-      to: String(formData.get("to") ?? ""),
-    };
-    setFilters(nextFilters);
-    await loadLogs(nextFilters, 0);
-  }
-
-  const logs = page?.items ?? [];
-  const rangeStart = page && page.total > 0 ? page.offset + 1 : 0;
-  const rangeEnd = page ? page.offset + logs.length : 0;
-
-  return (
-    <section className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4 lg:col-span-2">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-medium">审计查询</p>
-          <p className="mt-1 text-sm leading-6 text-[var(--muted-foreground)]">
-            独立分页查询关键操作，可按项目、对象、动作、操作者和时间范围筛选。敏感正文与签名 URL 只显示摘要。
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => void loadLogs(filters, page?.offset ?? 0)}
-          disabled={loadingLogs}
-          className="inline-flex h-9 items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 text-sm font-medium disabled:opacity-60"
-        >
-          {loadingLogs ? <Loader2 className="animate-spin" size={15} /> : <RefreshCcw size={15} />}
-          刷新查询
-        </button>
-      </div>
-
-      <form action={handleFilter} className="mt-4 grid gap-3 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3 md:grid-cols-3">
-        <label className="grid gap-1 text-sm">
-          <span className="font-medium">项目</span>
-          <select name="projectId" defaultValue={filters.projectId} className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm">
-            <option value="">全部项目</option>
-            {projects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.brandName} / {project.projectName}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="grid gap-1 text-sm">
-          <span className="font-medium">对象类型</span>
-          <select name="objectType" defaultValue={filters.objectType} className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm">
-            <option value="">全部对象</option>
-            <option value="project">项目</option>
-            <option value="project_stage_state">阶段状态</option>
-            <option value="creative_direction">创意方向</option>
-            <option value="asset">资产</option>
-            <option value="proposal">提案</option>
-            <option value="quote">报价</option>
-            <option value="contract">合同</option>
-            <option value="document_export">导出文件</option>
-            <option value="feishu_delivery">飞书交付</option>
-            <option value="generated_image">氛围图</option>
-            <option value="scoring_rule">评分规则</option>
-          </select>
-        </label>
-        <label className="grid gap-1 text-sm">
-          <span className="font-medium">动作</span>
-          <input
-            name="action"
-            defaultValue={filters.action}
-            placeholder="例如 creative_direction.request_revision"
-            className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm"
-          />
-        </label>
-        <label className="grid gap-1 text-sm">
-          <span className="font-medium">操作者 ID</span>
-          <input
-            name="actorId"
-            defaultValue={filters.actorId}
-            placeholder="可粘贴用户 uuid"
-            className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm"
-          />
-        </label>
-        <label className="grid gap-1 text-sm">
-          <span className="font-medium">开始时间</span>
-          <input name="from" type="datetime-local" defaultValue={filters.from} className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm" />
-        </label>
-        <label className="grid gap-1 text-sm">
-          <span className="font-medium">结束时间</span>
-          <input name="to" type="datetime-local" defaultValue={filters.to} className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm" />
-        </label>
-        <div className="md:col-span-3">
-          <button
-            disabled={loadingLogs}
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-[var(--foreground)] px-3 text-sm font-medium text-white disabled:opacity-60"
-          >
-            {loadingLogs ? <Loader2 className="animate-spin" size={16} /> : <ClipboardList size={16} />}
-            查询审计记录
-          </button>
-        </div>
-      </form>
-
-      {auditError && <div className="mt-3 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm text-[var(--warning)]">{auditError}</div>}
-
-      <div className="mt-4 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-sm font-medium">
-            查询结果 {page ? `${rangeStart}-${rangeEnd} / ${page.total}` : ""}
-          </p>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              disabled={loadingLogs || !page || page.offset === 0}
-              onClick={() => void loadLogs(filters, Math.max(0, (page?.offset ?? 0) - pageSize))}
-              className="h-8 rounded-md border border-[var(--border)] bg-white px-3 text-xs font-medium disabled:opacity-50"
-            >
-              上一页
-            </button>
-            <button
-              type="button"
-              disabled={loadingLogs || !page?.hasMore}
-              onClick={() => void loadLogs(filters, (page?.offset ?? 0) + pageSize)}
-              className="h-8 rounded-md border border-[var(--border)] bg-white px-3 text-xs font-medium disabled:opacity-50"
-            >
-              下一页
-            </button>
-          </div>
-        </div>
-
-        {loadingLogs && !page ? (
-          <StateLine icon={<Loader2 className="animate-spin" size={16} />} text="正在读取审计记录" />
-        ) : logs.length === 0 ? (
-          <p className="mt-3 rounded-md border border-[var(--border)] bg-white p-3 text-sm text-[var(--muted-foreground)]">
-            没有匹配的审计记录。你可以放宽时间范围、项目或动作条件后再查。
-          </p>
-        ) : (
-          <div className="mt-3 overflow-hidden rounded-md border border-[var(--border)] bg-white">
-            {logs.map((log) => (
-              <div key={log.id} className="grid gap-2 border-b border-[var(--border)] p-3 text-xs last:border-b-0 md:grid-cols-[180px_minmax(0,1fr)_180px]">
-                <div>
-                  <p className="font-medium">{auditActionLabel(log.action)}</p>
-                  <p className="mt-1 text-[var(--muted-foreground)]">{formatDateTime(log.createdAt)}</p>
-                </div>
-                <div className="min-w-0">
-                  <p className="truncate text-[var(--muted-foreground)]">
-                    {log.objectType}{log.objectId ? ` · ${log.objectId}` : ""}
-                  </p>
-                  <p className="mt-1 line-clamp-2 leading-5 text-[var(--muted-foreground)]">{summarizeAuditAfter(log.after)}</p>
-                </div>
-                <div className="min-w-0 text-[var(--muted-foreground)]">
-                  <p className="truncate">{log.actorName ?? "系统"}</p>
-                  <p className="mt-1 truncate">{log.projectId ? `项目 ${log.projectId}` : "无项目关联"}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </section>
   );
 }
 
@@ -1758,15 +2623,15 @@ function StructuredRequirementPreview({ artifact }: { artifact: ArtifactView }) 
   ];
 
   return (
-    <div className="mt-4 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
+    <div className="mt-4 ds-card-soft p-3">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm font-medium">{artifact.title}</p>
-        <span className="rounded bg-[var(--muted)] px-2 py-1 text-xs">v{artifact.version}</span>
+        <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">v{artifact.version}</span>
       </div>
       <div className="mt-3 grid gap-2 text-sm">
         {rows.map(([label, value]) => (
-          <div key={label} className="grid gap-1 border-b border-[var(--border)] pb-2 last:border-b-0">
-            <span className="text-xs text-[var(--muted-foreground)]">{label}</span>
+          <div key={label} className="grid gap-1 border-b border-[var(--border-soft)] pb-2 last:border-b-0">
+            <span className="text-xs text-[var(--text-secondary)]">{label}</span>
             <span>{formatArtifactValue(value)}</span>
           </div>
         ))}
@@ -1932,9 +2797,9 @@ function AssetCenter({
         <div>
           <div className="flex items-center gap-2">
             <FileUp size={18} />
-            <h3 className="font-semibold">项目资料中心</h3>
+            <h3 className="ds-text-section-title">项目资料中心</h3>
           </div>
-          <p className="mt-2 text-sm text-[var(--muted-foreground)]">
+          <p className="mt-2 text-sm text-[var(--text-secondary)]">
             文件会先真实上传 OSS，上传成功后再写入数据库。任一步失败都不会显示成功。
           </p>
         </div>
@@ -1945,13 +2810,13 @@ function AssetCenter({
       </div>
 
       <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
+        <div className="ds-card-soft p-3">
           <p className="text-sm font-medium">上传文件</p>
           <div className="mt-3 grid gap-3">
             <select
               value={assetType}
               onChange={(event) => setAssetType(event.target.value)}
-              className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+              className="h-9 ds-card-sm px-3 text-sm"
             >
               <option value="other">自动识别资料类型</option>
               <option value="pdf">PDF 文件</option>
@@ -1961,10 +2826,10 @@ function AssetCenter({
               <option value="video">视频</option>
               <option value="text">文本资料</option>
             </select>
-            <label className="flex min-h-28 cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-[var(--border)] bg-white p-3 text-center text-sm">
+            <label className="flex min-h-28 cursor-pointer flex-col items-center justify-center rounded-card-sm border border-dashed border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-center text-sm">
               {uploadState === "idle" ? <Upload size={22} /> : <Loader2 className="animate-spin" size={22} />}
               <span className="mt-2 font-medium">{uploadLabel(uploadState)}</span>
-              <span className="mt-1 text-xs text-[var(--muted-foreground)]">支持 PDF、Word、图片、视频和文本资料</span>
+              <span className="mt-1 text-xs text-[var(--text-secondary)]">支持 PDF、Word、图片、视频和文本资料</span>
               <input
                 type="file"
                 className="sr-only"
@@ -1976,20 +2841,20 @@ function AssetCenter({
           </div>
         </div>
 
-        <form action={handleExternalLink} className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
+        <form action={handleExternalLink} className="ds-card-soft p-3">
           <p className="text-sm font-medium">录入飞书/外部链接</p>
           <div className="mt-3 grid gap-3">
-            <input name="title" placeholder="标题或来源说明" className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm" />
+            <input name="title" placeholder="标题或来源说明" className="h-9 ds-card-sm px-3 text-sm" />
             <input
               name="externalUrl"
               type="url"
               required
               placeholder="https://..."
-              className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+              className="h-9 ds-card-sm px-3 text-sm"
             />
             <button
               disabled={linkSaving}
-              className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-[var(--foreground)] px-3 text-sm font-medium text-white disabled:opacity-60"
+              className="inline-flex h-9 items-center justify-center gap-2 rounded-card-sm bg-[var(--foreground)] px-3 text-sm font-medium text-[var(--text-inverse)] disabled:opacity-60"
             >
               {linkSaving ? <Loader2 className="animate-spin" size={16} /> : <ExternalLink size={16} />}
               保存链接
@@ -1999,14 +2864,14 @@ function AssetCenter({
       </div>
 
       {assetError && (
-        <div className="mt-4 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm text-[var(--warning)]">{assetError}</div>
+        <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm text-[var(--warning)]">{assetError}</div>
       )}
-      {message && <div className="mt-4 rounded-md border border-[#bbf7d0] bg-[#f0fdf4] p-3 text-sm text-[var(--success)]">{message}</div>}
+      {message && <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-3 text-sm text-[var(--success)]">{message}</div>}
 
       <div className="mt-5">
         <p className="mb-3 text-sm font-medium">资产列表</p>
         {assets.length === 0 ? (
-          <div className="rounded-md border border-[var(--border)] bg-white p-3 text-sm text-[var(--muted-foreground)]">
+          <div className="ds-card-sm p-3 text-sm text-[var(--text-secondary)]">
             当前项目还没有资料。上传客户需求、样片、参考图，或先保存飞书文档链接。
           </div>
         ) : (
@@ -2030,11 +2895,15 @@ function AssetCenter({
 function ProjectBasicsCard({
   project,
   user,
+  clientReviewTasks,
   onProjectUpdated,
+  onRefresh,
 }: {
   project: ProjectSummary;
   user: CurrentUser;
+  clientReviewTasks: ClientReviewTaskView[];
   onProjectUpdated: (project: ProjectSummary) => Promise<void>;
+  onRefresh: () => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -2071,9 +2940,9 @@ function ProjectBasicsCard({
         <div>
           <div className="flex items-center gap-2">
             <BriefcaseBusiness size={18} />
-            <h3 className="font-semibold">项目基础信息</h3>
+            <h3 className="ds-text-section-title">项目基础信息</h3>
           </div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">
+          <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
             品牌、项目名、负责人和截止时间都持久化在数据库，保存后左侧项目列表和阶段负责人会同步刷新。
           </p>
         </div>
@@ -2092,7 +2961,7 @@ function ProjectBasicsCard({
             {editing ? "收起编辑" : "编辑信息"}
           </Button>
         ) : (
-          <span className="rounded bg-[var(--muted)] px-2 py-1 text-xs text-[var(--muted-foreground)]">当前角色只读</span>
+          <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">当前角色只读</span>
         )}
       </div>
 
@@ -2104,7 +2973,7 @@ function ProjectBasicsCard({
       </div>
 
       {editing && (
-        <form action={handleSubmit} className="mt-4 grid gap-3 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3 md:grid-cols-2">
+        <form action={handleSubmit} className="mt-4 grid gap-3 ds-card-soft p-3 md:grid-cols-2">
           <label className="grid gap-1 text-sm">
             <span className="font-medium">品牌名</span>
             <Input
@@ -2112,7 +2981,7 @@ function ProjectBasicsCard({
               required
               defaultValue={project.brandName}
               disabled={saving}
-              className="bg-white"
+              className="bg-[var(--surface-card)]"
             />
           </label>
           <label className="grid gap-1 text-sm">
@@ -2122,7 +2991,7 @@ function ProjectBasicsCard({
               required
               defaultValue={project.projectName}
               disabled={saving}
-              className="bg-white"
+              className="bg-[var(--surface-card)]"
             />
           </label>
           <label className="grid gap-1 text-sm">
@@ -2132,9 +3001,9 @@ function ProjectBasicsCard({
               required
               defaultValue={project.ownerName}
               disabled={saving}
-              className="bg-white"
+              className="bg-[var(--surface-card)]"
             />
-            <span className="text-xs leading-5 text-[var(--muted-foreground)]">这里更新展示负责人；商务编辑权限仍以创建项目的负责人账号为准。</span>
+            <span className="text-xs leading-5 text-[var(--text-secondary)]">这里更新展示负责人；商务编辑权限仍以创建项目的负责人账号为准。</span>
           </label>
           <label className="grid gap-1 text-sm">
             <span className="font-medium">截止时间</span>
@@ -2143,7 +3012,7 @@ function ProjectBasicsCard({
               type="date"
               defaultValue={project.dueDate ?? ""}
               disabled={saving}
-              className="bg-white"
+              className="bg-[var(--surface-card)]"
             />
           </label>
           <div className="md:col-span-2">
@@ -2157,414 +3026,17 @@ function ProjectBasicsCard({
         </form>
       )}
 
-      {projectError && <div className="mt-3 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm text-[var(--warning)]">{projectError}</div>}
-      {message && <div className="mt-3 rounded-md border border-[#bbf7d0] bg-[#f0fdf4] p-3 text-sm text-[var(--success)]">{message}</div>}
-    </WorkspaceCard>
-  );
-}
-
-function ProjectMembersCard({ project }: { project: ProjectSummary }) {
-  const [members, setMembers] = useState<ProjectMember[]>([]);
-  const [users, setUsers] = useState<CurrentUser[]>([]);
-  const [loadingMembers, setLoadingMembers] = useState(true);
-  const [savingMember, setSavingMember] = useState(false);
-  const [creatingUser, setCreatingUser] = useState(false);
-  const [createdUserId, setCreatedUserId] = useState<string>("");
-  const [message, setMessage] = useState<string | null>(null);
-  const [memberError, setMemberError] = useState<string | null>(null);
-
-  const loadMembers = useCallback(async () => {
-    setLoadingMembers(true);
-    setMemberError(null);
-    const result = await fetchProjectMembers(project.id);
-    if (result.ok) {
-      setMembers(result.data.members);
-      setUsers(result.data.users);
-      setCreatedUserId("");
-    } else {
-      setMemberError(result.error.message);
-    }
-    setLoadingMembers(false);
-  }, [project.id]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    fetchProjectMembers(project.id).then((result) => {
-      if (cancelled) return;
-      if (result.ok) {
-        setMembers(result.data.members);
-        setUsers(result.data.users);
-        setCreatedUserId("");
-      } else {
-        setMemberError(result.error.message);
-      }
-      setLoadingMembers(false);
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [project.id]);
-
-  async function handleAddMember(formData: FormData) {
-    setSavingMember(true);
-    setMessage(null);
-    setMemberError(null);
-
-    const result = await addProjectMember(project.id, {
-      userId: String(formData.get("userId") ?? ""),
-      role: String(formData.get("role") ?? "creative") as Role,
-    });
-
-    if (result.ok) {
-      setMembers(result.data.members);
-      setMessage("成员已加入当前项目。");
-    } else {
-      setMemberError(result.error.message);
-    }
-    setSavingMember(false);
-  }
-
-  async function handleCreateUser(formData: FormData) {
-    setCreatingUser(true);
-    setMessage(null);
-    setMemberError(null);
-
-    const result = await createSystemUser({
-      name: String(formData.get("name") ?? ""),
-      email: String(formData.get("email") ?? ""),
-      password: String(formData.get("password") ?? ""),
-      role: String(formData.get("role") ?? "creative") as Role,
-    });
-
-    if (result.ok) {
-      setUsers((current) => {
-        const others = current.filter((item) => item.id !== result.data.user.id);
-        return [...others, result.data.user].sort((a, b) => `${a.role}-${a.name}`.localeCompare(`${b.role}-${b.name}`));
-      });
-      setCreatedUserId(result.data.user.id);
-      setMessage(result.data.message);
-    } else {
-      setMemberError(result.error.message);
-    }
-
-    setCreatingUser(false);
-  }
-
-  return (
-    <WorkspaceCard className="lg:col-span-2">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <BriefcaseBusiness size={18} />
-            <h3 className="font-semibold">项目成员管理</h3>
-          </div>
-          <p className="mt-2 text-sm text-[var(--muted-foreground)]">管理员可以把商务、创意或管理成员加入当前项目，服务端会按成员关系校验访问权限。</p>
-        </div>
-        <button onClick={() => void loadMembers()} className="inline-flex items-center gap-2 text-sm font-medium text-[var(--accent)]">
-          <RefreshCcw size={14} />
-          刷新成员
-        </button>
-      </div>
-
-      <form action={handleCreateUser} className="mt-4 grid gap-3 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
-        <div>
-          <p className="text-sm font-medium">创建系统用户</p>
-          <p className="mt-1 text-xs leading-5 text-[var(--muted-foreground)]">
-            先创建账号，再把账号加入当前项目。密码只用于创建登录凭据，不会写入审计日志或前端状态。
-          </p>
-        </div>
-        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_180px_180px]">
-          <input
-            name="name"
-            required
-            disabled={creatingUser}
-            placeholder="成员姓名"
-            className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm disabled:bg-[var(--muted)]"
-          />
-          <input
-            name="email"
-            type="email"
-            required
-            disabled={creatingUser}
-            placeholder="成员邮箱"
-            className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm disabled:bg-[var(--muted)]"
-          />
-          <input
-            name="password"
-            type="password"
-            required
-            minLength={12}
-            disabled={creatingUser}
-            placeholder="至少 12 位密码"
-            className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm disabled:bg-[var(--muted)]"
-          />
-          <select name="role" disabled={creatingUser} defaultValue="creative" className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm disabled:bg-[var(--muted)]">
-            <option value="business">商务团队</option>
-            <option value="creative">创意团队</option>
-            <option value="admin">管理团队</option>
-          </select>
-        </div>
-        <button
-          disabled={creatingUser}
-          className="inline-flex h-9 w-fit items-center justify-center gap-2 rounded-md bg-[var(--foreground)] px-3 text-sm font-medium text-white disabled:opacity-60"
-        >
-          {creatingUser ? <Loader2 className="animate-spin" size={16} /> : <Plus size={16} />}
-          创建用户
-        </button>
-      </form>
-
-      <form action={handleAddMember} className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_160px_auto]">
-        <select name="userId" required value={createdUserId} onChange={(event) => setCreatedUserId(event.target.value)} className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm">
-          <option value="">选择内部成员</option>
-          {users.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.name} · {item.email ?? "无邮箱"} · {roleLabels[item.role]}
-            </option>
-          ))}
-        </select>
-        <select name="role" className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm">
-          <option value="business">商务团队</option>
-          <option value="creative">创意团队</option>
-          <option value="admin">管理团队</option>
-        </select>
-        <button
-          disabled={savingMember}
-          className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-[var(--foreground)] px-3 text-sm font-medium text-white disabled:opacity-60"
-        >
-          {savingMember ? <Loader2 className="animate-spin" size={16} /> : <Plus size={16} />}
-          加入项目
-        </button>
-      </form>
-
-      {memberError && <div className="mt-3 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm text-[var(--warning)]">{memberError}</div>}
-      {message && <div className="mt-3 rounded-md border border-[#bbf7d0] bg-[#f0fdf4] p-3 text-sm text-[var(--success)]">{message}</div>}
-
-      <div className="mt-4">
-        {loadingMembers ? (
-          <StateLine icon={<Loader2 className="animate-spin" size={16} />} text="正在读取项目成员" />
-        ) : members.length === 0 ? (
-          <div className="rounded-md border border-[var(--border)] bg-white p-3 text-sm text-[var(--muted-foreground)]">当前项目还没有成员。</div>
-        ) : (
-          <div className="grid gap-2">
-            {members.map((member) => (
-              <div key={member.userId} className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-[var(--border)] bg-white p-3 text-sm">
-                <div>
-                  <p className="font-medium">{member.name}</p>
-                  <p className="mt-1 text-xs text-[var(--muted-foreground)]">{member.email ?? "无邮箱"}</p>
-                </div>
-                <span className="rounded bg-[var(--muted)] px-2 py-1 text-xs">{roleLabels[member.membershipRole]}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </WorkspaceCard>
-  );
-}
-
-function ScoringRulesCard() {
-  const [rules, setRules] = useState<ScoringRuleView[]>([]);
-  const [expandedRuleIds, setExpandedRuleIds] = useState<Record<string, boolean>>({});
-  const [ruleVersions, setRuleVersions] = useState<Record<string, ScoringRuleVersionView[]>>({});
-  const [loadingVersionRuleIds, setLoadingVersionRuleIds] = useState<Record<string, boolean>>({});
-  const [versionErrors, setVersionErrors] = useState<Record<string, string>>({});
-  const [loadingRules, setLoadingRules] = useState(true);
-  const [savingRule, setSavingRule] = useState(false);
-  const [ruleMessage, setRuleMessage] = useState<string | null>(null);
-  const [ruleError, setRuleError] = useState<string | null>(null);
-
-  const loadRules = useCallback(async () => {
-    setLoadingRules(true);
-    setRuleError(null);
-    const result = await fetchScoringRules();
-    if (result.ok) {
-      setRules(result.data);
-    } else {
-      setRuleError(result.error.message);
-    }
-    setLoadingRules(false);
-  }, []);
-
-  const loadRuleVersions = useCallback(async (ruleId: string) => {
-    setLoadingVersionRuleIds((current) => ({ ...current, [ruleId]: true }));
-    setVersionErrors((current) => {
-      const next = { ...current };
-      delete next[ruleId];
-      return next;
-    });
-
-    const result = await fetchScoringRuleVersions(ruleId);
-    if (result.ok) {
-      setRuleVersions((current) => ({ ...current, [ruleId]: result.data }));
-    } else {
-      setVersionErrors((current) => ({ ...current, [ruleId]: result.error.message }));
-    }
-    setLoadingVersionRuleIds((current) => ({ ...current, [ruleId]: false }));
-  }, []);
-
-  async function handleToggleVersions(ruleId: string) {
-    const opening = !expandedRuleIds[ruleId];
-    setExpandedRuleIds((current) => ({ ...current, [ruleId]: opening }));
-
-    if (opening && !(ruleId in ruleVersions) && !loadingVersionRuleIds[ruleId]) {
-      await loadRuleVersions(ruleId);
-    }
-  }
-
-  useEffect(() => {
-    let cancelled = false;
-    fetchScoringRules().then((result) => {
-      if (cancelled) return;
-      if (result.ok) {
-        setRules(result.data);
-      } else {
-        setRuleError(result.error.message);
-      }
-      setLoadingRules(false);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  async function handleSaveRule(formData: FormData) {
-    setSavingRule(true);
-    setRuleMessage(null);
-    setRuleError(null);
-
-    const result = await saveScoringRule({
-      tag: String(formData.get("tag") ?? ""),
-      weight: Number(formData.get("weight") ?? "1"),
-      description: String(formData.get("description") ?? ""),
-      positiveExamples: splitExamples(String(formData.get("positiveExamples") ?? "")),
-      negativeExamples: splitExamples(String(formData.get("negativeExamples") ?? "")),
-      isActive: formData.get("isActive") === "on",
-    });
-
-    if (result.ok) {
-      setRuleMessage("评分规则已保存。后续资料解析会按最新规则计算标签分数。");
-      setRuleVersions({});
-      await loadRules();
-    } else {
-      setRuleError(result.error.message);
-    }
-    setSavingRule(false);
-  }
-
-  return (
-    <WorkspaceCard className="lg:col-span-2">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <Sparkles size={18} />
-            <h3 className="font-semibold">评分规则配置后台</h3>
-          </div>
-          <p className="mt-2 text-sm text-[var(--muted-foreground)]">配置 tag、权重、评分描述和正负样例。规则会真实入库，并用于资料解析后的标签评分。</p>
-        </div>
-        <button onClick={() => void loadRules()} className="inline-flex items-center gap-2 text-sm font-medium text-[var(--accent)]">
-          <RefreshCcw size={14} />
-          刷新规则
-        </button>
-      </div>
-
-      <form action={handleSaveRule} className="mt-4 grid gap-3">
-        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
-          <input name="tag" required placeholder="tag，例如：写实风格" className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm" />
-          <input name="weight" type="number" min="0.1" step="0.1" defaultValue="1" className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm" />
-        </div>
-        <input name="description" placeholder="评分描述" className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm" />
-        <div className="grid gap-3 md:grid-cols-2">
-          <textarea name="positiveExamples" placeholder="正向样例，用逗号或换行分隔" className="min-h-20 rounded-md border border-[var(--border)] bg-white p-3 text-sm" />
-          <textarea name="negativeExamples" placeholder="负向样例，用逗号或换行分隔" className="min-h-20 rounded-md border border-[var(--border)] bg-white p-3 text-sm" />
-        </div>
-        <label className="flex items-center gap-2 text-sm">
-          <input name="isActive" type="checkbox" defaultChecked />
-          启用这条规则
-        </label>
-        <button
-          disabled={savingRule}
-          className="inline-flex h-9 w-fit items-center justify-center gap-2 rounded-md bg-[var(--foreground)] px-3 text-sm font-medium text-white disabled:opacity-60"
-        >
-          {savingRule ? <Loader2 className="animate-spin" size={16} /> : <Plus size={16} />}
-          保存规则
-        </button>
-      </form>
-
-      {ruleError && <div className="mt-3 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm text-[var(--warning)]">{ruleError}</div>}
-      {ruleMessage && <div className="mt-3 rounded-md border border-[#bbf7d0] bg-[#f0fdf4] p-3 text-sm text-[var(--success)]">{ruleMessage}</div>}
-
-      <div className="mt-4">
-        {loadingRules ? (
-          <StateLine icon={<Loader2 className="animate-spin" size={16} />} text="正在读取评分规则" />
-        ) : rules.length === 0 ? (
-          <div className="rounded-md border border-[var(--border)] bg-white p-3 text-sm text-[var(--muted-foreground)]">还没有评分规则。先配置三维风格、写实风格等核心标签。</div>
-        ) : (
-          <div className="grid gap-2 md:grid-cols-2">
-            {rules.map((rule) => (
-              <div key={rule.id} className="rounded-md border border-[var(--border)] bg-white p-3 text-sm">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex min-w-0 flex-wrap items-center gap-2">
-                    <p className="font-medium">{rule.tag}</p>
-                    <span className="rounded bg-[var(--muted)] px-2 py-1 text-xs">当前 v{rule.version}</span>
-                    <span className={cn("rounded px-2 py-1 text-xs", rule.isActive ? "bg-[#dcfce7] text-[var(--success)]" : "bg-[var(--muted)] text-[var(--muted-foreground)]")}>
-                      {rule.isActive ? "已启用" : "未启用"}
-                    </span>
-                  </div>
-                  <span className="shrink-0 rounded bg-[var(--muted)] px-2 py-1 text-xs">权重 {rule.weight}</span>
-                </div>
-                <p className="mt-2 text-xs leading-5 text-[var(--muted-foreground)]">{rule.description || "未填写描述"}</p>
-                <button
-                  type="button"
-                  onClick={() => void handleToggleVersions(rule.id)}
-                  className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-[var(--accent)]"
-                  aria-expanded={Boolean(expandedRuleIds[rule.id])}
-                >
-                  {expandedRuleIds[rule.id] ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                  {expandedRuleIds[rule.id] ? "关闭历史版本" : "查看历史版本"}
-                </button>
-
-                {expandedRuleIds[rule.id] && (
-                  <div className="mt-3 border-t border-[var(--border)] pt-3">
-                    {loadingVersionRuleIds[rule.id] ? (
-                      <StateLine icon={<Loader2 className="animate-spin" size={14} />} text="正在读取历史版本" />
-                    ) : versionErrors[rule.id] ? (
-                      <div className="rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-xs leading-5 text-[var(--warning)]">
-                        <p>{versionErrors[rule.id]}</p>
-                        <button type="button" onClick={() => void loadRuleVersions(rule.id)} className="mt-2 inline-flex items-center gap-1.5 font-medium">
-                          <RefreshCcw size={13} />
-                          重新加载
-                        </button>
-                      </div>
-                    ) : (ruleVersions[rule.id] ?? []).filter((version) => version.version !== rule.version).length === 0 ? (
-                      <p className="text-xs leading-5 text-[var(--muted-foreground)]">这条规则还没有历史版本。后续修改保存后会在这里留存记录。</p>
-                    ) : (
-                      <div className="grid gap-3">
-                        {(ruleVersions[rule.id] ?? [])
-                          .filter((version) => version.version !== rule.version)
-                          .map((version) => (
-                            <div key={version.id} className="border-b border-[var(--border)] pb-3 text-xs last:border-b-0 last:pb-0">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="font-medium">v{version.version}</span>
-                                <span className="rounded bg-[var(--muted)] px-2 py-1">权重 {version.weight}</span>
-                                <span className={cn("rounded px-2 py-1", version.isActive ? "bg-[#dcfce7] text-[var(--success)]" : "bg-[var(--muted)] text-[var(--muted-foreground)]")}>
-                                  {version.isActive ? "当时启用" : "当时停用"}
-                                </span>
-                                <span className="text-[var(--muted-foreground)]">{formatDateTime(version.createdAt)}</span>
-                              </div>
-                              <p className="mt-2 line-clamp-2 leading-5 text-[var(--muted-foreground)]">{version.description || "该版本未填写评分描述。"}</p>
-                            </div>
-                          ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      {projectError && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm text-[var(--warning)]">{projectError}</div>}
+      {message && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-3 text-sm text-[var(--success)]">{message}</div>}
+      <ClientReviewLaunchBox
+        projectId={project.id}
+        reviewType="brief_confirmation"
+        targetScopeId={project.id}
+        title="甲方 Brief 确认"
+        detail="生成无需登录的安全链接，让甲方确认项目 Brief 和结构化需求；结果会回写到当前阶段状态机。"
+        tasks={clientReviewTasks}
+        onRefresh={onRefresh}
+      />
     </WorkspaceCard>
   );
 }
@@ -2576,25 +3048,25 @@ function AssetAnalysisResults({ analyses, artifacts }: { analyses: AssetAnalysis
     <WorkspaceCard className="lg:col-span-2">
       <div className="flex items-center gap-2">
         <ClipboardList size={18} />
-        <h3 className="font-semibold">资料解析与标签评分结果</h3>
+        <h3 className="ds-text-section-title">资料解析与标签评分结果</h3>
       </div>
-      <p className="mt-2 text-sm text-[var(--muted-foreground)]">解析结果和评分结果都来自数据库产物，刷新页面后会恢复。</p>
+      <p className="mt-2 text-sm text-[var(--text-secondary)]">解析结果和评分结果都来自数据库产物，刷新页面后会恢复。</p>
 
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         {analyses.length === 0 ? (
-          <div className="rounded-md border border-[var(--border)] bg-white p-3 text-sm text-[var(--muted-foreground)]">还没有资料解析结果。请在项目资料中心点击“开始解析”。</div>
+          <div className="ds-card-sm p-3 text-sm text-[var(--text-secondary)]">还没有资料解析结果。请在项目资料中心点击“开始解析”。</div>
         ) : (
           analyses.map((analysis) => (
-            <div key={analysis.id} className="rounded-md border border-[var(--border)] bg-white p-3 text-sm">
+            <div key={analysis.id} className="ds-card-sm p-3 text-sm">
               <div className="flex items-center justify-between gap-3">
                 <p className="font-medium">{analysis.status === "succeeded" ? "解析完成" : parseStatusLabel(analysis.status)}</p>
-                {analysis.modelName && <span className="rounded bg-[var(--muted)] px-2 py-1 text-xs">{analysis.modelName}</span>}
+                {analysis.modelName && <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">{analysis.modelName}</span>}
               </div>
-              <p className="mt-2 leading-6 text-[var(--muted-foreground)]">{analysis.summary || analysis.failureReason || "暂无摘要"}</p>
+              <p className="mt-2 leading-6 text-[var(--text-secondary)]">{analysis.summary || analysis.failureReason || "暂无摘要"}</p>
               {analysis.labels.length ? (
                 <div className="mt-3 flex flex-wrap gap-1">
                   {analysis.labels.slice(0, 12).map((label) => (
-                    <span key={label} className="rounded bg-[var(--muted)] px-2 py-1 text-xs">
+                    <span key={label} className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">
                       {label}
                     </span>
                   ))}
@@ -2612,14 +3084,14 @@ function AssetAnalysisResults({ analyses, artifacts }: { analyses: AssetAnalysis
             {scoreArtifacts.map((artifact) => {
               const data = artifact.data as { totalScore?: number; matchedRules?: Array<{ tag: string; score: number; reason: string }> };
               return (
-                <div key={artifact.id} className="rounded-md border border-[var(--border)] bg-white p-3 text-sm">
+                <div key={artifact.id} className="ds-card-sm p-3 text-sm">
                   <div className="flex items-center justify-between gap-3">
                     <p className="font-medium">{artifact.title}</p>
-                    <span className="rounded bg-[var(--muted)] px-2 py-1 text-xs">总分 {data.totalScore ?? 0}</span>
+                    <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">总分 {data.totalScore ?? 0}</span>
                   </div>
                   <div className="mt-2 flex flex-wrap gap-1">
                     {(data.matchedRules ?? []).slice(0, 10).map((rule) => (
-                      <span key={rule.tag} className="rounded bg-[var(--muted)] px-2 py-1 text-xs">
+                      <span key={rule.tag} className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">
                         {rule.tag}: {rule.score}
                       </span>
                     ))}
@@ -2683,19 +3155,19 @@ function TechnicalFeasibilityReviewCard({
         <div>
           <div className="flex items-center gap-2">
             <AlertCircle size={18} />
-            <h3 className="font-semibold">技术不可行 / 阻塞管理闭环</h3>
+            <h3 className="ds-text-section-title">技术不可行 / 阻塞管理闭环</h3>
           </div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">
+          <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
             技术评估不可行时必须记录原因、下一步和恢复路径。状态会写入阶段状态机，不只停留在前端提示里。
           </p>
         </div>
-        <span className={cn("rounded px-2 py-1 text-xs", technicalStage?.status === "blocked" ? "bg-[#fee2e2] text-[#b91c1c]" : "bg-[var(--muted)]")}>
+        <span className={cn("ds-pill", technicalStage?.status === "blocked" ? "ds-pill-pink" : "bg-[var(--surface-soft)] text-[var(--text-secondary)]")}>
           {statusLabels[technicalStage?.status ?? (project.currentStage === "technical_feasibility" ? project.status : "not_started")]}
         </span>
       </div>
 
       {technicalStage?.errorMessage && (
-        <div className="mt-4 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm leading-6 text-[var(--warning)]">
+        <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm leading-6 text-[var(--warning)]">
           {technicalStage.errorMessage}
         </div>
       )}
@@ -2707,7 +3179,7 @@ function TechnicalFeasibilityReviewCard({
         </div>
       )}
 
-      <form action={handleReview} className="mt-4 grid gap-3 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
+      <form action={handleReview} className="mt-4 grid gap-3 ds-card-soft p-3">
         <div className="grid gap-3 md:grid-cols-2">
           <label className="grid gap-1 text-sm">
             <span className="font-medium">原因 / 复核结论</span>
@@ -2716,7 +3188,7 @@ function TechnicalFeasibilityReviewCard({
               disabled={Boolean(actioning)}
               maxLength={800}
               placeholder="例如：客户样片要求真实人物连续动作，但当前素材和周期无法稳定达成。"
-              className="min-h-24 rounded-md border border-[var(--border)] bg-white p-3 text-sm leading-6 disabled:opacity-60"
+              className="min-h-24 ds-card-sm p-3 text-sm leading-6 disabled:opacity-60"
             />
           </label>
           <label className="grid gap-1 text-sm">
@@ -2726,7 +3198,7 @@ function TechnicalFeasibilityReviewCard({
               disabled={Boolean(actioning)}
               maxLength={500}
               placeholder="例如：退回商务补充预算、交付规格和可接受替代风格，再重新生成 Top 5。"
-              className="min-h-24 rounded-md border border-[var(--border)] bg-white p-3 text-sm leading-6 disabled:opacity-60"
+              className="min-h-24 ds-card-sm p-3 text-sm leading-6 disabled:opacity-60"
             />
           </label>
         </div>
@@ -2762,12 +3234,12 @@ function TechnicalFeasibilityReviewCard({
           />
         </div>
         {!canManageBlocked && (
-          <p className="text-xs leading-5 text-[var(--muted-foreground)]">标记不可行、解除阻塞和人工复核通过需要管理员操作；商务/创意可退回补充资料。</p>
+          <p className="text-xs leading-5 text-[var(--text-secondary)]">标记不可行、解除阻塞和人工复核通过需要管理员操作；商务/创意可退回补充资料。</p>
         )}
       </form>
 
-      {reviewError && <div className="mt-3 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm text-[var(--warning)]">{reviewError}</div>}
-      {message && <div className="mt-3 rounded-md border border-[#bbf7d0] bg-[#f0fdf4] p-3 text-sm text-[var(--success)]">{message}</div>}
+      {reviewError && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm text-[var(--warning)]">{reviewError}</div>}
+      {message && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-3 text-sm text-[var(--success)]">{message}</div>}
     </WorkspaceCard>
   );
 }
@@ -2918,16 +3390,16 @@ function CreativeDirectionsCard({
         <div>
           <div className="flex items-center gap-2">
             <Sparkles size={18} />
-            <h3 className="font-semibold">Top 5 创意方向</h3>
+            <h3 className="ds-text-section-title">Top 5 创意方向</h3>
           </div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">
+          <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
             基于结构化需求、资料解析和标签评分生成真实创意卡片。卡片内容、选择状态和人工改写都会入库保存。
           </p>
         </div>
         <button
           onClick={() => void handleGenerate()}
           disabled={!canGenerate || generating}
-          className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-[var(--accent)] px-3 text-sm font-medium text-[var(--accent-foreground)] disabled:opacity-60"
+          className="inline-flex h-9 items-center justify-center gap-2 rounded-card-sm bg-[var(--accent)] px-3 text-sm font-medium text-[var(--accent-foreground)] disabled:opacity-60"
           title={canGenerate ? "生成 Top 5 创意方向" : "当前角色不能发起创意方向生成"}
         >
           {generating ? <Loader2 className="animate-spin" size={16} /> : <WandSparkles size={16} />}
@@ -2936,16 +3408,16 @@ function CreativeDirectionsCard({
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2 text-xs">
-        <span className="rounded bg-[var(--muted)] px-2 py-1">已选 {selectedCount}</span>
-        {latestArtifact && <span className="rounded bg-[var(--muted)] px-2 py-1">快照 v{latestArtifact.version}</span>}
-        {!canGenerate && <span className="rounded bg-[#fef3c7] px-2 py-1 text-[var(--warning)]">商务可选择，生成和改写需创意或管理员</span>}
+        <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">已选 {selectedCount}</span>
+        {latestArtifact && <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">快照 v{latestArtifact.version}</span>}
+        {!canGenerate && <span className="ds-pill ds-pill-yellow">商务可选择，生成和改写需创意或管理员</span>}
       </div>
 
-      {directionError && <div className="mt-3 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm text-[var(--warning)]">{directionError}</div>}
-      {message && <div className="mt-3 rounded-md border border-[#bbf7d0] bg-[#f0fdf4] p-3 text-sm text-[var(--success)]">{message}</div>}
+      {directionError && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm text-[var(--warning)]">{directionError}</div>}
+      {message && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-3 text-sm text-[var(--success)]">{message}</div>}
 
       {directions.length === 0 ? (
-        <div className="mt-4 rounded-md border border-[var(--border)] bg-white p-3 text-sm text-[var(--muted-foreground)]">
+        <div className="mt-4 ds-card-sm p-3 text-sm text-[var(--text-secondary)]">
           还没有创意方向。请先完成需求结构化或资料解析，再由创意团队/管理员发起 Top 5 生成。
         </div>
       ) : (
@@ -3017,31 +3489,31 @@ function CreativeDirectionCard({
 }) {
   if (editing) {
     return (
-      <form action={onSave} className="rounded-md border border-[var(--border)] bg-white p-3 text-sm">
+      <form action={onSave} className="ds-card-sm p-3 text-sm">
         <div className="flex items-center justify-between gap-3">
           <p className="font-medium">人工改写创意方向</p>
-          <span className="rounded bg-[var(--muted)] px-2 py-1 text-xs">#{direction.sortOrder}</span>
+          <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">#{direction.sortOrder}</span>
         </div>
         <div className="mt-3 grid gap-3">
-          <input name="title" defaultValue={direction.title} className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
-          <textarea name="coreIdea" defaultValue={direction.coreIdea} className="min-h-20 rounded-md border border-[var(--border)] p-3 text-sm leading-6" />
-          <textarea name="fitReason" defaultValue={direction.fitReason} className="min-h-20 rounded-md border border-[var(--border)] p-3 text-sm leading-6" />
-          <textarea name="riskNotes" defaultValue={direction.riskNotes} className="min-h-16 rounded-md border border-[var(--border)] p-3 text-sm leading-6" />
+          <input name="title" defaultValue={direction.title} className="h-9 rounded-card-sm border border-[var(--border-soft)] px-3 text-sm" />
+          <textarea name="coreIdea" defaultValue={direction.coreIdea} className="min-h-20 rounded-card-sm border border-[var(--border-soft)] p-3 text-sm leading-6" />
+          <textarea name="fitReason" defaultValue={direction.fitReason} className="min-h-20 rounded-card-sm border border-[var(--border-soft)] p-3 text-sm leading-6" />
+          <textarea name="riskNotes" defaultValue={direction.riskNotes} className="min-h-16 rounded-card-sm border border-[var(--border-soft)] p-3 text-sm leading-6" />
           <div className="grid gap-3 md:grid-cols-3">
-            <input name="costEstimate" defaultValue={direction.costEstimate} className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
-            <input name="cycleEstimate" defaultValue={direction.cycleEstimate} className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
-            <input name="technicalDifficulty" defaultValue={direction.technicalDifficulty} className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
+            <input name="costEstimate" defaultValue={direction.costEstimate} className="h-9 rounded-card-sm border border-[var(--border-soft)] px-3 text-sm" />
+            <input name="cycleEstimate" defaultValue={direction.cycleEstimate} className="h-9 rounded-card-sm border border-[var(--border-soft)] px-3 text-sm" />
+            <input name="technicalDifficulty" defaultValue={direction.technicalDifficulty} className="h-9 rounded-card-sm border border-[var(--border-soft)] px-3 text-sm" />
           </div>
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
           <button
             disabled={saving}
-            className="inline-flex h-8 items-center gap-2 rounded-md bg-[var(--foreground)] px-3 text-xs font-medium text-white disabled:opacity-60"
+            className="inline-flex h-8 items-center gap-2 rounded-card-sm bg-[var(--foreground)] px-3 text-xs font-medium text-[var(--text-inverse)] disabled:opacity-60"
           >
             {saving ? <Loader2 className="animate-spin" size={14} /> : <CheckCircle2 size={14} />}
             保存改写
           </button>
-          <button type="button" onClick={onToggleEdit} className="h-8 rounded-md border border-[var(--border)] px-3 text-xs font-medium">
+          <button type="button" onClick={onToggleEdit} className="h-8 rounded-card-sm border border-[var(--border-soft)] px-3 text-xs font-medium">
             取消
           </button>
         </div>
@@ -3050,24 +3522,24 @@ function CreativeDirectionCard({
   }
 
   return (
-    <div className={cn("rounded-md border bg-white p-3 text-sm", direction.isSelected ? "border-[var(--accent)]" : "border-[var(--border)]")}>
+    <div className={cn("rounded-card-sm border bg-[var(--surface-card)] p-3 text-sm", direction.isSelected ? "ds-selected-surface" : "border-[var(--border-soft)]")}>
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded bg-[var(--muted)] px-2 py-1 text-xs">#{direction.sortOrder}</span>
-            <span className="rounded bg-[var(--muted)] px-2 py-1 text-xs">评分 {direction.score}</span>
-            <span className={cn("rounded px-2 py-1 text-xs", creativeDirectionStatusClass(direction.status))}>{creativeDirectionStatusLabel(direction.status)}</span>
-            {direction.isSelected && <span className="rounded bg-[#dcfce7] px-2 py-1 text-xs text-[var(--success)]">已选中</span>}
+            <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">#{direction.sortOrder}</span>
+            <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">评分 {direction.score}</span>
+            <span className={cn("ds-pill", creativeDirectionStatusClass(direction.status))}>{creativeDirectionStatusLabel(direction.status)}</span>
+            {direction.isSelected && <span className="ds-pill ds-selected-pill">已选中</span>}
           </div>
-          <h4 className="mt-3 text-base font-semibold">{direction.title}</h4>
+          <h4 className="mt-3 ds-text-card-title text-[var(--text-primary)]">{direction.title}</h4>
         </div>
         <button
           type="button"
           onClick={onSelection}
           disabled={saving}
           className={cn(
-            "inline-flex h-8 shrink-0 items-center gap-2 rounded-md border px-3 text-xs font-medium disabled:opacity-60",
-            direction.isSelected ? "border-[var(--accent)] bg-[#ecfdf5]" : "border-[var(--border)]"
+            "inline-flex h-8 shrink-0 items-center gap-2 rounded-card-sm border px-3 text-xs font-medium disabled:opacity-60",
+            direction.isSelected ? "ds-selected-pill border-transparent" : "border-[var(--border-soft)]"
           )}
         >
           {saving ? <Loader2 className="animate-spin" size={14} /> : <CheckCircle2 size={14} />}
@@ -3090,7 +3562,7 @@ function CreativeDirectionCard({
       {direction.referenceTags.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-1">
           {direction.referenceTags.map((tag) => (
-            <span key={tag} className="rounded bg-[var(--muted)] px-2 py-1 text-xs">
+            <span key={tag} className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">
               {tag}
             </span>
           ))}
@@ -3098,21 +3570,21 @@ function CreativeDirectionCard({
       )}
 
       {direction.atmospherePrompt && (
-        <div className="mt-3 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
+        <div className="mt-3 ds-card-soft p-3">
           <p className="text-xs font-medium">氛围图提示词</p>
-          <p className="mt-1 text-xs leading-5 text-[var(--muted-foreground)]">{direction.atmospherePrompt}</p>
+          <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">{direction.atmospherePrompt}</p>
         </div>
       )}
 
       {canEdit && (
         <div className="mt-3 flex flex-wrap gap-2">
-          <button onClick={onToggleEdit} className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs font-medium">
+          <button onClick={onToggleEdit} className="rounded-card-sm border border-[var(--border-soft)] px-3 py-1.5 text-xs font-medium">
             人工改写
           </button>
           <button
             onClick={onGenerateExpansions}
             disabled={!direction.isSelected || !canExpand || saving}
-            className="inline-flex items-center gap-2 rounded-md border border-[var(--border)] px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-card-sm border border-[var(--border-soft)] px-3 py-1.5 text-xs font-medium disabled:opacity-50"
             title={direction.isSelected ? "生成故事大纲" : "请先选中这个创意方向"}
           >
             {saving ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} />}
@@ -3164,14 +3636,14 @@ function CreativeExpansionList({
 }) {
   if (expansions.length === 0) {
     return (
-      <div className="mt-4 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3 text-xs leading-5 text-[var(--muted-foreground)]">
+      <div className="mt-4 ds-card-soft p-3 text-xs leading-5 text-[var(--text-secondary)]">
         选中方向后可生成 4-5 个故事大纲或梗概，后续用于氛围图和提案。
       </div>
     );
   }
 
   return (
-    <div className="mt-4 border-t border-[var(--border)] pt-4">
+    <div className="mt-4 border-t border-[var(--border-soft)] pt-4">
       <p className="text-xs font-medium">故事大纲 / 梗概</p>
       <div className="mt-3 grid gap-3">
         {expansions.map((expansion) => {
@@ -3215,17 +3687,17 @@ function CreativeDirectionReviewPanel({
 
   if (!canSubmitReview && !canAdminReview) {
     return (
-      <div className="mt-3 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3 text-xs leading-5 text-[var(--muted-foreground)]">
+      <div className="mt-3 ds-card-soft p-3 text-xs leading-5 text-[var(--text-secondary)]">
         当前角色可以查看创意方向状态；提交审核、确认或驳回需要创意团队或管理员处理。
       </div>
     );
   }
 
   return (
-    <div className="mt-3 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
+    <div className="mt-3 ds-card-soft p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs font-medium">创意方向审核流</p>
-        <span className={cn("rounded px-2 py-1 text-xs", creativeDirectionStatusClass(status))}>{creativeDirectionStatusLabel(status)}</span>
+        <span className={cn("ds-pill", creativeDirectionStatusClass(status))}>{creativeDirectionStatusLabel(status)}</span>
       </div>
       {(canReject || status === "needs_revision") && (
         <textarea
@@ -3234,7 +3706,7 @@ function CreativeDirectionReviewPanel({
           disabled={saving}
           maxLength={600}
           placeholder={status === "needs_revision" ? "可查看/补充修改说明，改写后重新提交审核。" : "驳回时请填写修改意见，便于创意团队重新提交。"}
-          className="mt-3 min-h-16 w-full rounded-md border border-[var(--border)] bg-white p-2.5 text-xs leading-5 disabled:opacity-60"
+          className="mt-3 min-h-16 w-full ds-card-sm p-2.5 text-xs leading-5 disabled:opacity-60"
         />
       )}
       <div className="mt-3 flex flex-wrap gap-2">
@@ -3243,7 +3715,7 @@ function CreativeDirectionReviewPanel({
             type="button"
             onClick={() => onReview("submit_review", reason)}
             disabled={saving}
-            className="inline-flex h-8 items-center gap-2 rounded-md bg-[var(--foreground)] px-3 text-xs font-medium text-white disabled:opacity-60"
+            className="inline-flex h-8 items-center gap-2 rounded-card-sm bg-[var(--foreground)] px-3 text-xs font-medium text-[var(--text-inverse)] disabled:opacity-60"
           >
             {saving ? <Loader2 className="animate-spin" size={13} /> : <CheckCircle2 size={13} />}
             {status === "needs_revision" ? "重新提交审核" : "提交审核"}
@@ -3254,7 +3726,7 @@ function CreativeDirectionReviewPanel({
             type="button"
             onClick={() => onReview("approve", reason)}
             disabled={saving}
-            className="inline-flex h-8 items-center gap-2 rounded-md bg-[var(--foreground)] px-3 text-xs font-medium text-white disabled:opacity-60"
+            className="inline-flex h-8 items-center gap-2 rounded-card-sm bg-[var(--foreground)] px-3 text-xs font-medium text-[var(--text-inverse)] disabled:opacity-60"
           >
             {saving ? <Loader2 className="animate-spin" size={13} /> : <CheckCircle2 size={13} />}
             确认方向
@@ -3265,14 +3737,14 @@ function CreativeDirectionReviewPanel({
             type="button"
             onClick={() => onReview("request_revision", reason)}
             disabled={saving}
-            className="inline-flex h-8 items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 text-xs font-medium disabled:opacity-60"
+            className="inline-flex h-8 items-center gap-2 ds-card-sm px-3 text-xs font-medium disabled:opacity-60"
           >
             {saving ? <Loader2 className="animate-spin" size={13} /> : <XCircle size={13} />}
             驳回修改
           </button>
         )}
         {!canSubmit && !canApprove && !canReject && (
-          <p className="text-xs leading-5 text-[var(--muted-foreground)]">
+          <p className="text-xs leading-5 text-[var(--text-secondary)]">
             {status === "approved" ? "该方向已确认。如需重改，可由管理员驳回修改。" : "当前状态暂不需要审核动作。"}
           </p>
         )}
@@ -3329,26 +3801,26 @@ function CreativeExpansionItem({
   const reviewStatus = generatedImage?.reviewStatus ?? "pending";
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
+    <div className="ds-card-soft p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm font-medium">
           {expansion.sortOrder}. {expansion.title}
         </p>
-        <span className="rounded bg-[var(--muted)] px-2 py-1 text-xs">{expansion.productionDifficulty || "待评估"}</span>
+        <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">{expansion.productionDifficulty || "待评估"}</span>
       </div>
-      <p className="mt-2 text-xs leading-5 text-[var(--muted-foreground)]">{expansion.oneLiner}</p>
+      <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">{expansion.oneLiner}</p>
       <div className="mt-3 grid gap-2 text-xs">
         {Object.entries(expansion.storyArc).slice(0, 4).map(([key, value]) => (
-          <div key={key} className="grid gap-1 border-b border-[var(--border)] pb-2 last:border-b-0">
+          <div key={key} className="grid gap-1 border-b border-[var(--border-soft)] pb-2 last:border-b-0">
             <span className="font-medium">{storyArcLabel(key)}</span>
-            <span className="leading-5 text-[var(--muted-foreground)]">{value}</span>
+            <span className="leading-5 text-[var(--text-secondary)]">{value}</span>
           </div>
         ))}
       </div>
       {expansion.visualHighlights.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-1">
           {expansion.visualHighlights.map((highlight) => (
-            <span key={highlight} className="rounded bg-white px-2 py-1 text-xs">
+            <span key={highlight} className="rounded bg-[var(--surface-card)] px-2 py-1 text-xs">
               {highlight}
             </span>
           ))}
@@ -3359,7 +3831,7 @@ function CreativeExpansionItem({
         <MiniMetric label="风险提示" value={expansion.riskNotes || "待复核"} />
       </div>
 
-      <div className="mt-3 rounded-md border border-[var(--border)] bg-white p-3">
+      <div className="mt-3 ds-card-sm p-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <ImageIcon size={15} />
@@ -3369,7 +3841,7 @@ function CreativeExpansionItem({
             type="button"
             onClick={onGenerateAtmosphereImage}
             disabled={!canGenerateImage || generating}
-            className="inline-flex items-center gap-2 rounded-md border border-[var(--border)] px-2.5 py-1.5 text-xs font-medium disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-card-sm border border-[var(--border-soft)] px-2.5 py-1.5 text-xs font-medium disabled:opacity-50"
             title={canGenerateImage ? "生成氛围图" : "当前角色不能生成氛围图"}
           >
             {generating ? <Loader2 className="animate-spin" size={13} /> : <ImageIcon size={13} />}
@@ -3380,28 +3852,25 @@ function CreativeExpansionItem({
         {generatedImage ? (
           <div className="mt-3">
             <div className="flex flex-wrap gap-1 text-xs">
-              <span className={cn("rounded px-2 py-1", generatedImage.status === "succeeded" ? "bg-[#dcfce7] text-[var(--success)]" : "bg-[var(--muted)]")}>
+              <span className={cn("ds-pill", generatedImage.status === "succeeded" ? "ds-pill-teal" : "bg-[var(--surface-soft)] text-[var(--text-secondary)]")}>
                 {imageStatusLabel(generatedImage.status)}
               </span>
-              <span className={cn("rounded px-2 py-1", imageReviewStatusClass(reviewStatus))}>{imageReviewStatusLabel(reviewStatus)}</span>
-              <span className="rounded bg-[var(--muted)] px-2 py-1">{generatedImage.modelName}</span>
-              {generatedImage.retryCount > 0 && <span className="rounded bg-[#fef3c7] px-2 py-1 text-[var(--warning)]">重试 {generatedImage.retryCount}</span>}
+              <span className={cn("ds-pill", imageReviewStatusClass(reviewStatus))}>{imageReviewStatusLabel(reviewStatus)}</span>
+              <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">{generatedImage.modelName}</span>
+              {generatedImage.retryCount > 0 && <span className="ds-pill ds-pill-yellow">重试 {generatedImage.retryCount}</span>}
             </div>
             {generatedImage.ossUrl && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={generatedImage.ossUrl}
-                alt={`${expansion.title} 氛围图`}
-                className="mt-3 aspect-[3/2] w-full rounded-md border border-[var(--border)] object-cover"
-              />
+              <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3 text-xs leading-5 text-[var(--text-secondary)]">
+                氛围图资产已保存，图片预览已隐藏；可继续填写审核备注并确认采用或废弃。
+              </div>
             )}
             {generatedImage.failureReason && (
-              <div className="mt-3 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-2 text-xs leading-5 text-[var(--warning)]">
+              <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-2 text-xs leading-5 text-[var(--warning)]">
                 {generatedImage.failureReason}
               </div>
             )}
             {generatedImage.status === "succeeded" && (
-              <div className="mt-3 border-t border-[var(--border)] pt-3">
+              <div className="mt-3 border-t border-[var(--border-soft)] pt-3">
                 {canReviewImage ? (
                   <>
                     <label className="text-xs font-medium" htmlFor={`image-review-note-${generatedImage.id}`}>
@@ -3414,14 +3883,14 @@ function CreativeExpansionItem({
                       disabled={reviewingStatus !== null}
                       maxLength={300}
                       placeholder="可填写采用原因、修改意见或废弃原因"
-                      className="mt-2 min-h-16 w-full rounded-md border border-[var(--border)] bg-white p-2.5 text-xs leading-5 disabled:opacity-60"
+                      className="mt-2 min-h-16 w-full ds-card-sm p-2.5 text-xs leading-5 disabled:opacity-60"
                     />
                     <div className="mt-2 flex flex-wrap gap-2">
                       <button
                         type="button"
                         onClick={() => void handleReview("confirmed")}
                         disabled={reviewingStatus !== null}
-                        className="inline-flex h-8 items-center gap-2 rounded-md bg-[var(--foreground)] px-3 text-xs font-medium text-white disabled:opacity-60"
+                        className="inline-flex h-8 items-center gap-2 rounded-card-sm bg-[var(--foreground)] px-3 text-xs font-medium text-[var(--text-inverse)] disabled:opacity-60"
                       >
                         {reviewingStatus === "confirmed" ? <Loader2 className="animate-spin" size={13} /> : <CheckCircle2 size={13} />}
                         {reviewStatus === "confirmed" ? "更新确认" : "确认采用"}
@@ -3430,7 +3899,7 @@ function CreativeExpansionItem({
                         type="button"
                         onClick={() => void handleReview("discarded")}
                         disabled={reviewingStatus !== null}
-                        className="inline-flex h-8 items-center gap-2 rounded-md border border-[var(--border)] px-3 text-xs font-medium disabled:opacity-60"
+                        className="inline-flex h-8 items-center gap-2 rounded-card-sm border border-[var(--border-soft)] px-3 text-xs font-medium disabled:opacity-60"
                       >
                         {reviewingStatus === "discarded" ? <Loader2 className="animate-spin" size={13} /> : <XCircle size={13} />}
                         {reviewStatus === "discarded" ? "更新废弃备注" : "废弃"}
@@ -3438,25 +3907,25 @@ function CreativeExpansionItem({
                     </div>
                   </>
                 ) : (
-                  <div className="text-xs leading-5 text-[var(--muted-foreground)]">
-                    <p className="font-medium text-[var(--foreground)]">审核备注</p>
+                  <div className="text-xs leading-5 text-[var(--text-secondary)]">
+                    <p className="font-medium text-[var(--text-primary)]">审核备注</p>
                     <p className="mt-1">{generatedImage.reviewNote || "创意团队暂未填写审核备注。"}</p>
                   </div>
                 )}
 
                 {canReviewImage && generatedImage.reviewNote && reviewNote === generatedImage.reviewNote && (
-                  <p className="mt-2 text-xs leading-5 text-[var(--muted-foreground)]">已保存备注：{generatedImage.reviewNote}</p>
+                  <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">已保存备注：{generatedImage.reviewNote}</p>
                 )}
                 {generatedImage.reviewedAt && (
-                  <p className="mt-2 text-xs text-[var(--muted-foreground)]">最近审核时间：{formatDateTime(generatedImage.reviewedAt)}</p>
+                  <p className="mt-2 text-xs text-[var(--text-secondary)]">最近审核时间：{formatDateTime(generatedImage.reviewedAt)}</p>
                 )}
-                {reviewError && <div className="mt-2 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-2 text-xs leading-5 text-[var(--warning)]">{reviewError}</div>}
-                {reviewMessage && <div className="mt-2 rounded-md border border-[#bbf7d0] bg-[#f0fdf4] p-2 text-xs leading-5 text-[var(--success)]">{reviewMessage}</div>}
+                {reviewError && <div className="mt-2 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-2 text-xs leading-5 text-[var(--warning)]">{reviewError}</div>}
+                {reviewMessage && <div className="mt-2 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-2 text-xs leading-5 text-[var(--success)]">{reviewMessage}</div>}
               </div>
             )}
           </div>
         ) : (
-          <p className="mt-2 text-xs leading-5 text-[var(--muted-foreground)]">尚未生成氛围图。生成后会保存任务、prompt、模型名和 OSS 地址。</p>
+          <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">尚未生成氛围图。生成后会保存任务、prompt、模型名和 OSS 地址。</p>
         )}
       </div>
     </div>
@@ -3486,9 +3955,9 @@ function imageReviewStatusLabel(status: GeneratedImageView["reviewStatus"]) {
 
 function imageReviewStatusClass(status: GeneratedImageView["reviewStatus"]) {
   const classes: Record<GeneratedImageView["reviewStatus"], string> = {
-    pending: "bg-[#fef3c7] text-[var(--warning)]",
-    confirmed: "bg-[#dcfce7] text-[var(--success)]",
-    discarded: "bg-[#fee2e2] text-[#b91c1c]",
+    pending: "ds-pill-yellow",
+    confirmed: "ds-pill-teal",
+    discarded: "ds-pill-pink",
   };
   return classes[status];
 }
@@ -3524,14 +3993,14 @@ function BusinessDocumentDraftCard({
   }
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4 lg:col-span-2">
+    <div className="ds-card-sm p-4 lg:col-span-2">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <WandSparkles size={18} />
-            <h3 className="font-semibold">Agent 商务文档草稿</h3>
+            <h3 className="ds-text-section-title">Agent 商务文档草稿</h3>
           </div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">
+          <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
             基于真实需求、评分结果、已选创意方向、故事大纲和氛围图，一次生成提案、报价与合同草稿并保存版本快照。
           </p>
         </div>
@@ -3539,17 +4008,17 @@ function BusinessDocumentDraftCard({
           type="button"
           disabled={!canGenerate || generating}
           onClick={() => void handleGenerate()}
-          className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-[var(--foreground)] px-3 text-sm font-medium text-white disabled:opacity-60"
+          className="inline-flex h-9 items-center justify-center gap-2 rounded-card-sm bg-[var(--foreground)] px-3 text-sm font-medium text-[var(--text-inverse)] disabled:opacity-60"
         >
           {generating ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
           生成三类草稿
         </button>
       </div>
       {!canGenerate && (
-        <p className="mt-3 text-sm text-[var(--muted-foreground)]">当前角色可以查看已生成文档，但不能发起商务文档生成。</p>
+        <p className="mt-3 text-sm text-[var(--text-secondary)]">当前角色可以查看已生成文档，但不能发起商务文档生成。</p>
       )}
-      {draftError && <div className="mt-3 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm text-[var(--warning)]">{draftError}</div>}
-      {message && <div className="mt-3 rounded-md border border-[#bbf7d0] bg-[#f0fdf4] p-3 text-sm text-[var(--success)]">{message}</div>}
+      {draftError && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm text-[var(--warning)]">{draftError}</div>}
+      {message && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-3 text-sm text-[var(--success)]">{message}</div>}
     </div>
   );
 }
@@ -3559,12 +4028,14 @@ function ProposalEditorCard({
   user,
   proposal,
   snapshots,
+  clientReviewTasks,
   onRefresh,
 }: {
   project: ProjectSummary;
   user: CurrentUser;
   proposal: ProposalView | null;
   snapshots: DocumentSnapshotView[];
+  clientReviewTasks: ClientReviewTaskView[];
   onRefresh: () => Promise<void>;
 }) {
   const canEdit = user.role === "business" || user.role === "admin";
@@ -3594,21 +4065,21 @@ function ProposalEditorCard({
   }
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4 lg:col-span-2">
+    <div className="ds-card-sm p-4 lg:col-span-2">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
             <BriefcaseBusiness size={18} />
-            <h3 className="font-semibold">提案编辑与版本快照</h3>
+            <h3 className="ds-text-section-title">提案编辑与版本快照</h3>
           </div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">
+          <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
             提案正文、状态和每次保存的历史快照都会写入数据库。刷新页面后会恢复最新版本。
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-xs">
-          <span className="rounded bg-[var(--muted)] px-2 py-1">当前 v{proposal?.version ?? 0}</span>
-          <span className="rounded bg-[var(--muted)] px-2 py-1">{proposalStatusLabel(proposal?.status ?? "draft")}</span>
-          {!canEdit && <span className="rounded bg-[#fef3c7] px-2 py-1 text-[var(--warning)]">当前角色只能查看提案</span>}
+          <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">当前 v{proposal?.version ?? 0}</span>
+          <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">{proposalStatusLabel(proposal?.status ?? "draft")}</span>
+          {!canEdit && <span className="ds-pill ds-pill-yellow">当前角色只能查看提案</span>}
         </div>
       </div>
 
@@ -3619,13 +4090,13 @@ function ProposalEditorCard({
             required
             disabled={!canEdit || saving}
             defaultValue={proposal?.title ?? `${project.brandName} ${project.projectName} 创意提案`}
-            className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm disabled:bg-[var(--muted)]"
+            className="h-9 ds-card-sm px-3 text-sm disabled:bg-[var(--muted)]"
           />
           <select
             name="status"
             disabled={!canEdit || saving}
             defaultValue={proposal?.status ?? "draft"}
-            className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm disabled:bg-[var(--muted)]"
+            className="h-9 ds-card-sm px-3 text-sm disabled:bg-[var(--muted)]"
           >
             <option value="draft">草稿</option>
             <option value="waiting_review">等待审核</option>
@@ -3644,36 +4115,47 @@ function ProposalEditorCard({
         />
         <button
           disabled={!canEdit || saving}
-          className="inline-flex h-9 w-fit items-center justify-center gap-2 rounded-md bg-[var(--foreground)] px-3 text-sm font-medium text-white disabled:opacity-60"
+          className="inline-flex h-9 w-fit items-center justify-center gap-2 rounded-card-sm bg-[var(--foreground)] px-3 text-sm font-medium text-[var(--text-inverse)] disabled:opacity-60"
         >
           {saving ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
           保存提案并创建快照
         </button>
       </form>
 
-      {proposalError && <div className="mt-3 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm text-[var(--warning)]">{proposalError}</div>}
-      {message && <div className="mt-3 rounded-md border border-[#bbf7d0] bg-[#f0fdf4] p-3 text-sm text-[var(--success)]">{message}</div>}
+      {proposalError && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm text-[var(--warning)]">{proposalError}</div>}
+      {message && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-3 text-sm text-[var(--success)]">{message}</div>}
+      <ClientReviewLaunchBox
+        projectId={project.id}
+        reviewType="project_proposal"
+        targetScopeId={proposal?.id ?? null}
+        title="甲方完整项目提案审核"
+        detail="将完整项目提案发给甲方确认；通过后项目可进入报价合同模块，打回会保留历史版本和意见。"
+        disabled={!proposal}
+        disabledReason="请先保存提案快照，再生成甲方审核链接。"
+        tasks={clientReviewTasks}
+        onRefresh={onRefresh}
+      />
 
       <div className="mt-5 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(260px,0.65fr)]">
-        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
+        <div className="ds-card-soft p-3">
           <p className="text-sm font-medium">当前提案摘要</p>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">
+          <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
             {proposal ? summarizeText(proposal.content, 180) : "还没有保存过提案。保存后这里会显示最新内容摘要。"}
           </p>
         </div>
-        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
+        <div className="ds-card-soft p-3">
           <p className="text-sm font-medium">历史快照</p>
           {snapshots.length === 0 ? (
-            <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">还没有提案快照。每次保存都会新增一个版本。</p>
+            <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">还没有提案快照。每次保存都会新增一个版本。</p>
           ) : (
             <div className="mt-3 grid gap-2">
               {snapshots.slice(0, 5).map((snapshot) => (
-                <div key={snapshot.id} className="rounded-md border border-[var(--border)] bg-white p-3 text-xs">
+                <div key={snapshot.id} className="ds-card-sm p-3 text-xs">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-medium">v{snapshot.version} · {proposalStatusLabel(snapshot.status)}</span>
-                    <span className="text-[var(--muted-foreground)]">{formatDateTime(snapshot.createdAt)}</span>
+                    <span className="text-[var(--text-secondary)]">{formatDateTime(snapshot.createdAt)}</span>
                   </div>
-                  <p className="mt-2 leading-5 text-[var(--muted-foreground)]">{snapshot.summary || summarizeText(snapshot.content, 96)}</p>
+                  <p className="mt-2 leading-5 text-[var(--text-secondary)]">{snapshot.summary || summarizeText(snapshot.content, 96)}</p>
                 </div>
               ))}
             </div>
@@ -3728,12 +4210,14 @@ function QuoteEditorCard({
   user,
   quote,
   snapshots,
+  clientReviewTasks,
   onRefresh,
 }: {
   project: ProjectSummary;
   user: CurrentUser;
   quote: QuoteView | null;
   snapshots: DocumentSnapshotView[];
+  clientReviewTasks: ClientReviewTaskView[];
   onRefresh: () => Promise<void>;
 }) {
   const canEdit = user.role === "business" || user.role === "admin";
@@ -3793,22 +4277,22 @@ function QuoteEditorCard({
   }
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4 lg:col-span-2">
+    <div className="ds-card-sm p-4 lg:col-span-2">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
             <BriefcaseBusiness size={18} />
-            <h3 className="font-semibold">报价编辑与版本快照</h3>
+            <h3 className="ds-text-section-title">报价编辑与版本快照</h3>
           </div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">
+          <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
             报价明细、合计金额、状态和每次保存的快照都会写入数据库。后续合同会引用这里的确认版本。
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-xs">
-          <span className="rounded bg-[var(--muted)] px-2 py-1">当前 v{quote?.version ?? 0}</span>
-          <span className="rounded bg-[var(--muted)] px-2 py-1">{quoteStatusLabel(quote?.status ?? "draft")}</span>
-          {quote && <span className="rounded bg-[var(--muted)] px-2 py-1">{formatMoney(quote.totalAmount, quote.currency)}</span>}
-          {!canEdit && <span className="rounded bg-[#fef3c7] px-2 py-1 text-[var(--warning)]">当前角色只能查看报价</span>}
+          <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">当前 v{quote?.version ?? 0}</span>
+          <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">{quoteStatusLabel(quote?.status ?? "draft")}</span>
+          {quote && <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">{formatMoney(quote.totalAmount, quote.currency)}</span>}
+          {!canEdit && <span className="ds-pill ds-pill-yellow">当前角色只能查看报价</span>}
         </div>
       </div>
 
@@ -3819,20 +4303,20 @@ function QuoteEditorCard({
             required
             disabled={!canEdit || saving}
             defaultValue={quote?.title ?? `${project.brandName} ${project.projectName} 报价`}
-            className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm disabled:bg-[var(--muted)]"
+            className="h-9 ds-card-sm px-3 text-sm disabled:bg-[var(--muted)]"
           />
           <input
             name="currency"
             required
             disabled={!canEdit || saving}
             defaultValue={quote?.currency ?? "CNY"}
-            className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm disabled:bg-[var(--muted)]"
+            className="h-9 ds-card-sm px-3 text-sm disabled:bg-[var(--muted)]"
           />
           <select
             name="status"
             disabled={!canEdit || saving}
             defaultValue={quote?.status ?? "draft"}
-            className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm disabled:bg-[var(--muted)]"
+            className="h-9 ds-card-sm px-3 text-sm disabled:bg-[var(--muted)]"
           >
             <option value="draft">草稿</option>
             <option value="waiting_review">等待审核</option>
@@ -3844,10 +4328,10 @@ function QuoteEditorCard({
           </select>
         </div>
 
-        <div className="overflow-hidden rounded-md border border-[var(--border)]">
+        <div className="overflow-hidden rounded-card-sm border border-[var(--border-soft)]">
           <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1.2fr)_90px_120px] gap-px bg-[var(--border)] text-xs">
             {["项目", "说明", "数量", "单价"].map((header) => (
-              <div key={header} className="bg-[var(--panel-soft)] px-3 py-2 font-medium">
+              <div key={header} className="bg-[var(--surface-soft)] px-3 py-2 font-medium">
                 {header}
               </div>
             ))}
@@ -3861,19 +4345,19 @@ function QuoteEditorCard({
           name="notes"
           disabled={!canEdit || saving}
           defaultValue={quote?.notes ?? "报价默认包含两轮内部修改；不含第三方授权、演员或线下拍摄费用。"}
-          className="min-h-20 resize-y rounded-md border border-[var(--border)] bg-white p-3 text-sm leading-6 disabled:bg-[var(--muted)]"
+          className="min-h-20 resize-y ds-card-sm p-3 text-sm leading-6 disabled:bg-[var(--muted)]"
         />
         <button
           disabled={!canEdit || saving}
-          className="inline-flex h-9 w-fit items-center justify-center gap-2 rounded-md bg-[var(--foreground)] px-3 text-sm font-medium text-white disabled:opacity-60"
+          className="inline-flex h-9 w-fit items-center justify-center gap-2 rounded-card-sm bg-[var(--foreground)] px-3 text-sm font-medium text-[var(--text-inverse)] disabled:opacity-60"
         >
           {saving ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
           保存报价并创建快照
         </button>
       </form>
 
-      {quoteError && <div className="mt-3 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm text-[var(--warning)]">{quoteError}</div>}
-      {message && <div className="mt-3 rounded-md border border-[#bbf7d0] bg-[#f0fdf4] p-3 text-sm text-[var(--success)]">{message}</div>}
+      {quoteError && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm text-[var(--warning)]">{quoteError}</div>}
+      {message && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-3 text-sm text-[var(--success)]">{message}</div>}
 
       <CommercialReviewPanel
         documentLabel="报价"
@@ -3883,16 +4367,27 @@ function QuoteEditorCard({
         reviewingAction={reviewingAction}
         onReview={handleReview}
       />
+      <ClientReviewLaunchBox
+        projectId={project.id}
+        reviewType="quote_confirmation"
+        targetScopeId={quote?.id ?? null}
+        title="甲方报价确认"
+        detail="将当前报价明细和总价发给甲方确认；通过后可继续推进合同确认，打回会回写报价修改意见。"
+        disabled={!quote}
+        disabledReason="请先保存报价快照，再生成甲方审核链接。"
+        tasks={clientReviewTasks}
+        onRefresh={onRefresh}
+      />
 
       <div className="mt-5 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(260px,0.65fr)]">
-        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
+        <div className="ds-card-soft p-3">
           <p className="text-sm font-medium">当前报价</p>
           {quote ? (
             <div className="mt-3 grid gap-2 text-sm">
               {quote.items.map((item) => (
-                <div key={`${item.name}-${item.description}`} className="flex items-center justify-between gap-3 border-b border-[var(--border)] pb-2 last:border-b-0">
+                <div key={`${item.name}-${item.description}`} className="flex items-center justify-between gap-3 border-b border-[var(--border-soft)] pb-2 last:border-b-0">
                   <span className="min-w-0 truncate">{item.name}</span>
-                  <span className="shrink-0 text-[var(--muted-foreground)]">{formatMoney(item.quantity * item.unitPrice, quote.currency)}</span>
+                  <span className="shrink-0 text-[var(--text-secondary)]">{formatMoney(item.quantity * item.unitPrice, quote.currency)}</span>
                 </div>
               ))}
               <div className="flex items-center justify-between gap-3 pt-1 font-medium">
@@ -3901,22 +4396,22 @@ function QuoteEditorCard({
               </div>
             </div>
           ) : (
-            <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">还没有保存过报价。保存后这里会显示最新合计。</p>
+            <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">还没有保存过报价。保存后这里会显示最新合计。</p>
           )}
         </div>
-        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
+        <div className="ds-card-soft p-3">
           <p className="text-sm font-medium">报价快照</p>
           {snapshots.length === 0 ? (
-            <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">还没有报价快照。每次保存都会新增一个版本。</p>
+            <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">还没有报价快照。每次保存都会新增一个版本。</p>
           ) : (
             <div className="mt-3 grid gap-2">
               {snapshots.slice(0, 5).map((snapshot) => (
-                <div key={snapshot.id} className="rounded-md border border-[var(--border)] bg-white p-3 text-xs">
+                <div key={snapshot.id} className="ds-card-sm p-3 text-xs">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-medium">v{snapshot.version} · {quoteStatusLabel(snapshot.status)}</span>
-                    <span className="text-[var(--muted-foreground)]">{formatDateTime(snapshot.createdAt)}</span>
+                    <span className="text-[var(--text-secondary)]">{formatDateTime(snapshot.createdAt)}</span>
                   </div>
-                  <p className="mt-2 leading-5 text-[var(--muted-foreground)]">{snapshot.summary || "报价快照已保存。"}</p>
+                  <p className="mt-2 leading-5 text-[var(--text-secondary)]">{snapshot.summary || "报价快照已保存。"}</p>
                 </div>
               ))}
             </div>
@@ -3936,6 +4431,7 @@ function ContractEditorCard({
   contract,
   snapshots,
   exports,
+  clientReviewTasks,
   onRefresh,
 }: {
   project: ProjectSummary;
@@ -3946,6 +4442,7 @@ function ContractEditorCard({
   contract: ContractView | null;
   snapshots: DocumentSnapshotView[];
   exports: ContractExportView[];
+  clientReviewTasks: ClientReviewTaskView[];
   onRefresh: () => Promise<void>;
 }) {
   const canEdit = user.role === "business" || user.role === "admin";
@@ -4097,27 +4594,27 @@ function ContractEditorCard({
   }
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4 lg:col-span-2">
+    <div className="ds-card-sm p-4 lg:col-span-2">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
             <BriefcaseBusiness size={18} />
-            <h3 className="font-semibold">合同模板填充与版本快照</h3>
+            <h3 className="ds-text-section-title">合同模板填充与版本快照</h3>
           </div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">
+          <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
             合同模板字段、正文、状态和每次保存的快照都会写入数据库。PDF/Word 导出后续会作为真实导出任务接入。
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-xs">
-          <span className="rounded bg-[var(--muted)] px-2 py-1">当前 v{contract?.version ?? 0}</span>
-          <span className="rounded bg-[var(--muted)] px-2 py-1">{quoteStatusLabel(contract?.status ?? "draft")}</span>
-          {quote && <span className="rounded bg-[var(--muted)] px-2 py-1">引用报价 {formatMoney(quote.totalAmount, quote.currency)}</span>}
-          {!canEdit && <span className="rounded bg-[#fef3c7] px-2 py-1 text-[var(--warning)]">当前角色只能查看合同</span>}
+          <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">当前 v{contract?.version ?? 0}</span>
+          <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">{quoteStatusLabel(contract?.status ?? "draft")}</span>
+          {quote && <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">引用报价 {formatMoney(quote.totalAmount, quote.currency)}</span>}
+          {!canEdit && <span className="ds-pill ds-pill-yellow">当前角色只能查看合同</span>}
         </div>
       </div>
 
       {!quote && (
-        <div className="mt-4 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm leading-6 text-[var(--warning)]">
+        <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm leading-6 text-[var(--warning)]">
           当前项目还没有已保存报价。请先保存报价明细，合同才能引用真实报价并创建快照。
         </div>
       )}
@@ -4129,13 +4626,13 @@ function ContractEditorCard({
             required
             disabled={!canEdit || saving || !quote}
             defaultValue={contract?.title ?? `${project.brandName} ${project.projectName} AIGC 视频服务合同`}
-            className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm disabled:bg-[var(--muted)]"
+            className="h-9 ds-card-sm px-3 text-sm disabled:bg-[var(--muted)]"
           />
           <select
             name="status"
             disabled={!canEdit || saving || !quote}
             defaultValue={contract?.status ?? "draft"}
-            className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm disabled:bg-[var(--muted)]"
+            className="h-9 ds-card-sm px-3 text-sm disabled:bg-[var(--muted)]"
           >
             <option value="draft">草稿</option>
             <option value="waiting_review">等待审核</option>
@@ -4163,13 +4660,13 @@ function ContractEditorCard({
                 required
                 disabled={!canEdit || saving || !quote}
                 defaultValue={fields.quoteTotalAmount}
-                className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm disabled:bg-[var(--muted)]"
+                className="h-9 ds-card-sm px-3 text-sm disabled:bg-[var(--muted)]"
               />
             </label>
           </div>
         </div>
 
-        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
+        <div className="ds-card-soft p-3">
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.6fr)]">
             <label className="grid gap-1 text-sm">
               <span className="font-medium">甲方合同资产</span>
@@ -4178,7 +4675,7 @@ function ContractEditorCard({
                 value={clientContractAssetId}
                 disabled={!canEdit || saving || !quote}
                 onChange={(event) => setClientContractAssetSelection({ projectId: project.id, assetId: event.target.value })}
-                className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm disabled:bg-[var(--muted)]"
+                className="h-9 ds-card-sm px-3 text-sm disabled:bg-[var(--muted)]"
               >
                 <option value="">暂不绑定甲方合同资产</option>
                 {contractAssetOptions.map((asset) => (
@@ -4187,15 +4684,15 @@ function ContractEditorCard({
                   </option>
                 ))}
               </select>
-              <span className="text-xs leading-5 text-[var(--muted-foreground)]">
+              <span className="text-xs leading-5 text-[var(--text-secondary)]">
                 绑定会随合同保存持久化到数据库，用于后续追溯甲方原始合同或报价文件。
               </span>
             </label>
-            <div className="rounded-md border border-[var(--border)] bg-white p-3 text-sm">
+            <div className="ds-card-sm p-3 text-sm">
               {boundContractAsset ? (
                 <div className="min-w-0">
                   <p className="truncate font-medium">{assetDisplayName(boundContractAsset)}</p>
-                  <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                  <p className="mt-1 text-xs text-[var(--text-secondary)]">
                     {assetTypeLabel(boundContractAsset.assetType)} · {parseStatusLabel(boundContractAsset.parseStatus)}
                   </p>
                   {(boundContractAsset.ossKey || boundContractAsset.externalUrl) && (
@@ -4211,11 +4708,11 @@ function ContractEditorCard({
                   )}
                 </div>
               ) : contractAssetOptions.length === 0 ? (
-                <p className="leading-5 text-[var(--muted-foreground)]">
+                <p className="leading-5 text-[var(--text-secondary)]">
                   当前项目还没有可绑定的文档类资产。请先在资料中心上传甲方合同、报价文件或飞书文档链接。
                 </p>
               ) : (
-                <p className="leading-5 text-[var(--muted-foreground)]">尚未绑定甲方合同资产。保存合同后会保留当前绑定关系。</p>
+                <p className="leading-5 text-[var(--text-secondary)]">尚未绑定甲方合同资产。保存合同后会保留当前绑定关系。</p>
               )}
             </div>
           </div>
@@ -4229,7 +4726,7 @@ function ContractEditorCard({
               required
               disabled={!canEdit || saving || !quote}
               defaultValue={fields.deliveryScope}
-              className="min-h-24 resize-y rounded-md border border-[var(--border)] bg-white p-3 text-sm leading-6 disabled:bg-[var(--muted)]"
+              className="min-h-24 resize-y ds-card-sm p-3 text-sm leading-6 disabled:bg-[var(--muted)]"
             />
           </label>
           <label className="grid gap-1 text-sm">
@@ -4239,7 +4736,7 @@ function ContractEditorCard({
               required
               disabled={!canEdit || saving || !quote}
               defaultValue={fields.paymentTerms}
-              className="min-h-24 resize-y rounded-md border border-[var(--border)] bg-white p-3 text-sm leading-6 disabled:bg-[var(--muted)]"
+              className="min-h-24 resize-y ds-card-sm p-3 text-sm leading-6 disabled:bg-[var(--muted)]"
             />
           </label>
         </div>
@@ -4255,23 +4752,23 @@ function ContractEditorCard({
         />
         <button
           disabled={!canEdit || saving || !quote}
-          className="inline-flex h-9 w-fit items-center justify-center gap-2 rounded-md bg-[var(--foreground)] px-3 text-sm font-medium text-white disabled:opacity-60"
+          className="inline-flex h-9 w-fit items-center justify-center gap-2 rounded-card-sm bg-[var(--foreground)] px-3 text-sm font-medium text-[var(--text-inverse)] disabled:opacity-60"
         >
           {saving ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
           保存合同并创建快照
         </button>
       </form>
 
-      <div className="mt-4 flex flex-wrap items-center gap-3 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
+      <div className="mt-4 flex flex-wrap items-center gap-3 ds-card-soft p-3">
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium">导出正式文件</p>
-          <p className="mt-1 text-xs leading-5 text-[var(--muted-foreground)]">导出基于数据库里的最新合同快照；如果刚编辑过正文，请先保存合同。</p>
+          <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">导出基于数据库里的最新合同快照；如果刚编辑过正文，请先保存合同。</p>
         </div>
         <button
           type="button"
           disabled={!canEdit || Boolean(exportingFormat) || !contract || !contract.latestSnapshotId}
           onClick={() => void handleExport("pdf")}
-          className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 text-sm font-medium disabled:opacity-60"
+          className="inline-flex h-9 items-center justify-center gap-2 ds-card-sm px-3 text-sm font-medium disabled:opacity-60"
         >
           {exportingFormat === "pdf" ? <Loader2 className="animate-spin" size={16} /> : <Download size={16} />}
           导出 PDF
@@ -4280,15 +4777,15 @@ function ContractEditorCard({
           type="button"
           disabled={!canEdit || Boolean(exportingFormat) || !contract || !contract.latestSnapshotId}
           onClick={() => void handleExport("docx")}
-          className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 text-sm font-medium disabled:opacity-60"
+          className="inline-flex h-9 items-center justify-center gap-2 ds-card-sm px-3 text-sm font-medium disabled:opacity-60"
         >
           {exportingFormat === "docx" ? <Loader2 className="animate-spin" size={16} /> : <Download size={16} />}
           导出 Word
         </button>
       </div>
 
-      {contractError && <div className="mt-3 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm text-[var(--warning)]">{contractError}</div>}
-      {message && <div className="mt-3 rounded-md border border-[#bbf7d0] bg-[#f0fdf4] p-3 text-sm text-[var(--success)]">{message}</div>}
+      {contractError && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm text-[var(--warning)]">{contractError}</div>}
+      {message && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-3 text-sm text-[var(--success)]">{message}</div>}
 
       <CommercialReviewPanel
         documentLabel="合同"
@@ -4298,45 +4795,56 @@ function ContractEditorCard({
         reviewingAction={reviewingAction}
         onReview={handleReview}
       />
+      <ClientReviewLaunchBox
+        projectId={project.id}
+        reviewType="contract_confirmation"
+        targetScopeId={contract?.id ?? null}
+        title="甲方合同确认"
+        detail="将合同主体、交付范围、付款条款和补充约定发给甲方确认；通过后可继续推进签署与交付。"
+        disabled={!contract}
+        disabledReason="请先保存合同快照，再生成甲方审核链接。"
+        tasks={clientReviewTasks}
+        onRefresh={onRefresh}
+      />
 
       <div className="mt-5 grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(260px,0.65fr)_minmax(260px,0.65fr)]">
-        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
+        <div className="ds-card-soft p-3">
           <p className="text-sm font-medium">当前合同摘要</p>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">
+          <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
             {contract ? summarizeText(contract.content, 180) : "还没有保存过合同。保存后这里会显示最新合同摘要。"}
           </p>
         </div>
-        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
+        <div className="ds-card-soft p-3">
           <p className="text-sm font-medium">合同快照</p>
           {snapshots.length === 0 ? (
-            <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">还没有合同快照。每次保存都会新增一个版本。</p>
+            <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">还没有合同快照。每次保存都会新增一个版本。</p>
           ) : (
             <div className="mt-3 grid gap-2">
               {snapshots.slice(0, 5).map((snapshot) => (
-                <div key={snapshot.id} className="rounded-md border border-[var(--border)] bg-white p-3 text-xs">
+                <div key={snapshot.id} className="ds-card-sm p-3 text-xs">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-medium">v{snapshot.version} · {quoteStatusLabel(snapshot.status)}</span>
-                    <span className="text-[var(--muted-foreground)]">{formatDateTime(snapshot.createdAt)}</span>
+                    <span className="text-[var(--text-secondary)]">{formatDateTime(snapshot.createdAt)}</span>
                   </div>
-                  <p className="mt-2 leading-5 text-[var(--muted-foreground)]">{snapshot.summary || summarizeText(snapshot.content, 96)}</p>
+                  <p className="mt-2 leading-5 text-[var(--text-secondary)]">{snapshot.summary || summarizeText(snapshot.content, 96)}</p>
                 </div>
               ))}
             </div>
           )}
         </div>
-        <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
+        <div className="ds-card-soft p-3">
           <p className="text-sm font-medium">历史导出</p>
           {exports.length === 0 ? (
-            <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">还没有导出记录。保存合同快照后可以导出 PDF 或 Word。</p>
+            <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">还没有导出记录。保存合同快照后可以导出 PDF 或 Word。</p>
           ) : (
             <div className="mt-3 grid gap-2">
               {exports.slice(0, 5).map((item) => (
-                <div key={item.id} className="rounded-md border border-[var(--border)] bg-white p-3 text-xs">
+                <div key={item.id} className="ds-card-sm p-3 text-xs">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-medium">{exportFormatLabel(item.format)} · {exportStatusLabel(item.status)}</span>
-                    <span className="text-[var(--muted-foreground)]">{formatDateTime(item.updatedAt)}</span>
+                    <span className="text-[var(--text-secondary)]">{formatDateTime(item.updatedAt)}</span>
                   </div>
-                  <p className="mt-2 truncate text-[var(--muted-foreground)]">{item.fileName || item.title}</p>
+                  <p className="mt-2 truncate text-[var(--text-secondary)]">{item.fileName || item.title}</p>
                   {item.status === "succeeded" && item.ossKey ? (
                     <button
                       type="button"
@@ -4350,7 +4858,7 @@ function ContractEditorCard({
                   ) : item.failureReason ? (
                     <p className="mt-2 leading-5 text-[var(--warning)]">{item.failureReason}</p>
                   ) : (
-                    <p className="mt-2 leading-5 text-[var(--muted-foreground)]">文件还在生成中，完成后会出现下载入口。</p>
+                    <p className="mt-2 leading-5 text-[var(--text-secondary)]">文件还在生成中，完成后会出现下载入口。</p>
                   )}
                 </div>
               ))}
@@ -4511,36 +5019,36 @@ function FeishuDeliveryCard({
   }
 
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-4 lg:col-span-2">
+    <div className="ds-card-sm p-4 lg:col-span-2">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
             <Send size={18} />
-            <h3 className="font-semibold">飞书交付与归档</h3>
+            <h3 className="ds-text-section-title">飞书交付与归档</h3>
           </div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">
+          <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
             系统会创建飞书文档、发送到个人或群聊，并把文档链接、消息 ID、发送状态回写到项目记录。
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-xs">
-          <span className="rounded bg-[var(--muted)] px-2 py-1">{deliveries.length} 条交付记录</span>
-          {!canSend && <span className="rounded bg-[#fef3c7] px-2 py-1 text-[var(--warning)]">当前角色不能发送飞书</span>}
+          <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">{deliveries.length} 条交付记录</span>
+          {!canSend && <span className="ds-pill ds-pill-yellow">当前角色不能发送飞书</span>}
         </div>
       </div>
 
       {availableDocuments.length === 0 && (
-        <div className="mt-4 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm leading-6 text-[var(--warning)]">
+        <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm leading-6 text-[var(--warning)]">
           还没有可交付的提案、报价或合同快照。请先在上方保存业务文档，再创建飞书交付。
         </div>
       )}
 
-      <form action={handleSubmit} className="mt-4 grid gap-3 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
+      <form action={handleSubmit} className="mt-4 grid gap-3 ds-card-soft p-3">
         <div className="grid gap-3 md:grid-cols-[180px_minmax(0,1fr)]">
           <select
             value={selectedDocument?.type ?? documentType}
             disabled={!canSend || sending || availableDocuments.length === 0}
             onChange={(event) => setDocumentType(event.target.value as FeishuDeliveryDocumentType)}
-            className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm disabled:bg-[var(--muted)]"
+            className="h-9 ds-card-sm px-3 text-sm disabled:bg-[var(--muted)]"
           >
             {availableDocuments.map((item) => (
               <option key={item.type} value={item.type}>
@@ -4558,7 +5066,7 @@ function FeishuDeliveryCard({
               const receiver = receivers.find((item) => item.id === nextId);
               if (receiver) setReceiverType(receiver.receiverType);
             }}
-            className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm disabled:bg-[var(--muted)]"
+            className="h-9 ds-card-sm px-3 text-sm disabled:bg-[var(--muted)]"
           >
             <option value="">手动输入接收对象{receivers.length === 0 ? "（暂无常用）" : ""}</option>
             {receivers.map((receiver) => (
@@ -4575,7 +5083,7 @@ function FeishuDeliveryCard({
             value={receiverType}
             disabled={!canSend || sending || Boolean(selectedReceiver)}
             onChange={(event) => setReceiverType(event.target.value as FeishuReceiverType)}
-            className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm disabled:bg-[var(--muted)]"
+            className="h-9 ds-card-sm px-3 text-sm disabled:bg-[var(--muted)]"
           >
             <option value="chat">发送到群聊</option>
             <option value="user">发送给个人</option>
@@ -4586,7 +5094,7 @@ function FeishuDeliveryCard({
             defaultValue={selectedReceiver?.receiverId ?? ""}
             disabled={!canSend || sending || availableDocuments.length === 0 || Boolean(selectedReceiver)}
             placeholder={receiverType === "user" ? "接收人 open_id" : "群聊 chat_id"}
-            className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm disabled:bg-[var(--muted)]"
+            className="h-9 ds-card-sm px-3 text-sm disabled:bg-[var(--muted)]"
             readOnly={Boolean(selectedReceiver)}
           />
           <input
@@ -4595,7 +5103,7 @@ function FeishuDeliveryCard({
             defaultValue={selectedReceiver?.displayName ?? ""}
             disabled={!canSend || sending || availableDocuments.length === 0 || Boolean(selectedReceiver)}
             placeholder="接收对象备注，如客户群/张三"
-            className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm disabled:bg-[var(--muted)]"
+            className="h-9 ds-card-sm px-3 text-sm disabled:bg-[var(--muted)]"
             readOnly={Boolean(selectedReceiver)}
           />
           <button
@@ -4605,21 +5113,21 @@ function FeishuDeliveryCard({
               const form = event.currentTarget.form;
               if (form) void handleSaveReceiver(new FormData(form));
             }}
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 text-sm font-medium disabled:opacity-60"
+            className="inline-flex h-9 items-center justify-center gap-2 ds-card-sm px-3 text-sm font-medium disabled:opacity-60"
           >
             {savingReceiver ? <Loader2 className="animate-spin" size={16} /> : <Plus size={16} />}
             保存常用
           </button>
           <button
             disabled={!canSend || sending || availableDocuments.length === 0}
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-[var(--foreground)] px-3 text-sm font-medium text-white disabled:opacity-60"
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-card-sm bg-[var(--foreground)] px-3 text-sm font-medium text-[var(--text-inverse)] disabled:opacity-60"
           >
             {sending ? <Loader2 className="animate-spin" size={16} /> : <Send size={16} />}
             创建并发送
           </button>
         </div>
         {!selectedReceiver && (
-          <label className="flex items-center gap-2 text-xs text-[var(--muted-foreground)]">
+          <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
             <input name="saveReceiver" type="checkbox" className="h-4 w-4" />
             发送前保存为本项目常用飞书接收对象
           </label>
@@ -4627,28 +5135,28 @@ function FeishuDeliveryCard({
       </form>
 
       {selectedDocument && (
-        <p className="mt-2 text-xs leading-5 text-[var(--muted-foreground)]">
+        <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">
           当前将发送：{selectedDocument.title} · 快照 v{selectedDocument.version}
         </p>
       )}
-      {deliveryError && <div className="mt-3 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm text-[var(--warning)]">{deliveryError}</div>}
-      {message && <div className="mt-3 rounded-md border border-[#bbf7d0] bg-[#f0fdf4] p-3 text-sm text-[var(--success)]">{message}</div>}
+      {deliveryError && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm text-[var(--warning)]">{deliveryError}</div>}
+      {message && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-3 text-sm text-[var(--success)]">{message}</div>}
 
-      <div className="mt-5 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
+      <div className="mt-5 ds-card-soft p-3">
         <p className="text-sm font-medium">飞书交付历史</p>
         {deliveries.length === 0 ? (
-          <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">还没有飞书交付记录。发送后这里会显示文档链接、发送对象和状态。</p>
+          <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">还没有飞书交付记录。发送后这里会显示文档链接、发送对象和状态。</p>
         ) : (
           <div className="mt-3 grid gap-2">
             {deliveries.slice(0, 6).map((item) => (
-              <div key={item.id} className="rounded-md border border-[var(--border)] bg-white p-3 text-xs">
+              <div key={item.id} className="ds-card-sm p-3 text-xs">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-medium">
                     {documentTypeLabel(item.documentType)} · {exportStatusLabel(item.status)}
                   </span>
-                  <span className="text-[var(--muted-foreground)]">{formatDateTime(item.updatedAt)}</span>
+                  <span className="text-[var(--text-secondary)]">{formatDateTime(item.updatedAt)}</span>
                 </div>
-                <p className="mt-2 truncate text-[var(--muted-foreground)]">
+                <p className="mt-2 truncate text-[var(--text-secondary)]">
                   {receiverTypeLabel(item.receiverType)}：{item.receiverName || item.receiverId}
                 </p>
                 {item.status === "succeeded" && item.feishuDocumentUrl ? (
@@ -4662,7 +5170,7 @@ function FeishuDeliveryCard({
                       <ExternalLink size={12} />
                       打开飞书文档
                     </a>
-                    {item.feishuMessageId && <span className="text-[var(--muted-foreground)]">消息 ID：{item.feishuMessageId}</span>}
+                    {item.feishuMessageId && <span className="text-[var(--text-secondary)]">消息 ID：{item.feishuMessageId}</span>}
                   </div>
                 ) : item.failureReason ? (
                   <div className="mt-2 grid gap-2">
@@ -4681,12 +5189,12 @@ function FeishuDeliveryCard({
                     {canSend && item.status === "failed" && (
                       <form
                         action={(formData) => void handleRetryDelivery(item, formData)}
-                        className="grid gap-2 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-2 md:grid-cols-[minmax(0,1fr)_120px_minmax(0,1fr)_minmax(0,1fr)_auto]"
+                        className="grid gap-2 ds-card-soft p-2 md:grid-cols-[minmax(0,1fr)_120px_minmax(0,1fr)_minmax(0,1fr)_auto]"
                       >
                         <select
                           name="retryReceiverRefId"
                           disabled={retryingDeliveryId === item.id || receivers.length === 0}
-                          className="h-8 rounded-md border border-[var(--border)] bg-white px-2 text-xs disabled:bg-[var(--muted)]"
+                          className="h-8 ds-card-sm px-2 text-xs disabled:bg-[var(--muted)]"
                         >
                           <option value="">手动补发对象{receivers.length === 0 ? "（暂无常用）" : ""}</option>
                           {receivers.map((receiver) => (
@@ -4700,7 +5208,7 @@ function FeishuDeliveryCard({
                           name="retryReceiverType"
                           defaultValue={item.receiverType}
                           disabled={retryingDeliveryId === item.id}
-                          className="h-8 rounded-md border border-[var(--border)] bg-white px-2 text-xs disabled:bg-[var(--muted)]"
+                          className="h-8 ds-card-sm px-2 text-xs disabled:bg-[var(--muted)]"
                         >
                           <option value="chat">群聊</option>
                           <option value="user">个人</option>
@@ -4710,18 +5218,18 @@ function FeishuDeliveryCard({
                           defaultValue={item.receiverId}
                           disabled={retryingDeliveryId === item.id}
                           placeholder="open_id 或 chat_id"
-                          className="h-8 rounded-md border border-[var(--border)] bg-white px-2 text-xs disabled:bg-[var(--muted)]"
+                          className="h-8 ds-card-sm px-2 text-xs disabled:bg-[var(--muted)]"
                         />
                         <input
                           name="retryReceiverName"
                           defaultValue={item.receiverName}
                           disabled={retryingDeliveryId === item.id}
                           placeholder="接收对象备注"
-                          className="h-8 rounded-md border border-[var(--border)] bg-white px-2 text-xs disabled:bg-[var(--muted)]"
+                          className="h-8 ds-card-sm px-2 text-xs disabled:bg-[var(--muted)]"
                         />
                         <button
                           disabled={retryingDeliveryId === item.id}
-                          className="inline-flex h-8 items-center justify-center gap-1 rounded-md bg-[var(--foreground)] px-2 text-xs font-medium text-white disabled:opacity-60"
+                          className="inline-flex h-8 items-center justify-center gap-1 rounded-card-sm bg-[var(--foreground)] px-2 text-xs font-medium text-[var(--text-inverse)] disabled:opacity-60"
                         >
                           {retryingDeliveryId === item.id ? <Loader2 className="animate-spin" size={12} /> : <RefreshCcw size={12} />}
                           补发
@@ -4730,7 +5238,7 @@ function FeishuDeliveryCard({
                     )}
                   </div>
                 ) : (
-                  <p className="mt-2 leading-5 text-[var(--muted-foreground)]">交付任务正在后台处理中，完成后会自动回写链接。</p>
+                  <p className="mt-2 leading-5 text-[var(--text-secondary)]">交付任务正在后台处理中，完成后会自动回写链接。</p>
                 )}
               </div>
             ))}
@@ -4856,9 +5364,9 @@ function DocumentRichTextEditor({
   const toolbarDisabled = disabled;
 
   return (
-    <div className={cn("overflow-hidden rounded-md border border-[var(--border)] bg-white", disabled && "bg-[var(--muted)] opacity-75")}>
+    <div className={cn("overflow-hidden ds-card-sm", disabled && "bg-[var(--muted)] opacity-75")}>
       <input ref={hiddenInputRef} type="hidden" name={name} defaultValue={initialText} />
-      <div className="flex flex-wrap items-center gap-1 border-b border-[var(--border)] bg-[var(--panel-soft)] p-2">
+      <div className="flex flex-wrap items-center gap-1 border-b border-[var(--border-soft)] bg-[var(--surface-soft)] p-2">
         <EditorToolbarButton
           label="正文"
           disabled={toolbarDisabled}
@@ -4889,7 +5397,7 @@ function DocumentRichTextEditor({
           onClick={() => insertText("\n1. ")}
           icon={<ListOrdered size={14} />}
         />
-        <span className="ml-auto text-xs text-[var(--muted-foreground)]">保存后创建可追溯快照</span>
+        <span className="ml-auto text-xs text-[var(--text-secondary)]">保存后创建可追溯快照</span>
       </div>
       <div
         ref={editorRef}
@@ -4905,7 +5413,7 @@ function DocumentRichTextEditor({
         dangerouslySetInnerHTML={{ __html: escapeHtml(initialText) }}
         className={cn(
           minHeightClassName,
-          "whitespace-pre-wrap px-3 py-3 text-sm leading-6 outline-none empty:before:text-[var(--muted-foreground)] empty:before:content-[attr(data-placeholder)] focus:bg-white",
+          "whitespace-pre-wrap px-3 py-3 text-sm leading-6 outline-none empty:before:text-[var(--text-secondary)] empty:before:content-[attr(data-placeholder)] focus:bg-[var(--surface-card)]",
           disabled && "cursor-not-allowed"
         )}
       />
@@ -4931,7 +5439,7 @@ function EditorToolbarButton({
       aria-label={label}
       disabled={disabled}
       onClick={onClick}
-      className="inline-flex h-8 items-center justify-center gap-1 rounded border border-[var(--border)] bg-white px-2 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+      className="inline-flex h-8 items-center justify-center gap-1 rounded border border-[var(--border-soft)] bg-[var(--surface-card)] px-2 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
     >
       {icon}
       <span className="hidden sm:inline">{label}</span>
@@ -4961,7 +5469,7 @@ function ContractField({ name, label, value, disabled }: { name: string; label: 
         required
         disabled={disabled}
         defaultValue={value}
-        className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm disabled:bg-[var(--muted)]"
+        className="h-9 ds-card-sm px-3 text-sm disabled:bg-[var(--muted)]"
       />
     </label>
   );
@@ -5082,7 +5590,7 @@ function CommercialReviewPanel({
 
   if (visibleActions.length === 0) {
     return (
-      <div className="mt-4 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3 text-sm text-[var(--muted-foreground)]">
+      <div className="mt-4 ds-card-soft p-3 text-sm text-[var(--text-secondary)]">
         当前{documentLabel}状态为「{quoteStatusLabel(status)}」，暂无可执行的审核流转动作。
       </div>
     );
@@ -5095,11 +5603,11 @@ function CommercialReviewPanel({
   }
 
   return (
-    <div className="mt-4 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
+    <div className="mt-4 ds-card-soft p-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-sm font-medium">{documentLabel}审核与签署流转</p>
-          <p className="mt-1 text-xs leading-5 text-[var(--muted-foreground)]">
+          <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
             当前状态：{quoteStatusLabel(status)}。审核、驳回、发送、签署和终止都会写入阶段状态与审计记录。
           </p>
         </div>
@@ -5111,10 +5619,10 @@ function CommercialReviewPanel({
               disabled={disabled || busy || (item.needsReason && !reason.trim())}
               onClick={() => void handleAction(item.action, item.needsReason)}
               className={cn(
-                "inline-flex h-8 items-center justify-center gap-1 rounded-md px-2 text-xs font-medium disabled:opacity-60",
+                "inline-flex h-8 items-center justify-center gap-1 rounded-card-sm px-2 text-xs font-medium disabled:opacity-60",
                 item.tone === "primary"
-                  ? "bg-[var(--foreground)] text-white"
-                  : "border border-[var(--border)] bg-white text-[var(--foreground)]"
+                  ? "bg-[var(--foreground)] text-[var(--text-inverse)]"
+                  : "border border-[var(--border-soft)] bg-[var(--surface-card)] text-[var(--text-primary)]"
               )}
             >
               {reviewingAction === item.action ? <Loader2 className="animate-spin" size={12} /> : <CheckCircle2 size={12} />}
@@ -5129,11 +5637,124 @@ function CommercialReviewPanel({
           onChange={(event) => setReason(event.target.value)}
           disabled={disabled || busy}
           placeholder="驳回或终止时请填写原因；系统会保存到阶段状态和审计记录。"
-          className="mt-3 min-h-16 w-full resize-y rounded-md border border-[var(--border)] bg-white p-2 text-sm leading-5 disabled:bg-[var(--muted)]"
+          className="mt-3 min-h-16 w-full resize-y ds-card-sm p-2 text-sm leading-5 disabled:bg-[var(--muted)]"
         />
       )}
     </div>
   );
+}
+
+function ClientReviewLaunchBox({
+  projectId,
+  reviewType,
+  targetScopeId,
+  title,
+  detail,
+  disabled,
+  disabledReason,
+  tasks,
+  onRefresh,
+}: {
+  projectId: string;
+  reviewType: CreateClientReviewType;
+  targetScopeId?: string | null;
+  title: string;
+  detail: string;
+  disabled?: boolean;
+  disabledReason?: string;
+  tasks: ClientReviewTaskView[];
+  onRefresh: () => Promise<void>;
+}) {
+  const [creatingReview, setCreatingReview] = useState(false);
+  const [createdReview, setCreatedReview] = useState<{ url: string; code: string } | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const relevantTasks = tasks
+    .filter((task) => task.reviewType === reviewType && (!targetScopeId || task.targetScopeId === targetScopeId))
+    .slice(0, 3);
+  const latestTask = relevantTasks[0] ?? null;
+
+  async function handleCreate() {
+    setCreatingReview(true);
+    setMessage(null);
+    setReviewError(null);
+    const result = await createWorkflowClientReview(projectId, {
+      reviewType,
+      targetScopeId: targetScopeId ?? null,
+    });
+
+    if (result.ok) {
+      setCreatedReview({ url: result.data.reviewUrl, code: result.data.verificationCode });
+      setMessage(result.data.message);
+      await onRefresh();
+    } else {
+      setReviewError(result.error.message);
+    }
+    setCreatingReview(false);
+  }
+
+  return (
+    <div className="mt-4 ds-card-soft p-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">{title}</p>
+          <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">{detail}</p>
+          {latestTask && (
+            <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
+              最近一轮：v{latestTask.version} · {clientReviewStatusLabel(latestTask.status)} · {formatDateTime(latestTask.updatedAt)}
+            </p>
+          )}
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={disabled || creatingReview}
+          onClick={() => void handleCreate()}
+        >
+          {creatingReview ? <Loader2 className="animate-spin" size={15} /> : <Send size={15} />}
+          生成甲方审核链接
+        </Button>
+      </div>
+      {disabled && disabledReason && <p className="mt-2 text-xs leading-5 text-[var(--warning)]">{disabledReason}</p>}
+      {createdReview && (
+        <div className="mt-3 grid gap-2 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-xs">
+          <div className="grid gap-1">
+            <span className="font-medium">审核链接</span>
+            <code className="break-all rounded bg-[var(--surface-soft)] px-2 py-1 text-[var(--text-secondary)]">{createdReview.url}</code>
+          </div>
+          <div className="grid gap-1">
+            <span className="font-medium">验证码 / 密钥</span>
+            <code className="w-fit rounded bg-[var(--surface-soft)] px-2 py-1 text-[var(--text-primary)]">{createdReview.code}</code>
+          </div>
+          <p className="leading-5 text-[var(--text-secondary)]">建议把链接和验证码分开发送给甲方；甲方无需登录即可访问。</p>
+        </div>
+      )}
+      {reviewError && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm text-[var(--warning)]">{reviewError}</div>}
+      {message && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-3 text-sm text-[var(--success)]">{message}</div>}
+      {relevantTasks.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {relevantTasks.map((task) => (
+            <span key={task.id} className="ds-pill bg-[var(--surface-card)] text-[var(--text-secondary)]">
+              v{task.version} · {clientReviewStatusLabel(task.status)}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function clientReviewStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    draft: "草稿",
+    active: "待甲方审核",
+    submitted: "已提交",
+    approved: "已通过",
+    rejected: "已打回",
+    expired: "已过期",
+    revoked: "已撤回",
+  };
+  return labels[status] ?? status;
 }
 
 function QuoteItemInputs({ index, item, disabled }: { index: number; item: QuoteItemView; disabled: boolean }) {
@@ -5144,14 +5765,14 @@ function QuoteItemInputs({ index, item, disabled }: { index: number; item: Quote
         disabled={disabled}
         defaultValue={item.name}
         placeholder={index === 0 ? "创意深化" : "可选"}
-        className="min-w-0 border-0 bg-white px-3 py-2 text-sm disabled:bg-[var(--muted)]"
+        className="min-w-0 border-0 bg-[var(--surface-card)] px-3 py-2 text-sm disabled:bg-[var(--muted)]"
       />
       <input
         name={`item_${index}_description`}
         disabled={disabled}
         defaultValue={item.description}
         placeholder="说明"
-        className="min-w-0 border-0 bg-white px-3 py-2 text-sm disabled:bg-[var(--muted)]"
+        className="min-w-0 border-0 bg-[var(--surface-card)] px-3 py-2 text-sm disabled:bg-[var(--muted)]"
       />
       <input
         name={`item_${index}_quantity`}
@@ -5159,7 +5780,7 @@ function QuoteItemInputs({ index, item, disabled }: { index: number; item: Quote
         defaultValue={item.quantity || ""}
         inputMode="decimal"
         placeholder="1"
-        className="min-w-0 border-0 bg-white px-3 py-2 text-sm disabled:bg-[var(--muted)]"
+        className="min-w-0 border-0 bg-[var(--surface-card)] px-3 py-2 text-sm disabled:bg-[var(--muted)]"
       />
       <input
         name={`item_${index}_unitPrice`}
@@ -5167,7 +5788,7 @@ function QuoteItemInputs({ index, item, disabled }: { index: number; item: Quote
         defaultValue={item.unitPrice || ""}
         inputMode="decimal"
         placeholder="0"
-        className="min-w-0 border-0 bg-white px-3 py-2 text-sm disabled:bg-[var(--muted)]"
+        className="min-w-0 border-0 bg-[var(--surface-card)] px-3 py-2 text-sm disabled:bg-[var(--muted)]"
       />
     </>
   );
@@ -5219,11 +5840,11 @@ function creativeDirectionStatusLabel(status: string) {
 
 function creativeDirectionStatusClass(status: string) {
   const classes: Record<string, string> = {
-    draft: "bg-[var(--muted)] text-[var(--muted-foreground)]",
-    waiting_review: "bg-[#fef3c7] text-[var(--warning)]",
-    needs_revision: "bg-[#fee2e2] text-[#b91c1c]",
-    approved: "bg-[#dcfce7] text-[var(--success)]",
-    archived: "bg-[var(--muted)] text-[var(--muted-foreground)]",
+    draft: "bg-[var(--muted)] text-[var(--text-secondary)]",
+    waiting_review: "ds-pill-yellow",
+    needs_revision: "ds-pill-pink",
+    approved: "ds-pill-teal",
+    archived: "bg-[var(--muted)] text-[var(--text-secondary)]",
   };
   return classes[status] ?? classes.draft;
 }
@@ -5246,7 +5867,7 @@ function storyArcLabel(key: string) {
 function InfoBlock({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <p className="text-xs text-[var(--muted-foreground)]">{label}</p>
+      <p className="text-xs text-[var(--text-secondary)]">{label}</p>
       <p className="mt-1 leading-6">{value}</p>
     </div>
   );
@@ -5254,8 +5875,8 @@ function InfoBlock({ label, value }: { label: string; value: string }) {
 
 function MiniMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] p-3">
-      <p className="text-xs text-[var(--muted-foreground)]">{label}</p>
+    <div className="ds-card-soft p-3">
+      <p className="text-xs text-[var(--text-secondary)]">{label}</p>
       <p className="mt-1 text-sm font-medium">{value}</p>
     </div>
   );
@@ -5282,8 +5903,8 @@ function ReviewSubmitButton({
       value={value}
       disabled={disabled}
       className={cn(
-        "inline-flex h-9 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium disabled:opacity-60",
-        tone === "primary" ? "bg-[var(--foreground)] text-white" : "border border-[var(--border)] bg-white"
+        "inline-flex h-9 items-center justify-center gap-2 rounded-card-sm px-3 text-sm font-medium disabled:opacity-60",
+        tone === "primary" ? "bg-[var(--foreground)] text-[var(--text-inverse)]" : "border border-[var(--border-soft)] bg-[var(--surface-card)]"
       )}
     >
       {busy ? <Loader2 className="animate-spin" size={15} /> : <CheckCircle2 size={15} />}
@@ -5323,23 +5944,23 @@ function AssetRow({
   }
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-[var(--border)] bg-white p-3 text-sm">
+    <div className="flex flex-wrap items-center justify-between gap-3 ds-card-sm p-3 text-sm">
       <div className="flex min-w-0 items-center gap-3">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded bg-[var(--muted)]">
           {asset.assetType.includes("video") ? <Video size={16} /> : asset.assetType.includes("image") ? <ImageIcon size={16} /> : <FileText size={16} />}
         </div>
         <div className="min-w-0">
           <p className="truncate font-medium">{asset.fileName ?? asset.externalUrl ?? asset.ossKey ?? "未命名资料"}</p>
-          <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+          <p className="mt-1 text-xs text-[var(--text-secondary)]">
             {assetTypeLabel(asset.assetType)} · {asset.sourceType === "upload" ? "OSS 上传" : "外部链接"} · {parseStatusLabel(asset.parseStatus)}
           </p>
           {asset.failureReason && <p className="mt-1 text-xs text-[var(--warning)]">{asset.failureReason}</p>}
           {accessError && <p className="mt-1 text-xs text-[var(--warning)]">{accessError}</p>}
-          {analysis?.summary && <p className="mt-2 max-w-2xl text-xs leading-5 text-[var(--muted-foreground)]">{analysis.summary}</p>}
+          {analysis?.summary && <p className="mt-2 max-w-2xl text-xs leading-5 text-[var(--text-secondary)]">{analysis.summary}</p>}
           {analysis?.labels.length ? (
             <div className="mt-2 flex flex-wrap gap-1">
               {analysis.labels.slice(0, 8).map((label) => (
-                <span key={label} className="rounded bg-[var(--muted)] px-2 py-1 text-xs">
+                <span key={label} className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">
                   {label}
                 </span>
               ))}
@@ -5348,11 +5969,11 @@ function AssetRow({
         </div>
       </div>
       <div className="flex items-center gap-3">
-        {asset.fileSize !== null && <span className="text-xs text-[var(--muted-foreground)]">{formatFileSize(asset.fileSize)}</span>}
+        {asset.fileSize !== null && <span className="text-xs text-[var(--text-secondary)]">{formatFileSize(asset.fileSize)}</span>}
         <button
           onClick={onAnalyze}
           disabled={!canAnalyze || analyzing}
-          className="inline-flex items-center gap-1 rounded border border-[var(--border)] px-2 py-1 text-xs font-medium disabled:opacity-50"
+          className="inline-flex items-center gap-1 rounded border border-[var(--border-soft)] px-2 py-1 text-xs font-medium disabled:opacity-50"
         >
           {analyzing || asset.parseStatus === "processing" ? <Loader2 className="animate-spin" size={12} /> : <WandSparkles size={12} />}
           {asset.parseStatus === "failed" ? "重试解析" : asset.parseStatus === "succeeded" ? "已解析" : "开始解析"}
@@ -5371,13 +5992,6 @@ function AssetRow({
       </div>
     </div>
   );
-}
-
-function splitExamples(value: string) {
-  return value
-    .split(/[\n,，]/)
-    .map((item) => item.trim())
-    .filter(Boolean);
 }
 
 function uploadLabel(state: "idle" | "signing" | "uploading" | "saving") {
@@ -5445,239 +6059,162 @@ function StageNavigator({
   onStageSelect: (stage: ProjectStage) => void;
 }) {
   const currentIndex = projectStages.indexOf(currentStage);
-  const selectedIndex = projectStages.indexOf(selectedStage);
+  const selectedIndex = Math.min(projectStages.indexOf(selectedStage), currentIndex);
+  const visibleSelectedStage = projectStages[selectedIndex] ?? currentStage;
   const stageStateByKey = new Map(stageStates.map((item) => [item.stageKey, item]));
 
   return (
-    <Card size="sm" className="rounded-2xl border-[var(--border)] bg-[var(--panel)]">
-      <CardContent>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="truncate text-sm font-medium">12 步阶段导航</p>
-            <p className="mt-1 truncate text-xs text-[var(--muted-foreground)]">
-              当前查看：{selectedIndex + 1}. {stageLabels[selectedStage]}
-            </p>
-          </div>
-          <Badge variant="outline">真实阶段：{stageLabels[currentStage]}</Badge>
-        </div>
-        <Separator className="my-3" />
-        <div className="overflow-x-auto pb-1">
-          <div className="flex min-w-max items-stretch gap-2">
-            {projectStages.map((stage, index) => {
-              const persisted = stageStateByKey.get(stage);
-              const inferredStatus =
-                persisted?.status ?? (index < currentIndex ? "completed" : index === currentIndex ? "in_progress" : "not_started");
-              const isCurrent = index === currentIndex;
-              const isSelected = stage === selectedStage;
-              return (
-                <Button
-                  key={stage}
-                  type="button"
-                  variant={isSelected ? "default" : "outline"}
-                  onClick={() => onStageSelect(stage)}
-                  aria-pressed={isSelected}
-                  className={cn(
-                    "h-auto w-36 shrink-0 flex-col items-start justify-start gap-2 whitespace-normal px-3 py-2 text-left text-xs",
-                    isSelected ? "border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-foreground)] hover:bg-[var(--accent)]" : "bg-white hover:border-[var(--accent)]",
-                    inferredStatus === "blocked" || inferredStatus === "needs_revision" ? "border-[#f3d08a] bg-[#fff8e6]" : "",
-                    index > 3 && !persisted ? "opacity-70" : ""
-                  )}
-                  title={`${index + 1}. ${stageLabels[stage]} · ${statusLabels[inferredStatus]}`}
-                >
-                  <span
-                    className={cn(
-                      "flex h-6 w-6 items-center justify-center rounded text-[11px] font-medium",
-                      isCurrent ? "bg-[var(--foreground)] text-white" : "bg-[var(--muted)] text-[var(--muted-foreground)]",
-                      isSelected && !isCurrent ? "bg-white/20 text-current" : ""
-                    )}
-                  >
-                    {index + 1}
-                  </span>
-                  <span className="line-clamp-2 min-h-8 font-medium leading-4">{stageLabels[stage]}</span>
-                  <span className="truncate text-[var(--muted-foreground)]">
-                    {statusLabels[inferredStatus]}{isCurrent ? " · 当前" : ""}
-                  </span>
-                </Button>
-              );
-            })}
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
+    <nav className="module-nav-band" aria-label="工作台功能模块导航">
+      <div className="module-nav-grid">
+        {workflowModules.map((module, moduleIndex) => {
+          const moduleStageIndexes = module.stages.map((stage) => projectStages.indexOf(stage));
+          const firstAccessibleStage = module.stages.find((stage) => projectStages.indexOf(stage) <= currentIndex) ?? null;
+          const isFutureModule = moduleStageIndexes.every((index) => index > currentIndex);
+          const isCurrentModule = module.stages.includes(currentStage);
+          const isSelectedModule = module.stages.includes(visibleSelectedStage);
+          const moduleStatus = inferModuleStatus(module.stages, currentIndex, stageStateByKey);
+          const moduleTitle = compactModuleTitle(module.label);
 
-function ProgressPanel({
-  state,
-  selectedProject,
-  onRefresh,
-}: {
-  state: ReturnType<typeof workspaceReducer>;
-  selectedProject: ProjectSummary | null;
-  onRefresh: () => Promise<void>;
-}) {
-  const jobs = Object.values(state.jobsById);
-  const visibleJobs = jobs.slice(0, 5);
-  const hiddenJobCount = Math.max(0, jobs.length - visibleJobs.length);
-  const [jobActionMessage, setJobActionMessage] = useState<string | null>(null);
-  const [jobActionError, setJobActionError] = useState<string | null>(null);
-  const [showAllJobs, setShowAllJobs] = useState(false);
-  const [expandedJobIds, setExpandedJobIds] = useState<Record<string, boolean>>({});
-  const displayedJobs = showAllJobs ? jobs : visibleJobs;
-  const projectLabel = selectedProject ? `${selectedProject.brandName} / ${selectedProject.projectName}` : "未选择项目";
+          return (
+            <div key={module.key} className="module-nav-item group/module relative">
+              <button
+                type="button"
+                disabled={!firstAccessibleStage}
+                onClick={() => {
+                  if (firstAccessibleStage) onStageSelect(module.stages.includes(currentStage) ? currentStage : firstAccessibleStage);
+                }}
+                className={cn(
+                  "module-nav-button",
+                  isSelectedModule && "is-selected",
+                  isFutureModule && "is-disabled"
+                )}
+                aria-label={`${module.label}，${isFutureModule ? "未进入，暂不可查看" : statusLabels[moduleStatus]}`}
+                aria-current={isCurrentModule ? "step" : undefined}
+              >
+                <span className="flex items-center justify-between gap-2">
+                  <span className="module-nav-index">M{moduleIndex + 1}</span>
+                  <span className="module-nav-status">{isFutureModule ? "未进入" : statusLabels[moduleStatus]}</span>
+                </span>
+                <span className="module-nav-title">{moduleTitle}</span>
+              </button>
 
-  async function handleRetry(jobId: string) {
-    setJobActionMessage(null);
-    setJobActionError(null);
-    const result = await retryJob(jobId);
-    if (result.ok) {
-      setJobActionMessage(result.data.message);
-      await onRefresh();
-    } else {
-      setJobActionError(result.error.message);
-    }
-  }
+              <div className="module-stage-dots" aria-label={`${moduleTitle} 阶段状态导航`}>
+                {module.stages.map((stage) => {
+                  const stageIndex = projectStages.indexOf(stage);
+                  const persisted = stageStateByKey.get(stage);
+                  const inferredStatus =
+                    persisted?.status ?? (stageIndex < currentIndex ? "completed" : stageIndex === currentIndex ? "in_progress" : "not_started");
+                  const isCurrent = stageIndex === currentIndex;
+                  const isSelected = stage === visibleSelectedStage;
+                  const isFuture = stageIndex > currentIndex;
 
-  async function handleCancel(jobId: string) {
-    setJobActionMessage(null);
-    setJobActionError(null);
-    const result = await cancelJob(jobId);
-    if (result.ok) {
-      setJobActionMessage(result.data.message);
-      await onRefresh();
-    } else {
-      setJobActionError(result.error.message);
-    }
-  }
+                  return (
+                    <button
+                      key={stage}
+                      type="button"
+                      disabled={isFuture}
+                      onClick={() => onStageSelect(stage)}
+                      aria-pressed={isSelected}
+                      aria-label={`${stageIndex + 1}. ${stageStepLabels[stage]}，${isFuture ? "未进入，暂不可查看" : statusLabels[inferredStatus]}`}
+                      title={`${stageIndex + 1}. ${stageStepLabels[stage]} · ${isFuture ? "未进入，暂不可查看" : statusLabels[inferredStatus]}`}
+                      className={cn(
+                        "stage-status-dot",
+                        isSelected && "is-selected",
+                        isCurrent && "is-current",
+                        (inferredStatus === "blocked" || inferredStatus === "needs_revision") && "is-attention",
+                        isFuture && "is-disabled"
+                      )}
+                    >
+                      <span>{stageIndex + 1}</span>
+                    </button>
+                  );
+                })}
+              </div>
 
-  return (
-    <aside className="progress-panel flex min-h-screen flex-col bg-[var(--panel)] min-[1181px]:sticky min-[1181px]:top-0 min-[1181px]:h-screen min-[1181px]:min-h-0">
-      <div className="border-b border-[var(--border)] p-6">
-        <div className="flex items-center gap-2">
-          <Bot size={18} />
-          <h2 className="text-xl font-semibold">AI 真实进度</h2>
-        </div>
-        <p className="mt-2 text-sm text-[var(--muted-foreground)]">这里只展示后端事件、数据库写入和 provider 调用状态，不展示虚假百分比。</p>
-      </div>
-
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="space-y-5 p-5">
-        <Card size="sm" className="rounded-2xl border-[var(--border)] bg-[var(--panel-soft)]">
-          <CardContent>
-          <p className="truncate text-sm font-medium">连接状态</p>
-          <p className="mt-2 truncate text-sm text-[var(--muted-foreground)]">
-            {selectedProject ? connectionLabel(state.connection) : "选择项目后会读取任务事件。"}
-          </p>
-          </CardContent>
-        </Card>
-
-        <Card size="sm" className="rounded-2xl border-[var(--border)] bg-white">
-          <CardContent>
-          <p className="truncate text-sm font-medium">任务</p>
-          {jobActionError && <div className="mt-3 rounded-md border border-[#f3d08a] bg-[#fff8e6] p-3 text-sm text-[var(--warning)]">{jobActionError}</div>}
-          {jobActionMessage && <div className="mt-3 rounded-md border border-[#bbf7d0] bg-[#f0fdf4] p-3 text-sm text-[var(--success)]">{jobActionMessage}</div>}
-          {jobs.length === 0 ? (
-            <p className="mt-2 text-sm text-[var(--muted-foreground)]">当前项目还没有真实任务记录。发起需求结构化后会从数据库读取。</p>
-          ) : (
-            <div className="mt-3 divide-y divide-[var(--border)] overflow-hidden rounded-md border border-[var(--border)]">
-              {displayedJobs.map((job) => (
-                <div key={job.id} className="bg-white p-2.5 text-xs">
-                  <button
-                    type="button"
-                    onClick={() => setExpandedJobIds((current) => ({ ...current, [job.id]: !current[job.id] }))}
-                    className="flex w-full items-start gap-2 text-left"
-                    aria-expanded={Boolean(expandedJobIds[job.id])}
-                  >
-                    <Badge variant={jobStatusBadgeVariant(job.status)}>{jobStatusLabel(job.status)}</Badge>
-                    <span className="min-w-0 flex-1">
-                      <span className="block font-medium leading-5">{jobTypeLabel(job.type)}</span>
-                      <span className="mt-0.5 block line-clamp-2 text-[var(--muted-foreground)]">{projectLabel}</span>
-                    </span>
-                    <span className="shrink-0 text-[var(--muted-foreground)]">{formatDateTime(job.updatedAt)}</span>
-                  </button>
-                  {expandedJobIds[job.id] && (
-                    <div className="mt-2 rounded-md bg-[var(--panel-soft)] p-2 leading-5 text-[var(--muted-foreground)]">
-                      <p className="line-clamp-2 font-medium text-[var(--foreground)]">{job.title}</p>
-                      <p className="mt-1">
-                        {job.provider ?? "internal"} {job.modelName ? `· ${job.modelName}` : ""}
-                      </p>
-                      {job.userMessage && <p className="mt-1">{job.userMessage}</p>}
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {job.status === "failed" && (
-                          <button onClick={() => void handleRetry(job.id)} className="rounded border border-[var(--border)] px-2 py-1 text-xs font-medium">
-                            重试
-                          </button>
-                        )}
-                        {(job.status === "queued" || job.status === "retrying") && (
-                          <button onClick={() => void handleCancel(job.id)} className="rounded border border-[var(--border)] px-2 py-1 text-xs font-medium">
-                            取消
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-              {hiddenJobCount > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setShowAllJobs((current) => !current)}
-                  className="w-full bg-[var(--panel-soft)] px-3 py-2 text-left text-xs font-medium text-[var(--accent-foreground)] hover:bg-[var(--muted)]"
-                >
-                  {showAllJobs ? "收起任务" : `查看更多 ${hiddenJobCount} 条`}
-                </button>
-              )}
-            </div>
-          )}
-          </CardContent>
-        </Card>
-
-        <Card size="sm" className="rounded-2xl border-[var(--border)] bg-white">
-          <CardContent>
-          <p className="truncate text-sm font-medium">事件时间线</p>
-          {state.timeline.length === 0 ? (
-            <p className="mt-2 truncate text-sm text-[var(--muted-foreground)]">还没有持久化事件。任务开始后会按真实步骤出现。</p>
-          ) : (
-            <div className="mt-3 space-y-3">
-              {state.timeline.map((item) => (
-                <div key={`${item.id}-${item.at}`} className="flex gap-3 text-sm">
-                  <TimelineDot status={item.status} />
-                  <div>
-                    <p className="font-medium">{item.title}</p>
-                    {item.userMessage && <p className="mt-1 text-[var(--muted-foreground)]">{item.userMessage}</p>}
-                    <p className="mt-1 text-xs text-[var(--muted-foreground)]">{new Date(item.at).toLocaleString("zh-CN")}</p>
+              <div className="module-nav-popover">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--text-tertiary)]">Module {moduleIndex + 1}</p>
+                    <p className="mt-1 text-sm font-semibold leading-5 text-[var(--text-primary)]">{moduleTitle}</p>
                   </div>
+                  <Badge variant={isCurrentModule ? "default" : "outline"}>
+                    {isFutureModule ? "未进入" : statusLabels[moduleStatus]}
+                  </Badge>
                 </div>
-              ))}
+                <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">{module.detail}</p>
+                <div className="mt-3 grid gap-2">
+                  {module.stages.map((stage) => {
+                    const stageIndex = projectStages.indexOf(stage);
+                    const persisted = stageStateByKey.get(stage);
+                    const inferredStatus =
+                      persisted?.status ?? (stageIndex < currentIndex ? "completed" : stageIndex === currentIndex ? "in_progress" : "not_started");
+                    const isFuture = stageIndex > currentIndex;
+                    const isSelected = stage === visibleSelectedStage;
+                    return (
+                      <button
+                        key={stage}
+                        type="button"
+                        disabled={isFuture}
+                        onClick={() => onStageSelect(stage)}
+                        aria-pressed={isSelected}
+                        className={cn(
+                          "flex min-w-0 items-center justify-between gap-3 rounded-[0.85rem] border px-3 py-2 text-left text-xs transition",
+                          isSelected
+                            ? "border-[var(--foreground)] bg-[var(--foreground)] text-[var(--text-inverse)]"
+                            : "border-[var(--border-soft)] bg-[var(--surface-soft)] text-[var(--text-secondary)]",
+                          isFuture ? "cursor-not-allowed opacity-60" : "hover:border-[var(--foreground)] hover:text-[var(--text-primary)]"
+                        )}
+                      >
+                        <span className="min-w-0 truncate">
+                          {stageIndex + 1}. {stageStepLabels[stage]}
+                        </span>
+                        <span className="shrink-0">{isFuture ? "未进入" : statusLabels[inferredStatus]}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
-          )}
-          </CardContent>
-        </Card>
-        </div>
-      </ScrollArea>
-    </aside>
+          );
+        })}
+      </div>
+    </nav>
   );
 }
 
-function TimelineDot({ status }: { status: "running" | "done" | "error" | "info" }) {
-  if (status === "running") return <Loader2 className="mt-0.5 animate-spin text-[var(--accent)]" size={16} />;
-  if (status === "done") return <CheckCircle2 className="mt-0.5 text-[var(--success)]" size={16} />;
-  if (status === "error") return <AlertCircle className="mt-0.5 text-[var(--danger)]" size={16} />;
-  return <CircleDashed className="mt-0.5 text-[var(--muted-foreground)]" size={16} />;
+function compactModuleTitle(label: string) {
+  return label.replace(/^功能模块[一二三四五六七八九十]+：/, "").replace(/^后续模块：/, "");
+}
+
+function inferModuleStatus(
+  stages: ProjectStage[],
+  currentIndex: number,
+  stageStateByKey: Map<ProjectStage, ProjectStageStateView>
+) {
+  const statuses = stages.map((stage) => {
+    const index = projectStages.indexOf(stage);
+    return stageStateByKey.get(stage)?.status ?? (index < currentIndex ? "completed" : index === currentIndex ? "in_progress" : "not_started");
+  });
+  if (statuses.some((status) => status === "blocked")) return "blocked";
+  if (statuses.some((status) => status === "needs_revision")) return "needs_revision";
+  if (statuses.some((status) => status === "waiting_review")) return "waiting_review";
+  if (statuses.every((status) => status === "completed" || status === "approved" || status === "archived")) return "completed";
+  if (statuses.some((status) => status === "in_progress" || status === "approved" || status === "completed")) return "in_progress";
+  return "not_started";
 }
 
 function WorkCard({ icon, title, detail, items }: { icon: React.ReactNode; title: string; detail: string; items: string[] }) {
   return (
-    <Card size="sm" className="rounded-2xl border-[var(--border)] bg-[var(--panel)]">
+    <Card size="sm" className="ds-card">
       <CardContent>
       <div className="flex items-center gap-2">
         {icon}
-        <h3 className="min-w-0 truncate font-semibold">{title}</h3>
+        <h3 className="min-w-0 truncate ds-text-section-title">{title}</h3>
       </div>
-      <p className="mt-2 truncate text-sm leading-6 text-[var(--muted-foreground)]">{detail}</p>
+      <p className="mt-2 truncate text-sm leading-6 text-[var(--text-secondary)]">{detail}</p>
       <div className="mt-3 flex flex-wrap gap-2">
         {items.map((item) => (
-          <span key={item} className="rounded bg-[var(--muted)] px-2 py-1 text-xs">
+          <span key={item} className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">
             {item}
           </span>
         ))}
@@ -5690,10 +6227,10 @@ function WorkCard({ icon, title, detail, items }: { icon: React.ReactNode; title
 function CenterState({ icon, title, detail }: { icon: React.ReactNode; title: string; detail: string }) {
   return (
     <div className="flex min-h-[520px] items-center justify-center p-6">
-      <div className="max-w-md rounded-md border border-[var(--border)] bg-[var(--panel)] p-6 text-center">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-md bg-[var(--muted)]">{icon}</div>
-        <h2 className="mt-4 text-xl font-semibold">{title}</h2>
-        <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">{detail}</p>
+      <div className="max-w-md ds-card-sm p-6 text-center">
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-card-sm bg-[var(--surface-soft)]">{icon}</div>
+        <h2 className="mt-4 ds-text-section-title">{title}</h2>
+        <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">{detail}</p>
       </div>
     </div>
   );
@@ -5701,109 +6238,9 @@ function CenterState({ icon, title, detail }: { icon: React.ReactNode; title: st
 
 function StateLine({ icon, text }: { icon: React.ReactNode; text: string }) {
   return (
-    <div className="flex items-center gap-2 rounded-md border border-[var(--border)] bg-white p-3 text-sm text-[var(--muted-foreground)]">
+    <div className="flex items-center gap-2 ds-card-sm p-3 text-sm text-[var(--text-secondary)]">
       {icon}
       {text}
     </div>
   );
-}
-
-function connectionLabel(connection: string) {
-  if (connection === "connecting") return "正在连接任务事件流。";
-  if (connection === "live") return "事件流已连接，正在接收真实进度。";
-  if (connection === "reconnecting") return "事件流暂时中断，正在等待重新连接。";
-  return "当前没有活动事件流。";
-}
-
-function jobTypeLabel(type: JobType) {
-  const labels: Record<JobType, string> = {
-    requirement_structuring: "需求结构化",
-    asset_understanding: "资料理解",
-    tag_scoring: "标签评分",
-    creative_direction_generation: "创意方向生成",
-    creative_expansion_generation: "故事大纲生成",
-    atmosphere_image_generation: "氛围图生成",
-    proposal_generation: "提案生成",
-    quote_contract_generation: "报价合同生成",
-    document_export: "文档导出",
-    feishu_delivery: "飞书交付",
-  };
-  return labels[type];
-}
-
-function jobStatusLabel(status: JobStatus) {
-  const labels: Record<JobStatus, string> = {
-    queued: "排队",
-    processing: "处理中",
-    succeeded: "成功",
-    failed: "失败",
-    retrying: "重试",
-    cancelled: "取消",
-  };
-  return labels[status];
-}
-
-function jobStatusBadgeVariant(status: JobStatus) {
-  if (status === "failed" || status === "cancelled") return "destructive";
-  if (status === "succeeded") return "secondary";
-  return "outline";
-}
-
-function auditActionLabel(action: string) {
-  const labels: Record<string, string> = {
-    "asset.upload_registered": "资产上传登记",
-    "asset.external_registered": "外部资料登记",
-    "asset.analysis_requested": "资料解析发起",
-    "asset.controlled_download_requested": "资产受控访问",
-    "asset.preview": "资产预览",
-    "asset.download": "资产下载",
-    "asset.external_preview_requested": "外部资料预览",
-    "asset.external_download_requested": "外部资料下载",
-    "asset.external_opened": "外部资料打开",
-    "requirement.structuring_requested": "需求结构化发起",
-    "creative_direction.generation_requested": "创意方向生成发起",
-    "creative_direction.selected": "创意方向选中",
-    "creative_direction.unselected": "创意方向取消选中",
-    "creative_direction.updated": "创意方向改写",
-    "creative_direction.submit_review": "创意方向提交审核",
-    "creative_direction.approve": "创意方向审核确认",
-    "creative_direction.request_revision": "创意方向驳回修改",
-    "creative_expansion.generation_requested": "故事大纲生成发起",
-    "generated_image.generation_requested": "氛围图生成发起",
-    "generated_image.review_updated": "氛围图审核",
-    "document_draft.generation_requested": "商务草稿生成发起",
-    "proposal.saved": "提案保存",
-    "quote.saved": "报价保存",
-    "contract.saved": "合同保存",
-    "document_export.requested": "合同导出发起",
-    "document_export.controlled_download_requested": "导出文件受控访问",
-    "document_export.preview": "导出文件预览",
-    "document_export.download": "导出文件下载",
-    "feishu_delivery.requested": "飞书交付发起",
-    "scoring_rule.created": "评分规则创建",
-    "scoring_rule.updated": "评分规则更新",
-    "technical_feasibility.mark_blocked": "技术评估标记阻塞",
-    "technical_feasibility.request_revision": "技术评估退回补充",
-    "technical_feasibility.approve": "技术评估复核通过",
-    "technical_feasibility.reopen": "技术评估解除阻塞",
-    "project.updated": "项目基础信息更新",
-  };
-  return labels[action] ?? action;
-}
-
-function summarizeAuditAfter(value: unknown) {
-  if (!value || typeof value !== "object") return "已记录关键操作。";
-  const record = value as Record<string, unknown>;
-  const parts = [
-    typeof record.projectId === "string" ? `项目 ${record.projectId.slice(0, 8)}` : "",
-    typeof record.status === "string" ? `状态 ${record.status}` : "",
-    typeof record.stageStatus === "string" ? `阶段 ${record.stageStatus}` : "",
-    typeof record.action === "string" ? `动作 ${auditActionLabel(record.action)}` : "",
-    typeof record.version === "number" ? `v${record.version}` : "",
-    typeof record.format === "string" ? `格式 ${record.format}` : "",
-    typeof record.fileName === "string" ? record.fileName : "",
-    typeof record.receiverType === "string" ? `接收方 ${record.receiverType}` : "",
-    typeof record.jobId === "string" ? `任务 ${record.jobId.slice(0, 8)}` : "",
-  ].filter(Boolean);
-  return parts.length ? parts.join(" · ") : "已记录关键操作摘要。";
 }

@@ -28,7 +28,7 @@ function renderPdf(input: { title: string; content: string }): Promise<RenderedD
       margins: { top: 56, bottom: 56, left: 56, right: 56 },
       info: {
         Title: input.title,
-        Creator: "AUGC Flow",
+        Creator: "MOPHRO",
       },
     });
     const chunks: Buffer[] = [];
@@ -94,7 +94,7 @@ async function renderDocx(input: { title: string; content: string }): Promise<Re
   ];
 
   const document = new Document({
-    creator: "AUGC Flow",
+    creator: "MOPHRO",
     title: input.title,
     sections: [
       {

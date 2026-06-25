@@ -118,6 +118,11 @@ export function createGeneratedImageObjectKey(projectId: string, imageId: string
   return `projects/${projectId}/generated-images/${imageId}/atmosphere.${safeExtension}`;
 }
 
+export function createStoryboardVideoObjectKey(projectId: string, videoId: string, extension = "mp4") {
+  const safeExtension = extension.replace(/[^a-z0-9]/gi, "").toLowerCase() || "mp4";
+  return `projects/${projectId}/storyboard-videos/${videoId}/candidate.${safeExtension}`;
+}
+
 export function createDocumentExportObjectKey(projectId: string, exportId: string, fileName: string) {
   const safeName = fileName.replace(/[^\w.\-\u4e00-\u9fa5]+/g, "_") || `document-export-${exportId}`;
   return `projects/${projectId}/document-exports/${exportId}/${safeName}`;

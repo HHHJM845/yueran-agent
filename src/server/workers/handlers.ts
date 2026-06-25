@@ -8,6 +8,7 @@ import { runDocumentDraftGenerationJob } from "@/server/use-cases/generate-docum
 import { runDocumentExportJob } from "@/server/use-cases/export-document";
 import { runFeishuDeliveryJob } from "@/server/use-cases/feishu-delivery";
 import { runRequirementStructuringJob } from "@/server/use-cases/structure-requirement";
+import { runStoryboardImageGenerationJob, runStoryboardVideoGenerationJob } from "@/server/use-cases/storyboard-media";
 import { AppError } from "@/lib/errors";
 
 export async function runClaimedJob(job: ClaimedJob, workerId: string) {
@@ -52,6 +53,16 @@ export async function runClaimedJob(job: ClaimedJob, workerId: string) {
 
     if (job.type === "atmosphere_image_generation") {
       await runAtmosphereImageGenerationJob(job.id, { workerManagedFailure: true });
+      return;
+    }
+
+    if (job.type === "storyboard_image_generation") {
+      await runStoryboardImageGenerationJob(job.id);
+      return;
+    }
+
+    if (job.type === "storyboard_video_generation") {
+      await runStoryboardVideoGenerationJob(job.id);
       return;
     }
 

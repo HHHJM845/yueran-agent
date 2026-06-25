@@ -141,6 +141,26 @@ export async function updateProposalLatestSnapshot(input: { proposalId: string; 
   );
 }
 
+export async function updateProposalStatus(input: {
+  projectId: string;
+  proposalId: string;
+  status: string;
+  actorId?: string | null;
+}) {
+  const result = await query<ProposalRow>(
+    `update proposals
+     set status = $3,
+         updated_by = case when exists (select 1 from users where id = $4::uuid) then $4::uuid else updated_by end,
+         updated_at = now()
+     where project_id = $1
+       and id = $2
+     returning id, project_id, title, content, status, version, latest_snapshot_id, updated_at`,
+    [input.projectId, input.proposalId, input.status, input.actorId ?? null]
+  );
+
+  return result.rows[0] ? mapProposal(result.rows[0]) : null;
+}
+
 export async function listProjectDocumentSnapshots(projectId: string, documentType?: string) {
   const result = await query<DocumentSnapshotRow>(
     `select id, project_id, document_type, document_id, title, version, status,

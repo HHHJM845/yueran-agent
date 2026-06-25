@@ -15,6 +15,9 @@ import { listProjectJobs } from "@/server/repositories/jobs";
 import { listProjectStageStates } from "@/server/repositories/project-stages";
 import { getProjectProposal, listProjectDocumentSnapshots } from "@/server/repositories/proposals";
 import { getProjectQuote } from "@/server/repositories/quotes";
+import { listProjectClientReviewItems, listProjectClientReviewTasks } from "@/server/repositories/client-reviews";
+import { listProjectReviewCutAnnotations, listProjectReviewCuts } from "@/server/repositories/review-cuts";
+import { listStoryProduction } from "@/server/repositories/story-production";
 
 export async function GET(request: Request, context: { params: Promise<{ projectId: string }> }) {
   try {
@@ -39,6 +42,11 @@ export async function GET(request: Request, context: { params: Promise<{ project
       feishuDeliveries,
       feishuReceivers,
       stageStates,
+      storyProduction,
+      clientReviewTasks,
+      clientReviewItems,
+      reviewCuts,
+      reviewCutAnnotations,
     ] = await Promise.all([
       listProjectJobs(projectId),
       listProjectArtifacts(projectId),
@@ -57,6 +65,11 @@ export async function GET(request: Request, context: { params: Promise<{ project
       listProjectFeishuDeliveries(projectId),
       user.role === "business" || user.role === "admin" ? listProjectFeishuReceivers(projectId) : Promise.resolve([]),
       listProjectStageStates(projectId),
+      listStoryProduction(projectId),
+      listProjectClientReviewTasks(projectId),
+      listProjectClientReviewItems(projectId),
+      listProjectReviewCuts(projectId),
+      listProjectReviewCutAnnotations(projectId),
     ]);
     return Response.json({
       ok: true,
@@ -78,6 +91,11 @@ export async function GET(request: Request, context: { params: Promise<{ project
         feishuDeliveries,
         feishuReceivers,
         stageStates,
+        ...storyProduction,
+        clientReviewTasks,
+        clientReviewItems,
+        reviewCuts,
+        reviewCutAnnotations,
       },
     });
   } catch (error) {

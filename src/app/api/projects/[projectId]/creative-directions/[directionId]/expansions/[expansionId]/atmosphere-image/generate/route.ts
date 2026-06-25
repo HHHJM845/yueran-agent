@@ -35,7 +35,7 @@ export async function POST(
         data: {
           jobId: result.jobId,
           generatedImageId: result.generatedImageId,
-          message: "氛围图生成任务已创建。右侧进度面板会显示真实处理状态。",
+          message: "氛围图生成任务已创建。系统会写入后端任务日志，完成后刷新工作台即可查看结果。",
         },
       },
       { status: 202 }

@@ -43,18 +43,45 @@ export async function generateOpenAIImage(input: {
   });
 
   const startedAt = Date.now();
+  const maxAttempts = 3;
   try {
-    const response = await client.images.generate(
-      {
-        model: input.model,
-        prompt: input.prompt,
-        n: 1,
-        size: input.size ?? "1536x1024",
-        quality: "medium",
-        output_format: "png",
-      },
-      { signal: AbortSignal.timeout(input.timeoutMs ?? 180_000) }
-    );
+    let response: Awaited<ReturnType<typeof client.images.generate>> | null = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        response = await client.images.generate(
+          {
+            model: input.model,
+            prompt: input.prompt,
+            n: 1,
+            size: input.size ?? "1536x1024",
+            quality: "medium",
+            output_format: "png",
+          },
+          { signal: AbortSignal.timeout(input.timeoutMs ?? 180_000) }
+        );
+        break;
+      } catch (error) {
+        const sdkError = normalizeOpenAIImageError(error);
+        if (!isRetryableOpenAIImageError(sdkError.code?.toString()) || attempt === maxAttempts) {
+          throw error;
+        }
+        console.warn("OpenAI image request will retry", {
+          attempt,
+          maxAttempts,
+          code: sdkError.code,
+          message: sdkError.message?.slice(0, 160),
+        });
+        await delay(1500 * attempt);
+      }
+    }
+
+    if (!response) {
+      throw new AppError({
+        status: 502,
+        code: "openai_image_empty_response",
+        userMessage: "氛围图模型没有返回可用图片。你可以调整故事大纲描述后重新生成。",
+      });
+    }
 
     const image = response.data?.[0];
     if (image?.b64_json) {
@@ -169,6 +196,23 @@ function mapOpenAIImageError(code: string | undefined) {
     code: "openai_image_request_failed",
     userMessage: "氛围图生成失败。请检查图片模型配置是否可用，或稍后重试。",
   });
+}
+
+function isRetryableOpenAIImageError(code: string | undefined) {
+  return [
+    "APIConnectionError",
+    "APITimeoutError",
+    "TimeoutError",
+    "AbortError",
+    "APIUserAbortError",
+    "ECONNRESET",
+    "ETIMEDOUT",
+    "ENOTFOUND",
+  ].includes(code ?? "");
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function recordImageTelemetry(input: {

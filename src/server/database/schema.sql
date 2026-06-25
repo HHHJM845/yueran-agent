@@ -66,6 +66,59 @@ create table if not exists project_stage_states (
   unique (project_id, stage_key)
 );
 
+do $$
+begin
+  insert into project_stage_states (
+    project_id, stage_key, status, owner_name, started_at, completed_at,
+    error_message, retry_count, input_refs, output_refs, snapshot, created_at, updated_at
+  )
+  select distinct on (project_id)
+    project_id, 'script_storyboard_confirmation', status, owner_name, started_at, completed_at,
+    error_message, retry_count, input_refs, output_refs, snapshot, created_at, now()
+  from project_stage_states
+  where stage_key in ('full_script_deepening', 'visual_design', 'text_storyboard')
+  order by project_id, updated_at desc
+  on conflict (project_id, stage_key) do nothing;
+
+  insert into project_stage_states (
+    project_id, stage_key, status, owner_name, started_at, completed_at,
+    error_message, retry_count, input_refs, output_refs, snapshot, created_at, updated_at
+  )
+  select distinct on (project_id)
+    project_id, 'storyboard_image_canvas', status, owner_name, started_at, completed_at,
+    error_message, retry_count, input_refs, output_refs, snapshot, created_at, now()
+  from project_stage_states
+  where stage_key = 'storyboard_image_generation'
+  order by project_id, updated_at desc
+  on conflict (project_id, stage_key) do nothing;
+
+  insert into project_stage_states (
+    project_id, stage_key, status, owner_name, started_at, completed_at,
+    error_message, retry_count, input_refs, output_refs, snapshot, created_at, updated_at
+  )
+  select distinct on (project_id)
+    project_id, 'ai_video_canvas', status, owner_name, started_at, completed_at,
+    error_message, retry_count, input_refs, output_refs, snapshot, created_at, now()
+  from project_stage_states
+  where stage_key = 'video_generation_selection'
+  order by project_id, updated_at desc
+  on conflict (project_id, stage_key) do nothing;
+
+  delete from project_stage_states
+   where stage_key in ('full_script_deepening', 'visual_design', 'text_storyboard', 'storyboard_image_generation', 'video_generation_selection');
+
+  update projects
+     set current_stage = case
+       when current_stage in ('full_script_deepening', 'visual_design', 'text_storyboard') then 'script_storyboard_confirmation'
+       when current_stage = 'storyboard_image_generation' then 'storyboard_image_canvas'
+       when current_stage = 'video_generation_selection' then 'ai_video_canvas'
+       else current_stage
+     end,
+     updated_at = now()
+   where current_stage in ('full_script_deepening', 'visual_design', 'text_storyboard', 'storyboard_image_generation', 'video_generation_selection');
+end
+$$;
+
 create table if not exists assets (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references projects(id) on delete cascade,
@@ -283,6 +336,242 @@ create index if not exists generated_images_expansion_idx
 
 create index if not exists generated_images_review_status_idx
   on generated_images (project_id, review_status, updated_at desc);
+
+create table if not exists script_direction_packages (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  direction_id uuid references creative_directions(id) on delete set null,
+  title text not null,
+  concept text not null default '',
+  full_script text not null default '',
+  status text not null default 'draft' check (status in ('draft', 'internal_review', 'client_reviewing', 'client_approved', 'client_rejected', 'locked', 'archived')),
+  version integer not null default 1,
+  selected_at timestamptz,
+  locked_at timestamptz,
+  created_by uuid references users(id),
+  updated_by uuid references users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists script_direction_packages_project_idx
+  on script_direction_packages (project_id, status, updated_at desc);
+
+create table if not exists script_reference_assets (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  package_id uuid not null references script_direction_packages(id) on delete cascade,
+  reference_type text not null check (reference_type in ('character', 'scene')),
+  title text not null,
+  style_label text not null default '',
+  prompt text not null default '',
+  asset_id uuid references assets(id) on delete set null,
+  generated_image_id uuid references generated_images(id) on delete set null,
+  oss_url text,
+  sort_order integer not null default 0,
+  status text not null default 'draft' check (status in ('draft', 'selected', 'discarded', 'locked')),
+  created_by uuid references users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists script_reference_assets_package_idx
+  on script_reference_assets (package_id, reference_type, sort_order, updated_at desc);
+
+create table if not exists storyboard_scenes (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  package_id uuid references script_direction_packages(id) on delete set null,
+  scene_number integer not null,
+  title text not null,
+  description text not null default '',
+  status text not null default 'draft' check (status in ('draft', 'image_generating', 'internal_review', 'ready_for_client_review', 'client_reviewing', 'client_approved', 'client_rejected', 'revision_required', 'locked', 'video_generating', 'video_internal_review', 'video_confirmed')),
+  locked_version integer,
+  created_by uuid references users(id),
+  updated_by uuid references users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (project_id, scene_number)
+);
+
+create index if not exists storyboard_scenes_project_idx
+  on storyboard_scenes (project_id, scene_number, updated_at desc);
+
+create table if not exists storyboard_shots (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  scene_id uuid not null references storyboard_scenes(id) on delete cascade,
+  package_id uuid references script_direction_packages(id) on delete set null,
+  shot_number text not null,
+  visual_description text not null,
+  shot_size text not null default '',
+  action_expression text not null default '',
+  camera_movement text not null default '',
+  duration_seconds numeric,
+  sound_transition text not null default '',
+  notes text not null default '',
+  character_refs jsonb not null default '[]'::jsonb,
+  scene_refs jsonb not null default '[]'::jsonb,
+  image_prompt text not null default '',
+  video_prompt text not null default '',
+  status text not null default 'draft' check (status in ('draft', 'internal_review', 'client_reviewing', 'client_approved', 'client_rejected', 'image_generating', 'image_ready', 'image_selected', 'video_generating', 'video_ready', 'video_selected', 'locked')),
+  version integer not null default 1,
+  sort_order integer not null default 0,
+  created_by uuid references users(id),
+  updated_by uuid references users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists storyboard_shots_scene_idx
+  on storyboard_shots (scene_id, sort_order, updated_at desc);
+
+create table if not exists storyboard_images (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  scene_id uuid not null references storyboard_scenes(id) on delete cascade,
+  shot_id uuid not null references storyboard_shots(id) on delete cascade,
+  prompt text not null,
+  provider text not null,
+  model_name text not null,
+  generation_status text not null default 'queued' check (generation_status in ('queued', 'processing', 'succeeded', 'failed', 'retrying', 'cancelled')),
+  oss_key text,
+  oss_url text,
+  asset_id uuid references assets(id) on delete set null,
+  is_selected boolean not null default false,
+  internal_review_status text not null default 'pending' check (internal_review_status in ('pending', 'confirmed', 'discarded', 'needs_revision')),
+  failure_reason text,
+  retry_count integer not null default 0,
+  annotations_json jsonb not null default '[]'::jsonb,
+  reference_json jsonb not null default '{}'::jsonb,
+  source_job_id uuid references jobs(id),
+  version integer not null default 1,
+  created_by uuid references users(id),
+  reviewed_by uuid references users(id),
+  reviewed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists storyboard_images_shot_idx
+  on storyboard_images (shot_id, is_selected, updated_at desc);
+
+create table if not exists storyboard_videos (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  scene_id uuid not null references storyboard_scenes(id) on delete cascade,
+  shot_id uuid not null references storyboard_shots(id) on delete cascade,
+  image_id uuid references storyboard_images(id) on delete set null,
+  prompt text not null,
+  provider text not null,
+  model_name text not null,
+  generation_status text not null default 'queued' check (generation_status in ('queued', 'processing', 'succeeded', 'failed', 'retrying', 'cancelled')),
+  oss_key text,
+  oss_url text,
+  asset_id uuid references assets(id) on delete set null,
+  is_selected boolean not null default false,
+  internal_review_status text not null default 'pending' check (internal_review_status in ('pending', 'confirmed', 'discarded', 'needs_revision')),
+  failure_reason text,
+  retry_count integer not null default 0,
+  source_job_id uuid references jobs(id),
+  version integer not null default 1,
+  created_by uuid references users(id),
+  reviewed_by uuid references users(id),
+  reviewed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists storyboard_videos_shot_idx
+  on storyboard_videos (shot_id, is_selected, updated_at desc);
+
+create table if not exists review_cuts (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  cut_type text not null check (cut_type in ('a_copy', 'b_copy')),
+  title text not null,
+  description text not null default '',
+  asset_id uuid references assets(id) on delete set null,
+  video_url text,
+  duration_seconds numeric,
+  status text not null default 'uploaded' check (status in ('uploaded', 'internal_review', 'internal_approved', 'client_reviewing', 'client_approved', 'client_rejected', 'revision_required', 'archived')),
+  version integer not null default 1,
+  client_review_task_id uuid,
+  created_by uuid references users(id),
+  reviewed_by uuid references users(id),
+  reviewed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists review_cuts_project_type_idx
+  on review_cuts (project_id, cut_type, version desc, updated_at desc);
+
+create table if not exists client_review_tasks (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  module_key text not null,
+  review_type text not null check (review_type in ('brief_confirmation', 'project_proposal', 'quote_confirmation', 'contract_confirmation', 'script_package', 'storyboard_scene_images', 'a_copy_review', 'b_copy_review')),
+  target_scope_type text not null check (target_scope_type in ('project', 'proposal', 'quote', 'contract', 'script_package', 'storyboard_scene', 'review_cut')),
+  target_scope_id uuid not null,
+  title text not null,
+  summary text not null default '',
+  version integer not null default 1,
+  status text not null default 'draft' check (status in ('draft', 'active', 'submitted', 'approved', 'rejected', 'expired', 'revoked')),
+  access_token_hash text not null unique,
+  verification_code_hash text not null,
+  expires_at timestamptz,
+  submitted_at timestamptz,
+  reviewed_at timestamptz,
+  payload_json jsonb not null default '{}'::jsonb,
+  decision_payload_json jsonb not null default '{}'::jsonb,
+  reviewer_name text,
+  reviewer_contact text,
+  feedback text,
+  created_by uuid references users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists client_review_tasks_project_idx
+  on client_review_tasks (project_id, review_type, target_scope_id, version desc, updated_at desc);
+
+create table if not exists client_review_items (
+  id uuid primary key default gen_random_uuid(),
+  review_task_id uuid not null references client_review_tasks(id) on delete cascade,
+  project_id uuid not null references projects(id) on delete cascade,
+  item_type text not null check (item_type in ('brief', 'proposal', 'quote', 'contract', 'script_direction', 'reference_asset', 'storyboard_shot_image', 'review_cut_video')),
+  item_id uuid not null,
+  item_label text not null default '',
+  decision text not null default 'pending' check (decision in ('pending', 'approved', 'rejected')),
+  score integer check (score is null or (score >= 1 and score <= 5)),
+  feedback text not null default '',
+  metadata_json jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists client_review_items_task_idx
+  on client_review_items (review_task_id, item_type, updated_at desc);
+
+create table if not exists review_cut_annotations (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  review_cut_id uuid not null references review_cuts(id) on delete cascade,
+  review_task_id uuid references client_review_tasks(id) on delete set null,
+  time_seconds numeric not null,
+  feedback text not null default '',
+  mapped_scene_id uuid references storyboard_scenes(id) on delete set null,
+  mapped_shot_id uuid references storyboard_shots(id) on delete set null,
+  mapping_confidence numeric,
+  status text not null default 'needs_triage' check (status in ('needs_triage', 'mapped', 'regenerating', 'resolved', 'dismissed')),
+  created_by_name text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists review_cut_annotations_cut_idx
+  on review_cut_annotations (review_cut_id, time_seconds, created_at desc);
 
 create table if not exists proposals (
   id uuid primary key default gen_random_uuid(),

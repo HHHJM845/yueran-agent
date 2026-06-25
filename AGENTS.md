@@ -66,7 +66,7 @@ AI provider：
 ```env
 ARK_TEXT_STRUCTURING_MODEL=doubao-seed-2-1-pro-260628
 ARK_IMAGE_VIDEO_UNDERSTANDING_MODEL=doubao-seed-2-0-lite-260215
-ARK_VIDEO_GENERATION_MODEL=doubao-seedance-2-0-fast
+ARK_VIDEO_GENERATION_MODEL=doubao-seedance-1-5-pro-251215
 ARK_MATERIAL_EMBEDDING_MODEL=doubao-embedding-vision-251215
 OPENAI_IMAGE_MODEL=gpt-image-2-all
 ```

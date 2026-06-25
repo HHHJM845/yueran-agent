@@ -258,6 +258,208 @@ export type GeneratedImageView = {
   updatedAt: string;
 };
 
+export type ScriptDirectionPackageView = {
+  id: string;
+  projectId: string;
+  directionId: string | null;
+  title: string;
+  concept: string;
+  fullScript: string;
+  status: string;
+  version: number;
+  selectedAt: string | null;
+  lockedAt: string | null;
+  updatedAt: string;
+};
+
+export type ScriptReferenceAssetView = {
+  id: string;
+  projectId: string;
+  packageId: string;
+  referenceType: "character" | "scene";
+  title: string;
+  styleLabel: string;
+  prompt: string;
+  assetId: string | null;
+  generatedImageId: string | null;
+  ossUrl: string | null;
+  sortOrder: number;
+  status: string;
+  updatedAt: string;
+};
+
+export type StoryboardSceneView = {
+  id: string;
+  projectId: string;
+  packageId: string | null;
+  sceneNumber: number;
+  title: string;
+  description: string;
+  status: string;
+  lockedVersion: number | null;
+  updatedAt: string;
+};
+
+export type StoryboardShotView = {
+  id: string;
+  projectId: string;
+  sceneId: string;
+  packageId: string | null;
+  shotNumber: string;
+  visualDescription: string;
+  shotSize: string;
+  actionExpression: string;
+  cameraMovement: string;
+  durationSeconds: number | null;
+  soundTransition: string;
+  notes: string;
+  characterRefs: unknown[];
+  sceneRefs: unknown[];
+  imagePrompt: string;
+  videoPrompt: string;
+  status: string;
+  version: number;
+  sortOrder: number;
+  updatedAt: string;
+};
+
+export type StoryboardImageView = {
+  id: string;
+  projectId: string;
+  sceneId: string;
+  shotId: string;
+  prompt: string;
+  provider: string;
+  modelName: string;
+  generationStatus: string;
+  ossKey: string | null;
+  ossUrl: string | null;
+  assetId: string | null;
+  isSelected: boolean;
+  internalReviewStatus: string;
+  failureReason: string | null;
+  retryCount: number;
+  annotations: unknown[];
+  reference: Record<string, unknown>;
+  sourceJobId: string | null;
+  version: number;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  updatedAt: string;
+};
+
+export type StoryboardVideoView = {
+  id: string;
+  projectId: string;
+  sceneId: string;
+  shotId: string;
+  imageId: string | null;
+  prompt: string;
+  provider: string;
+  modelName: string;
+  generationStatus: string;
+  ossKey: string | null;
+  ossUrl: string | null;
+  assetId: string | null;
+  isSelected: boolean;
+  internalReviewStatus: string;
+  failureReason: string | null;
+  retryCount: number;
+  sourceJobId: string | null;
+  version: number;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  updatedAt: string;
+};
+
+export type ClientReviewTaskView = {
+  id: string;
+  projectId: string;
+  moduleKey: string;
+  reviewType:
+    | "brief_confirmation"
+    | "project_proposal"
+    | "quote_confirmation"
+    | "contract_confirmation"
+    | "script_package"
+    | "storyboard_scene_images"
+    | "a_copy_review"
+    | "b_copy_review";
+  targetScopeType: "project" | "proposal" | "quote" | "contract" | "script_package" | "storyboard_scene" | "review_cut";
+  targetScopeId: string;
+  title: string;
+  summary: string;
+  version: number;
+  status: string;
+  expiresAt: string | null;
+  submittedAt: string | null;
+  reviewedAt: string | null;
+  payload: Record<string, unknown>;
+  decisionPayload: Record<string, unknown>;
+  reviewerName: string | null;
+  reviewerContact: string | null;
+  feedback: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CreateClientReviewType =
+  | "brief_confirmation"
+  | "project_proposal"
+  | "quote_confirmation"
+  | "contract_confirmation"
+  | "script_package"
+  | "a_copy_review"
+  | "b_copy_review";
+
+export type ClientReviewItemView = {
+  id: string;
+  reviewTaskId: string;
+  projectId: string;
+  itemType: "brief" | "proposal" | "quote" | "contract" | "script_direction" | "reference_asset" | "storyboard_shot_image" | "review_cut_video";
+  itemId: string;
+  itemLabel: string;
+  decision: "pending" | "approved" | "rejected";
+  score: number | null;
+  feedback: string;
+  metadata: Record<string, unknown>;
+  updatedAt: string;
+};
+
+export type ReviewCutView = {
+  id: string;
+  projectId: string;
+  cutType: "a_copy" | "b_copy";
+  title: string;
+  description: string;
+  assetId: string | null;
+  videoUrl: string | null;
+  durationSeconds: number | null;
+  status: string;
+  version: number;
+  clientReviewTaskId: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ReviewCutAnnotationView = {
+  id: string;
+  projectId: string;
+  reviewCutId: string;
+  reviewTaskId: string | null;
+  timeSeconds: number;
+  feedback: string;
+  mappedSceneId: string | null;
+  mappedShotId: string | null;
+  mappingConfidence: number | null;
+  status: string;
+  createdByName: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type ProposalView = {
   id: string;
   projectId: string;
@@ -422,12 +624,23 @@ export type ProjectStageStateView = {
 };
 
 export type WorkspaceData = {
+  projectId: string;
   jobs: JobSummary[];
   assets: AssetView[];
   assetAnalyses: AssetAnalysisView[];
   creativeDirections: CreativeDirectionView[];
   creativeExpansions: CreativeExpansionView[];
   generatedImages: GeneratedImageView[];
+  scriptPackages: ScriptDirectionPackageView[];
+  scriptReferences: ScriptReferenceAssetView[];
+  storyboardScenes: StoryboardSceneView[];
+  storyboardShots: StoryboardShotView[];
+  storyboardImages: StoryboardImageView[];
+  storyboardVideos: StoryboardVideoView[];
+  reviewCuts: ReviewCutView[];
+  reviewCutAnnotations: ReviewCutAnnotationView[];
+  clientReviewTasks: ClientReviewTaskView[];
+  clientReviewItems: ClientReviewItemView[];
   proposal: ProposalView | null;
   proposalSnapshots: DocumentSnapshotView[];
   quote: QuoteView | null;
@@ -578,7 +791,9 @@ export async function updateProjectBasics(projectId: string, input: {
 }
 
 export async function fetchWorkspace(projectId: string) {
-  return readApi<WorkspaceData>(await fetch(`/api/projects/${projectId}/workspace`, { cache: "no-store" }));
+  const result = await readApi<Omit<WorkspaceData, "projectId">>(await fetch(`/api/projects/${projectId}/workspace`, { cache: "no-store" }));
+  if (!result.ok) return result;
+  return { ok: true as const, data: { ...result.data, projectId } };
 }
 
 export async function fetchProjectMembers(projectId: string) {
@@ -751,6 +966,143 @@ export async function reviewGeneratedImage(
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
+    })
+  );
+}
+
+export async function saveScriptPackage(
+  projectId: string,
+  input: {
+    directionId?: string | null;
+    title: string;
+    concept: string;
+    fullScript: string;
+    characterReferences?: Array<{ title: string; styleLabel?: string; prompt?: string; ossUrl?: string | null }>;
+    sceneReferences?: Array<{ title: string; styleLabel?: string; prompt?: string; ossUrl?: string | null }>;
+  }
+) {
+  return readApi<{
+    package: ScriptDirectionPackageView;
+    references: ScriptReferenceAssetView[];
+    message: string;
+  }>(
+    await fetch(`/api/projects/${projectId}/script-packages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    })
+  );
+}
+
+export async function splitScriptPackage(projectId: string, packageId: string) {
+  return readApi<{
+    scenes: StoryboardSceneView[];
+    shots: StoryboardShotView[];
+    artifact: ArtifactView;
+    message: string;
+  }>(
+    await fetch(`/api/projects/${projectId}/script-packages/${packageId}/split-storyboard`, {
+      method: "POST",
+    })
+  );
+}
+
+export async function generateStoryboardImage(projectId: string, shotId: string) {
+  return readApi<{ jobId: string; storyboardImageId: string; message: string }>(
+    await fetch(`/api/projects/${projectId}/storyboard-images/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shotId }),
+    })
+  );
+}
+
+export async function confirmStoryboardImage(projectId: string, imageId: string) {
+  return readApi<{ image: StoryboardImageView; message: string }>(
+    await fetch(`/api/projects/${projectId}/storyboard-images/${imageId}/confirm`, {
+      method: "POST",
+    })
+  );
+}
+
+export async function createStoryboardSceneClientReview(projectId: string, sceneId: string) {
+  return readApi<{
+    task: ClientReviewTaskView;
+    items: ClientReviewItemView[];
+    reviewUrl: string;
+    verificationCode: string;
+    message: string;
+  }>(
+    await fetch(`/api/projects/${projectId}/storyboard-scenes/${sceneId}/client-review`, {
+      method: "POST",
+    })
+  );
+}
+
+export async function createWorkflowClientReview(
+  projectId: string,
+  input: {
+    reviewType: CreateClientReviewType;
+    targetScopeId?: string | null;
+  }
+) {
+  return readApi<{
+    task: ClientReviewTaskView;
+    items: ClientReviewItemView[];
+    reviewUrl: string;
+    verificationCode: string;
+    message: string;
+  }>(
+    await fetch(`/api/projects/${projectId}/client-reviews`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    })
+  );
+}
+
+export async function createReviewCut(
+  projectId: string,
+  input: {
+    cutType: "a_copy" | "b_copy";
+    title: string;
+    description?: string;
+    assetId?: string | null;
+    videoUrl?: string | null;
+    durationSeconds?: number | null;
+  }
+) {
+  return readApi<{ reviewCut: ReviewCutView; message: string }>(
+    await fetch(`/api/projects/${projectId}/review-cuts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    })
+  );
+}
+
+export async function approveReviewCut(projectId: string, reviewCutId: string) {
+  return readApi<{ reviewCut: ReviewCutView; message: string }>(
+    await fetch(`/api/projects/${projectId}/review-cuts/${reviewCutId}/internal-approve`, {
+      method: "POST",
+    })
+  );
+}
+
+export async function generateStoryboardVideo(projectId: string, shotId: string) {
+  return readApi<{ jobId: string; storyboardVideoId: string; message: string }>(
+    await fetch(`/api/projects/${projectId}/storyboard-videos/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shotId }),
+    })
+  );
+}
+
+export async function confirmStoryboardVideo(projectId: string, videoId: string) {
+  return readApi<{ video: StoryboardVideoView; message: string }>(
+    await fetch(`/api/projects/${projectId}/storyboard-videos/${videoId}/confirm`, {
+      method: "POST",
     })
   );
 }

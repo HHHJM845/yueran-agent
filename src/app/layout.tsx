@@ -2,8 +2,12 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AIGC 视频项目协同工作台",
-  description: "内部 AIGC 视频项目商业业务与创意提案协同系统",
+  title: "MOPHRO",
+  description: "MOPHRO project collaboration workspace",
+  icons: {
+    icon: "/logo.png",
+    apple: "/logo.png",
+  },
 };
 
 export default function RootLayout({

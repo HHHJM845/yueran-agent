@@ -13,29 +13,50 @@ function getPool() {
     });
   }
 
-  pool ??= new Pool({
-    connectionString: env.DATABASE_URL,
-    ssl: env.DATABASE_URL.includes("sslmode=require") ? undefined : { rejectUnauthorized: false },
-  });
+  if (!pool) {
+    pool = new Pool({
+      connectionString: env.DATABASE_URL,
+      ssl: env.DATABASE_URL.includes("sslmode=require") ? undefined : { rejectUnauthorized: false },
+    });
+
+    pool.on("error", (error) => {
+      console.error("Database idle connection error", sanitizeDiagnostic(error));
+    });
+  }
 
   return pool;
 }
 
 export async function query<T extends QueryResultRow>(text: string, params: unknown[] = []) {
-  try {
-    return await getPool().query<T>(text, params);
-  } catch (error) {
-    if (error instanceof AppError) {
-      throw error;
-    }
+  const maxAttempts = 2;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await getPool().query<T>(text, params);
+    } catch (error) {
+      if (error instanceof AppError) {
+        throw error;
+      }
 
-    console.error("Database query failed", sanitizeDiagnostic(error));
-    throw new AppError({
-      status: 500,
-      code: "database_query_failed",
-      userMessage: "数据库操作失败。请稍后重试，或联系管理员检查数据库连接和表结构。",
-    });
+      if (attempt < maxAttempts && isTransientDatabaseError(error)) {
+        console.warn("Database query transient failure, retrying", sanitizeDiagnostic(error));
+        await delay(500);
+        continue;
+      }
+
+      console.error("Database query failed", sanitizeDiagnostic(error));
+      throw new AppError({
+        status: 500,
+        code: "database_query_failed",
+        userMessage: "数据库操作失败。请稍后重试，或联系管理员检查数据库连接和表结构。",
+      });
+    }
   }
+
+  throw new AppError({
+    status: 500,
+    code: "database_query_failed",
+    userMessage: "数据库操作失败。请稍后重试，或联系管理员检查数据库连接和表结构。",
+  });
 }
 
 export type TransactionQuery = <T extends QueryResultRow>(
@@ -94,4 +115,14 @@ function sanitizeDiagnostic(error: unknown) {
   }
 
   return { message: "Unknown database error" };
+}
+
+function isTransientDatabaseError(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return message.includes("connection terminated") || message.includes("connection timeout") || message.includes("socket") || message.includes("econnreset");
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
