@@ -110,12 +110,12 @@ export async function saveProjectContract(input: {
     projectId: input.projectId,
     stageKey: "selection_quote_contract",
     status: contract.status === "signed" ? "completed" : contract.status === "confirmed" || contract.status === "sent" ? "waiting_review" : "in_progress",
-    currentStage: contract.status === "signed" ? "settlement_delivery_archive" : "selection_quote_contract",
-    projectStatus: contract.status === "signed" ? "completed" : contract.status === "needs_revision" ? "needs_revision" : "in_progress",
+    currentStage: contract.status === "signed" ? "script_storyboard_confirmation" : "selection_quote_contract",
+    projectStatus: contract.status === "signed" ? "in_progress" : contract.status === "needs_revision" ? "needs_revision" : "in_progress",
     title: contract.status === "signed" ? "报价与签约已完成" : "合同快照已保存",
     userMessage:
       contract.status === "signed"
-        ? "合同已签约，项目已进入结算交付与归档预留阶段。"
+        ? "合同已签约，项目可以进入脚本、人物场景设定与文字分镜确认。"
         : "合同已保存到项目快照，可以继续确认、导出或发送飞书。",
     outputRefs: [
       { type: "contract", id: contract.id },

@@ -160,10 +160,10 @@ export function mapCommercialStageProgress(input: {
   if (input.action === "mark_signed") {
     return {
       stageStatus: "completed" as StageStatus,
-      currentStage: "settlement_delivery_archive" as const,
-      projectStatus: "completed" as StageStatus,
+      currentStage: "script_storyboard_confirmation" as const,
+      projectStatus: "in_progress" as StageStatus,
       title: "报价与签约已完成",
-      userMessage: `${documentLabel}已签署，项目已进入结算交付与归档预留阶段。`,
+      userMessage: `${documentLabel}已签署，项目可以进入脚本、人物场景设定与文字分镜确认。`,
       errorMessage: null,
     };
   }

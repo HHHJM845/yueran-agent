@@ -822,7 +822,7 @@ function reviewCreatedStage(reviewType: ClientReviewType) {
   };
 }
 
-function reviewSubmittedStage(reviewType: ClientReviewType, decision: "approved" | "rejected") {
+export function reviewSubmittedStage(reviewType: ClientReviewType, decision: "approved" | "rejected") {
   const approved = decision === "approved";
   if (reviewType === "brief_confirmation") {
     return {
@@ -865,8 +865,8 @@ function reviewSubmittedStage(reviewType: ClientReviewType, decision: "approved"
       stageKey: "b_copy_final_confirmation" as const,
       status: approved ? ("approved" as const) : ("needs_revision" as const),
       currentStage: approved ? ("settlement_delivery_archive" as const) : ("b_copy_final_confirmation" as const),
-      projectStatus: approved ? ("completed" as const) : ("needs_revision" as const),
-      userMessage: approved ? "甲方已最终确认 B copy，可以进入交付归档。" : "甲方已打回 B copy，时间戳批注已回写并定位到对应场次/分镜。",
+      projectStatus: approved ? ("in_progress" as const) : ("needs_revision" as const),
+      userMessage: approved ? "甲方已最终确认 B-copy，可以进入结算交付与完整归档。" : "甲方已打回 B-copy，时间戳批注已回写并定位到对应场次/分镜。",
     };
   }
   return {

@@ -17,7 +17,7 @@ test("mapCommercialStageProgress marks rejected quote as needs revision with rea
   assert.match(stage.userMessage, /第三轮修改费用/);
 });
 
-test("mapCommercialStageProgress marks signed contract as completed and advances to archive placeholder", async () => {
+test("mapCommercialStageProgress marks signed contract as completed and advances to script confirmation", async () => {
   const { mapCommercialStageProgress } = await import("./review-commercial-document.ts");
 
   const stage = mapCommercialStageProgress({
@@ -29,9 +29,9 @@ test("mapCommercialStageProgress marks signed contract as completed and advances
   });
 
   assert.equal(stage.stageStatus, "completed");
-  assert.equal(stage.projectStatus, "completed");
-  assert.equal(stage.currentStage, "settlement_delivery_archive");
-  assert.match(stage.userMessage, /已签署/);
+  assert.equal(stage.projectStatus, "in_progress");
+  assert.equal(stage.currentStage, "script_storyboard_confirmation");
+  assert.match(stage.userMessage, /文字分镜确认/);
 });
 
 test("commercialReviewActionLabel covers all commercial review actions", async () => {

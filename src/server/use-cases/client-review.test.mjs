@@ -62,6 +62,18 @@ test("full cut review defaults missing item decisions without per-shot scores", 
   assert.equal(result[0].feedback, "");
 });
 
+test("b-copy approval advances into settlement delivery without completing the project", async () => {
+  const { reviewSubmittedStage } = await import("./client-review.ts");
+
+  const stage = reviewSubmittedStage("b_copy_review", "approved");
+
+  assert.equal(stage.stageKey, "b_copy_final_confirmation");
+  assert.equal(stage.status, "approved");
+  assert.equal(stage.currentStage, "settlement_delivery_archive");
+  assert.equal(stage.projectStatus, "in_progress");
+  assert.match(stage.userMessage, /结算交付与完整归档/);
+});
+
 test("timecode annotations map to storyboard shots by accumulated duration", async () => {
   const { mapTimecodeToStoryboard } = await import("../repositories/review-cuts.ts");
 
