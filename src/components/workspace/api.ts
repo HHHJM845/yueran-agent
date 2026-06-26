@@ -474,6 +474,58 @@ export type ReviewCutAnnotationView = {
   updatedAt: string;
 };
 
+export type RiskCheckCardView = {
+  id: string;
+  projectId: string;
+  status: "draft" | "in_review" | "needs_revision" | "approved" | "archived";
+  overallAlert: "low" | "medium" | "high" | "redline";
+  humanDecision: "accept" | "reject" | "conditional_accept" | null;
+  decisionReason: string;
+  decidedBy: string | null;
+  decidedAt: string | null;
+  sourceArtifactId: string | null;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RiskCheckDecision = "accept" | "reject" | "conditional_accept";
+
+export type RiskCheckFactView = {
+  id: string;
+  projectId: string;
+  cardId: string;
+  fieldKey: string;
+  fieldLabel: string;
+  value: unknown;
+  evidence: string;
+  confidence: number;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RiskCheckDimensionView = {
+  id: string;
+  projectId: string;
+  cardId: string;
+  dimensionKey: string;
+  level: "low" | "medium" | "high";
+  evidence: string;
+  anchorText: string;
+  confidence: number;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RiskCheckBundleView = {
+  card: RiskCheckCardView;
+  facts: RiskCheckFactView[];
+  dimensions: RiskCheckDimensionView[];
+  redlineAlerts: string[];
+};
+
 export type ProposalView = {
   id: string;
   projectId: string;
@@ -665,6 +717,7 @@ export type WorkspaceData = {
   feishuDeliveries: FeishuDeliveryView[];
   feishuReceivers: FeishuReceiverView[];
   stageStates: ProjectStageStateView[];
+  riskCheck: RiskCheckBundleView | null;
   artifacts: Array<{
     id: string;
     projectId: string;
@@ -808,6 +861,37 @@ export async function fetchWorkspace(projectId: string) {
   const result = await readApi<Omit<WorkspaceData, "projectId">>(await fetch(`/api/projects/${projectId}/workspace`, { cache: "no-store" }));
   if (!result.ok) return result;
   return { ok: true as const, data: { ...result.data, projectId } };
+}
+
+export async function fetchRiskCheck(projectId: string) {
+  return readApi<{ riskCheck: RiskCheckBundleView | null }>(await fetch(`/api/projects/${projectId}/risk-check`, { cache: "no-store" }));
+}
+
+export async function generateRiskCheck(projectId: string) {
+  return readApi<{ riskCheck: RiskCheckBundleView; message: string }>(
+    await fetch(`/api/projects/${projectId}/risk-check`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "generate" }),
+    })
+  );
+}
+
+export async function saveRiskCheckDecision(
+  projectId: string,
+  input: {
+    cardId: string;
+    decision: "accept" | "reject" | "conditional_accept";
+    reason: string;
+  }
+) {
+  return readApi<{ card: RiskCheckCardView; message: string }>(
+    await fetch(`/api/projects/${projectId}/risk-check`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "decide", ...input }),
+    })
+  );
 }
 
 export async function fetchProjectMembers(projectId: string) {

@@ -18,6 +18,7 @@ import { getProjectQuote } from "@/server/repositories/quotes";
 import { listProjectClientReviewItems, listProjectClientReviewTasks } from "@/server/repositories/client-reviews";
 import { listProjectReviewCutAnnotations, listProjectReviewCuts } from "@/server/repositories/review-cuts";
 import { listStoryProduction } from "@/server/repositories/story-production";
+import { getProjectRiskCheck } from "@/server/repositories/risk-checks";
 
 export async function GET(request: Request, context: { params: Promise<{ projectId: string }> }) {
   try {
@@ -47,6 +48,7 @@ export async function GET(request: Request, context: { params: Promise<{ project
       clientReviewItems,
       reviewCuts,
       reviewCutAnnotations,
+      riskCheck,
     ] = await Promise.all([
       listProjectJobs(projectId),
       listProjectArtifacts(projectId),
@@ -70,6 +72,7 @@ export async function GET(request: Request, context: { params: Promise<{ project
       listProjectClientReviewItems(projectId),
       listProjectReviewCuts(projectId),
       listProjectReviewCutAnnotations(projectId),
+      getProjectRiskCheck(projectId),
     ]);
     return Response.json({
       ok: true,
@@ -96,6 +99,7 @@ export async function GET(request: Request, context: { params: Promise<{ project
         clientReviewItems,
         reviewCuts,
         reviewCutAnnotations,
+        riskCheck,
       },
     });
   } catch (error) {

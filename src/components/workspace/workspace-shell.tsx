@@ -80,6 +80,7 @@ import {
   generateAtmosphereImage,
   generateCreativeDirections,
   generateCreativeExpansions,
+  generateRiskCheck,
   generateDocumentDrafts,
   login,
   logout,
@@ -99,6 +100,7 @@ import {
   saveFeishuReceiver,
   saveProposal,
   saveQuote,
+  saveRiskCheckDecision,
   saveScriptPackage,
   structureRequirement,
   type AssetAnalysisView,
@@ -125,6 +127,10 @@ import {
   type ProposalView,
   type QuoteItemView,
   type QuoteView,
+  type RiskCheckBundleView,
+  type RiskCheckCardView,
+  type RiskCheckDecision,
+  type RiskCheckDimensionView,
   type RoleDashboardView,
   type ReviewCutAnnotationView,
   type ReviewCutView,
@@ -149,6 +155,35 @@ const roleLabels: Record<Role, string> = {
   business: "商务团队",
   creative: "创意团队",
   admin: "管理团队",
+};
+
+const riskDimensionOrder = ["decision_chain", "compliance", "visual_reproduction", "commercial", "schedule"];
+
+const riskDimensionLabels: Record<string, string> = {
+  decision_chain: "决策链",
+  compliance: "合规监管",
+  visual_reproduction: "视觉复刻",
+  commercial: "商业风险",
+  schedule: "周期压力",
+};
+
+const riskLevelLabels: Record<RiskCheckDimensionView["level"], string> = {
+  low: "低风险",
+  medium: "中风险",
+  high: "高风险",
+};
+
+const riskAlertLabels: Record<NonNullable<RiskCheckCardView["overallAlert"]>, string> = {
+  low: "整体风险低",
+  medium: "需补充评估",
+  high: "需重点评估",
+  redline: "命中红线",
+};
+
+const riskDecisionLabels: Record<Exclude<RiskCheckDecision, never>, string> = {
+  accept: "可以接",
+  conditional_accept: "条件接",
+  reject: "暂不接",
 };
 
 function BrandLogo({ className, size = 30 }: { className?: string; size?: number }) {
@@ -617,6 +652,7 @@ export function WorkspaceShell() {
           feishuDeliveries={selectedWorkspaceData?.feishuDeliveries ?? []}
           feishuReceivers={selectedWorkspaceData?.feishuReceivers ?? []}
           stageStates={selectedWorkspaceData?.stageStates ?? []}
+          riskCheck={selectedWorkspaceData?.riskCheck ?? null}
           artifacts={selectedWorkspaceData?.artifacts ?? []}
           governance={governance}
           governanceError={governanceError}
@@ -1168,6 +1204,7 @@ function WorkspaceCenter({
   feishuDeliveries,
   feishuReceivers,
   stageStates,
+  riskCheck,
   artifacts,
   onProjectUpdated,
   onWorkspaceRefresh,
@@ -1208,6 +1245,7 @@ function WorkspaceCenter({
   feishuDeliveries: FeishuDeliveryView[];
   feishuReceivers: FeishuReceiverView[];
   stageStates: ProjectStageStateView[];
+  riskCheck: RiskCheckBundleView | null;
   artifacts: ArtifactView[];
   governance: GovernanceView | null;
   governanceError: ApiError | null;
@@ -1357,11 +1395,17 @@ function WorkspaceCenter({
                 <StageWorkCard
                   icon={<AlertCircle size={18} />}
                   title="技术不可行 / 阻塞管理"
-                  detail="记录不可行原因、下一步和恢复路径，阶段状态会真实持久化。"
-                  badges={["状态机", "阻塞闭环", "管理员复核"]}
+                  detail="基于当前 Brief 生成五维风险体检卡，保留红线告警和人工接单判断。"
+                  badges={["五维风险灯", "红线告警", "人工留痕"]}
                   className="lg:col-span-2"
                 >
-                  <TechnicalFeasibilityReviewCard project={project} user={user} stageStates={stageStates} onRefresh={onWorkspaceRefresh} />
+                  <TechnicalFeasibilityReviewCard
+                    project={project}
+                    user={user}
+                    stageStates={stageStates}
+                    riskCheck={riskCheck}
+                    onRefresh={onWorkspaceRefresh}
+                  />
                 </StageWorkCard>
               </div>
             </StagePanel>
@@ -2659,6 +2703,19 @@ function formatArtifactInlineValue(value: unknown): string {
   return String(value);
 }
 
+function riskLevelDotClassName(level: RiskCheckDimensionView["level"]) {
+  if (level === "high") return "bg-[var(--danger)]";
+  if (level === "medium") return "bg-[var(--warning)]";
+  return "bg-[var(--success)]";
+}
+
+function alertToneClassName(level: NonNullable<RiskCheckCardView["overallAlert"]>) {
+  if (level === "redline") return "ds-pill-pink";
+  if (level === "high") return "bg-[rgba(184,83,80,0.12)] text-[var(--danger)]";
+  if (level === "medium") return "bg-[var(--macaron-yellow-bg)] text-[var(--warning)]";
+  return "bg-[rgba(58,126,94,0.12)] text-[var(--success)]";
+}
+
 function parseSerializedArtifactValue(value: string): unknown {
   const trimmed = value.trim();
   if (!trimmed.startsWith("[") && !trimmed.startsWith("{")) return value;
@@ -3110,20 +3167,45 @@ function TechnicalFeasibilityReviewCard({
   project,
   user,
   stageStates,
+  riskCheck,
   onRefresh,
 }: {
   project: ProjectSummary;
   user: CurrentUser;
   stageStates: ProjectStageStateView[];
+  riskCheck: RiskCheckBundleView | null;
   onRefresh: () => Promise<void>;
 }) {
-  const [actioning, setActioning] = useState<TechnicalFeasibilityAction | null>(null);
+  const [actioning, setActioning] = useState<TechnicalFeasibilityAction | "generate" | RiskCheckDecision | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
+  const canGenerate = user.role === "business" || user.role === "creative" || user.role === "admin";
+  const canDecide = user.role === "business" || user.role === "admin";
   const canRequestRevision = user.role === "business" || user.role === "creative" || user.role === "admin";
   const canManageBlocked = user.role === "admin";
   const technicalStage = stageStates.find((stage) => stage.stageKey === "technical_feasibility") ?? null;
   const snapshot = technicalStage?.snapshot ?? {};
+  const sortedDimensions = useMemo(
+    () =>
+      [...(riskCheck?.dimensions ?? [])].sort(
+        (left, right) => riskDimensionOrder.indexOf(left.dimensionKey) - riskDimensionOrder.indexOf(right.dimensionKey)
+      ),
+    [riskCheck?.dimensions]
+  );
+  const lowConfidenceItems = useMemo(() => {
+    const factItems = (riskCheck?.facts ?? [])
+      .filter((fact) => fact.confidence > 0 && fact.confidence < 0.65)
+      .map((fact) => ({ key: fact.fieldKey, label: fact.fieldLabel, evidence: fact.evidence || "没有可靠依据", confidence: fact.confidence }));
+    const dimensionItems = sortedDimensions
+      .filter((dimension) => dimension.confidence > 0 && dimension.confidence < 0.65)
+      .map((dimension) => ({
+        key: dimension.dimensionKey,
+        label: riskDimensionLabels[dimension.dimensionKey] ?? dimension.dimensionKey,
+        evidence: dimension.evidence || dimension.anchorText || "需要人工补充判断依据",
+        confidence: dimension.confidence,
+      }));
+    return [...factItems, ...dimensionItems];
+  }, [riskCheck?.facts, sortedDimensions]);
 
   async function handleReview(formData: FormData) {
     const action = String(formData.get("action") ?? "") as TechnicalFeasibilityAction;
@@ -3149,22 +3231,204 @@ function TechnicalFeasibilityReviewCard({
     setActioning(null);
   }
 
+  async function handleGenerate() {
+    setActioning("generate");
+    setMessage(null);
+    setReviewError(null);
+
+    const result = await generateRiskCheck(project.id);
+    if (result.ok) {
+      setMessage(result.data.message);
+      await onRefresh();
+    } else {
+      setReviewError(result.error.message);
+    }
+
+    setActioning(null);
+  }
+
+  async function handleDecision(formData: FormData) {
+    const decision = String(formData.get("decision") ?? "") as RiskCheckDecision;
+    if (!riskCheck?.card?.id || !decision) return;
+
+    setActioning(decision);
+    setMessage(null);
+    setReviewError(null);
+
+    const result = await saveRiskCheckDecision(project.id, {
+      cardId: riskCheck.card.id,
+      decision,
+      reason: String(formData.get("decisionReason") ?? ""),
+    });
+
+    if (result.ok) {
+      setMessage(result.data.message);
+      await onRefresh();
+    } else {
+      setReviewError(result.error.message);
+    }
+
+    setActioning(null);
+  }
+
   return (
     <WorkspaceCard className="lg:col-span-2">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
             <AlertCircle size={18} />
-            <h3 className="ds-text-section-title">技术不可行 / 阻塞管理闭环</h3>
+            <h3 className="ds-text-section-title">SOP 2 风险体检卡</h3>
           </div>
           <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-            技术评估不可行时必须记录原因、下一步和恢复路径。状态会写入阶段状态机，不只停留在前端提示里。
+            先从当前 Brief 抽取真实事实，再输出五维风险灯、红线告警和人工接单判断。系统不会自动替你决定接或不接。
           </p>
         </div>
-        <span className={cn("ds-pill", technicalStage?.status === "blocked" ? "ds-pill-pink" : "bg-[var(--surface-soft)] text-[var(--text-secondary)]")}>
-          {statusLabels[technicalStage?.status ?? (project.currentStage === "technical_feasibility" ? project.status : "not_started")]}
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={cn("ds-pill", alertToneClassName(riskCheck?.card?.overallAlert ?? "low"))}>
+            {riskAlertLabels[riskCheck?.card?.overallAlert ?? "low"]}
+          </span>
+          <span className={cn("ds-pill", technicalStage?.status === "blocked" ? "ds-pill-pink" : "bg-[var(--surface-soft)] text-[var(--text-secondary)]")}>
+            {statusLabels[technicalStage?.status ?? (project.currentStage === "technical_feasibility" ? project.status : "not_started")]}
+          </span>
+        </div>
       </div>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Button type="button" onClick={() => void handleGenerate()} disabled={!canGenerate || Boolean(actioning)}>
+          {actioning === "generate" ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
+          {riskCheck ? "重新生成风险体检卡" : "生成风险体检卡"}
+        </Button>
+        {!canGenerate && (
+          <span className="text-xs leading-5 text-[var(--text-secondary)]">当前角色不能发起风险体检卡生成。</span>
+        )}
+      </div>
+
+      {!riskCheck && (
+        <div className="mt-4 rounded-card-sm border border-dashed border-[var(--border-soft)] bg-[var(--surface-soft)] p-4 text-sm leading-6 text-[var(--text-secondary)]">
+          还没有风险体检卡。请先完成 Brief 结构化，再生成五维风险判断和人工决策区。
+        </div>
+      )}
+
+      {riskCheck && (
+        <>
+          {riskCheck.redlineAlerts.length > 0 && (
+            <div className="mt-4 rounded-card-sm border border-[rgba(184,83,80,0.24)] bg-[rgba(184,83,80,0.08)] p-3 text-sm leading-6 text-[var(--danger)]">
+              <div className="flex items-center gap-2 font-medium">
+                <AlertCircle size={16} />
+                红线告警
+              </div>
+              <ul className="mt-2 grid gap-2">
+                {riskCheck.redlineAlerts.map((alert, index) => (
+                  <li key={`${alert}-${index}`}>{alert}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div className="mt-4 grid gap-3 md:grid-cols-5">
+            {sortedDimensions.map((dimension) => (
+              <div key={dimension.id} className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3">
+                <div className="flex items-center gap-2">
+                  <span className={cn("inline-flex size-2.5 shrink-0 rounded-full", riskLevelDotClassName(dimension.level))} />
+                  <span className="text-sm font-medium">{riskDimensionLabels[dimension.dimensionKey] ?? dimension.dimensionKey}</span>
+                </div>
+                <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">{riskLevelLabels[dimension.level]}</p>
+                <p className="mt-2 line-clamp-4 text-xs leading-5 text-[var(--text-secondary)]">{dimension.evidence || dimension.anchorText || "暂无依据"}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 grid gap-4 lg:grid-cols-[1.3fr_1fr]">
+            <div className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-medium">事实抽取</p>
+                <span className="text-xs text-[var(--text-secondary)]">全部基于已保存的 Brief 结构化结果</span>
+              </div>
+              <div className="mt-3 grid gap-3">
+                {riskCheck.facts.map((fact) => (
+                  <div key={fact.id} className="rounded-card-sm border border-[var(--border-soft)] bg-white/80 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-sm font-medium">{fact.fieldLabel}</span>
+                      <span className={cn("ds-pill", fact.confidence > 0 && fact.confidence < 0.65 ? "ds-pill-pink" : "bg-[var(--surface-soft)] text-[var(--text-secondary)]")}>
+                        置信度 {Math.round(fact.confidence * 100)}%
+                      </span>
+                    </div>
+                    <p className="mt-2 text-sm">{formatArtifactValue(fact.value)}</p>
+                    <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">依据：{fact.evidence || "未从 Brief 中抽到明确依据，需人工补充。"}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-4">
+              <div className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-4">
+                <p className="text-sm font-medium">低置信度提醒</p>
+                <div className="mt-3 grid gap-2 text-sm">
+                  {lowConfidenceItems.length > 0 ? (
+                    lowConfidenceItems.map((item) => (
+                      <div key={item.key} className="rounded-card-sm border border-[rgba(184,83,80,0.2)] bg-[rgba(184,83,80,0.06)] p-3">
+                        <p className="font-medium text-[var(--danger)]">{item.label}</p>
+                        <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">{item.evidence}</p>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-xs leading-5 text-[var(--text-secondary)]">当前没有低置信度项，仍建议人工过一遍关键风险依据。</p>
+                  )}
+                </div>
+              </div>
+
+              <form action={handleDecision} className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-medium">人工接单判断</p>
+                  {riskCheck.card.humanDecision ? (
+                    <span className="text-xs text-[var(--text-secondary)]">
+                      当前：{riskDecisionLabels[riskCheck.card.humanDecision]}
+                    </span>
+                  ) : null}
+                </div>
+                <label className="mt-3 grid gap-1 text-sm">
+                  <span className="font-medium">判断原因</span>
+                  <textarea
+                    name="decisionReason"
+                    defaultValue={riskCheck.card.decisionReason}
+                    disabled={!canDecide || Boolean(actioning)}
+                    maxLength={800}
+                    placeholder="说明为什么接、为什么暂不接，或哪些条件满足后可以接。"
+                    className="min-h-28 ds-card-sm p-3 text-sm leading-6 disabled:opacity-60"
+                  />
+                </label>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <ReviewSubmitButton
+                    name="decision"
+                    value="accept"
+                    disabled={!canDecide || Boolean(actioning)}
+                    busy={actioning === "accept"}
+                    label="可以接"
+                  />
+                  <ReviewSubmitButton
+                    name="decision"
+                    value="conditional_accept"
+                    disabled={!canDecide || Boolean(actioning)}
+                    busy={actioning === "conditional_accept"}
+                    label="条件接"
+                    tone="plain"
+                  />
+                  <ReviewSubmitButton
+                    name="decision"
+                    value="reject"
+                    disabled={!canDecide || Boolean(actioning)}
+                    busy={actioning === "reject"}
+                    label="暂不接"
+                  />
+                </div>
+                {!canDecide && (
+                  <p className="mt-3 text-xs leading-5 text-[var(--text-secondary)]">人工接单判断仅限商务团队和管理员保存。</p>
+                )}
+              </form>
+            </div>
+          </div>
+        </>
+      )}
 
       {technicalStage?.errorMessage && (
         <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm leading-6 text-[var(--warning)]">
