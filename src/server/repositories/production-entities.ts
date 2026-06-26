@@ -138,7 +138,7 @@ export async function upsertProductionEntity(input: UpsertProductionEntityInput)
       `update production_entities
      set description = case when $4 <> '' then $4 else description end,
          importance = $5,
-         reference_depth = $6,
+         reference_depth = coalesce($6, reference_depth),
          status = coalesce($9, status),
          source_shot_ids = coalesce((
            select jsonb_agg(distinct value)
@@ -157,7 +157,7 @@ export async function upsertProductionEntity(input: UpsertProductionEntityInput)
         input.name,
         input.description ?? "",
         input.importance ?? "normal",
-        input.referenceDepth ?? "basic",
+        input.referenceDepth ?? null,
         JSON.stringify(input.sourceShotIds ?? []),
         input.actorId ?? null,
         input.status ?? null,

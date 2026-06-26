@@ -7,6 +7,7 @@ import { generateOpenAIImage } from "@/server/providers/openai-image";
 import { createGeneratedImageObjectKey, createReadUrl, createStoryboardVideoObjectKey, uploadOssObject } from "@/server/providers/oss";
 import { createArtifact } from "@/server/repositories/artifacts";
 import { appendJobEvent, createJob, getJobInput, updateJobStatus } from "@/server/repositories/jobs";
+import { listProductionEntities } from "@/server/repositories/production-entities";
 import {
   createStoryboardImageRecord,
   createStoryboardVideoRecord,
@@ -22,7 +23,9 @@ import {
   selectStoryboardVideo,
   updateStoryboardImageSourceJob,
   updateStoryboardVideoSourceJob,
+  listStoryboardShots,
 } from "@/server/repositories/story-production";
+import { assertProductionSetupLocked } from "@/server/use-cases/production-setup";
 import { recordStageProgress } from "@/server/use-cases/stage-progress";
 
 const storyboardImageJobInputSchema = z.object({
@@ -51,6 +54,11 @@ export async function enqueueStoryboardImageGeneration(input: {
       userMessage: "没有找到这条文字分镜。请刷新后重新选择分镜。",
     });
   }
+  const [entities, storyboardShots] = await Promise.all([
+    listProductionEntities(input.projectId),
+    listStoryboardShots(input.projectId),
+  ]);
+  assertProductionSetupLocked({ entities, storyboardShots });
 
   const prompt = buildStoryboardImagePrompt(shot);
   const image = await createStoryboardImageRecord({
