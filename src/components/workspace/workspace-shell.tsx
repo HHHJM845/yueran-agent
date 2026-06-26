@@ -3462,7 +3462,7 @@ function TechnicalFeasibilityReviewCard({
               name="nextStep"
               disabled={Boolean(actioning)}
               maxLength={500}
-              placeholder="例如：退回商务补充预算、交付规格和可接受替代风格，再重新生成 Top 5。"
+              placeholder="例如：退回商务补充预算、交付规格和可接受替代风格，再重新生成 4 个创意方向。"
               className="min-h-24 ds-card-sm p-3 text-sm leading-6 disabled:opacity-60"
             />
           </label>
@@ -3655,7 +3655,7 @@ function CreativeDirectionsCard({
         <div>
           <div className="flex items-center gap-2">
             <Sparkles size={18} />
-            <h3 className="ds-text-section-title">Top 5 创意方向</h3>
+            <h3 className="ds-text-section-title">4 个创意方向</h3>
           </div>
           <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
             基于结构化需求、资料解析和标签评分生成真实创意卡片。卡片内容、选择状态和人工改写都会入库保存。
@@ -3665,10 +3665,10 @@ function CreativeDirectionsCard({
           onClick={() => void handleGenerate()}
           disabled={!canGenerate || generating}
           className="inline-flex h-9 items-center justify-center gap-2 rounded-card-sm bg-[var(--accent)] px-3 text-sm font-medium text-[var(--accent-foreground)] disabled:opacity-60"
-          title={canGenerate ? "生成 Top 5 创意方向" : "当前角色不能发起创意方向生成"}
+          title={canGenerate ? "生成 4 个创意方向" : "当前角色不能发起创意方向生成"}
         >
           {generating ? <Loader2 className="animate-spin" size={16} /> : <WandSparkles size={16} />}
-          {directions.length > 0 ? "重新生成" : "生成 Top 5"}
+          {directions.length > 0 ? "重新生成" : "生成 4 个方向"}
         </button>
       </div>
 
@@ -3683,7 +3683,7 @@ function CreativeDirectionsCard({
 
       {directions.length === 0 ? (
         <div className="mt-4 ds-card-sm p-3 text-sm text-[var(--text-secondary)]">
-          还没有创意方向。请先完成需求结构化或资料解析，再由创意团队/管理员发起 Top 5 生成。
+          还没有创意方向。请先完成需求结构化或资料解析，再由创意团队/管理员发起 4 个创意方向生成。
         </div>
       ) : (
         <div className="mt-4 grid gap-3 xl:grid-cols-2">
@@ -4439,7 +4439,7 @@ function buildDefaultProposalContent(project: ProjectSummary) {
     "请补充本次视频希望解决的品牌沟通目标、目标受众和交付规格。",
     "",
     "二、创意方向",
-    "请从已选 Top 5 方向、故事大纲和氛围图中整理推荐方案。",
+    "请从已选 4 个创意方向、故事大纲和氛围图中整理推荐方案。",
     "",
     "三、执行计划",
     "请补充制作周期、关键风险、客户确认节点和下一步动作。",
