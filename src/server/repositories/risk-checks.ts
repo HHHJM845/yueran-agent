@@ -1,6 +1,12 @@
 import { query, withTransaction, type TransactionQuery } from "@/lib/db";
 import type { RiskCheckDecision, RiskCheckDraft } from "@/server/use-cases/risk-check-card";
 
+export const RISK_CHECK_REGENERATE_DECISION_RESET_SQL = `
+         human_decision = null,
+         decision_reason = '',
+         decided_by = null,
+         decided_at = null,`;
+
 export type RiskCheckCardView = {
   id: string;
   projectId: string;
@@ -154,6 +160,7 @@ export async function upsertRiskCheckDraft(input: {
        do update set
          status = excluded.status,
          overall_alert = excluded.overall_alert,
+${RISK_CHECK_REGENERATE_DECISION_RESET_SQL}
          source_artifact_id = excluded.source_artifact_id,
          updated_at = now()
        returning id, project_id, status, overall_alert, human_decision, decision_reason,

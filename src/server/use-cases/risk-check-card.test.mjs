@@ -46,3 +46,12 @@ test("normalizeRiskCheckModelOutput falls back to medium and defaults missing ev
     confidence: 0,
   });
 });
+
+test("regenerating a draft clears prior human decision fields in conflict update sql", async () => {
+  const { RISK_CHECK_REGENERATE_DECISION_RESET_SQL } = await import("../repositories/risk-checks.ts");
+
+  assert.match(RISK_CHECK_REGENERATE_DECISION_RESET_SQL, /human_decision = null/);
+  assert.match(RISK_CHECK_REGENERATE_DECISION_RESET_SQL, /decision_reason = ''/);
+  assert.match(RISK_CHECK_REGENERATE_DECISION_RESET_SQL, /decided_by = null/);
+  assert.match(RISK_CHECK_REGENERATE_DECISION_RESET_SQL, /decided_at = null/);
+});

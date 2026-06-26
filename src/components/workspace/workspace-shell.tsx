@@ -1384,17 +1384,8 @@ function WorkspaceCenter({
             <StagePanel stage="technical_feasibility" selectedStage={selectedStage}>
               <div className="grid gap-5 lg:grid-cols-2">
                 <StageWorkCard
-                  icon={<ClipboardList size={18} />}
-                  title="资料解析与标签评分结果"
-                  detail="查看数据库中的解析摘要、标签命中和评分产物。"
-                  badges={["解析结果", "标签评分", "数据库产物"]}
-                  className="lg:col-span-2"
-                >
-                  <AssetAnalysisResults analyses={assetAnalyses} artifacts={artifacts} />
-                </StageWorkCard>
-                <StageWorkCard
                   icon={<AlertCircle size={18} />}
-                  title="技术不可行 / 阻塞管理"
+                  title="风险体检卡 / 人工接单决策"
                   detail="基于当前 Brief 生成五维风险体检卡，保留红线告警和人工接单判断。"
                   badges={["五维风险灯", "红线告警", "人工留痕"]}
                   className="lg:col-span-2"
@@ -1411,6 +1402,15 @@ function WorkspaceCenter({
             </StagePanel>
             <StagePanel stage="creative_direction_proposal" selectedStage={selectedStage}>
               <div className="grid gap-5 lg:grid-cols-2">
+                <StageWorkCard
+                  icon={<ClipboardList size={18} />}
+                  title="资料解析与标签评分结果"
+                  detail="查看数据库中的解析摘要、标签命中和评分产物，为创意方向提案补充素材判断依据。"
+                  badges={["解析结果", "标签评分", "数据库产物"]}
+                  className="lg:col-span-2"
+                >
+                  <AssetAnalysisResults analyses={assetAnalyses} artifacts={artifacts} />
+                </StageWorkCard>
                 <StageWorkCard
                   icon={<Sparkles size={18} />}
                   title="Top 5 创意方向"
@@ -3194,10 +3194,10 @@ function TechnicalFeasibilityReviewCard({
   );
   const lowConfidenceItems = useMemo(() => {
     const factItems = (riskCheck?.facts ?? [])
-      .filter((fact) => fact.confidence > 0 && fact.confidence < 0.65)
+      .filter((fact) => fact.confidence < 0.65)
       .map((fact) => ({ key: fact.fieldKey, label: fact.fieldLabel, evidence: fact.evidence || "没有可靠依据", confidence: fact.confidence }));
     const dimensionItems = sortedDimensions
-      .filter((dimension) => dimension.confidence > 0 && dimension.confidence < 0.65)
+      .filter((dimension) => dimension.confidence < 0.65)
       .map((dimension) => ({
         key: dimension.dimensionKey,
         label: riskDimensionLabels[dimension.dimensionKey] ?? dimension.dimensionKey,
@@ -3346,10 +3346,10 @@ function TechnicalFeasibilityReviewCard({
               </div>
               <div className="mt-3 grid gap-3">
                 {riskCheck.facts.map((fact) => (
-                  <div key={fact.id} className="rounded-card-sm border border-[var(--border-soft)] bg-white/80 p-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-sm font-medium">{fact.fieldLabel}</span>
-                      <span className={cn("ds-pill", fact.confidence > 0 && fact.confidence < 0.65 ? "ds-pill-pink" : "bg-[var(--surface-soft)] text-[var(--text-secondary)]")}>
+                    <div key={fact.id} className="rounded-card-sm border border-[var(--border-soft)] bg-white/80 p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-sm font-medium">{fact.fieldLabel}</span>
+                      <span className={cn("ds-pill", fact.confidence < 0.65 ? "ds-pill-pink" : "bg-[var(--surface-soft)] text-[var(--text-secondary)]")}>
                         置信度 {Math.round(fact.confidence * 100)}%
                       </span>
                     </div>
