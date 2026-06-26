@@ -765,20 +765,13 @@ export function formatCreativeReviewDecisionPayload(input: {
     metadata?: Record<string, unknown> | null;
   }>;
 }) {
-  const sortedItems = [...input.items].sort((a, b) => {
-    const scoreA = typeof a.score === "number" ? a.score : null;
-    const scoreB = typeof b.score === "number" ? b.score : null;
-    if (scoreA !== null || scoreB !== null) return (scoreB ?? -1) - (scoreA ?? -1);
-    if (a.decision !== b.decision) return a.decision === "approved" ? -1 : 1;
-    return getReviewItemSortIndex(a.metadata) - getReviewItemSortIndex(b.metadata);
-  });
-  const directionPriority = sortedItems.map(formatCreativeReviewPriorityItem).join("；");
+  const directionPriority = buildCreativeDirectionPriority(input.items);
   const visualNotes = [
     ...input.items
       .map((item) => {
         const feedback = item.feedback?.trim();
         if (!feedback) return "";
-        return `${getReviewItemLabel(item)}：${feedback}`;
+        return `${getReviewFeedbackItemLabel(item)}：${feedback}`;
       })
       .filter(Boolean),
     input.overallFeedback?.trim() ?? "",
@@ -790,16 +783,103 @@ export function formatCreativeReviewDecisionPayload(input: {
   };
 }
 
-function formatCreativeReviewPriorityItem(item: {
+type CreativeReviewItemForSummary = {
   itemId: string;
   itemLabel?: string | null;
   decision: Exclude<ClientReviewItemDecision, "pending">;
   score?: number | null;
   metadata?: Record<string, unknown> | null;
-}) {
-  const decisionLabel = item.decision === "approved" ? "通过" : "打回";
-  const scoreLabel = typeof item.score === "number" ? `，评分 ${item.score} 分` : "";
-  return `${getReviewItemLabel(item)}（${decisionLabel}${scoreLabel}）`;
+};
+
+type CreativeDirectionSummary = {
+  directionId: string;
+  label: string;
+  items: CreativeReviewItemForSummary[];
+  approvedCount: number;
+  scoreCount: number;
+  averageScore: number | null;
+  maxScore: number | null;
+  sortIndex: number;
+};
+
+function buildCreativeDirectionPriority(items: CreativeReviewItemForSummary[]) {
+  return summarizeCreativeDirections(items).sort(compareCreativeDirectionSummaries).map(formatCreativeDirectionSummary).join("；");
+}
+
+function summarizeCreativeDirections(items: CreativeReviewItemForSummary[]) {
+  const directions = new Map<string, CreativeDirectionSummary>();
+
+  items.forEach((item, index) => {
+    const directionId = getCreativeDirectionId(item);
+    const existing = directions.get(directionId);
+    const summary =
+      existing ??
+      {
+        directionId,
+        label: getCreativeDirectionLabel(item),
+        items: [],
+        approvedCount: 0,
+        scoreCount: 0,
+        averageScore: null,
+        maxScore: null,
+        sortIndex: getReviewItemSortIndex(item.metadata, index),
+      };
+
+    summary.items.push(item);
+    summary.approvedCount += item.decision === "approved" ? 1 : 0;
+    summary.sortIndex = Math.min(summary.sortIndex, getReviewItemSortIndex(item.metadata, index));
+
+    if (!existing) directions.set(directionId, summary);
+  });
+
+  for (const summary of directions.values()) {
+    const scores = summary.items.map((item) => item.score).filter((score): score is number => typeof score === "number" && Number.isFinite(score));
+    summary.scoreCount = scores.length;
+    summary.averageScore = scores.length > 0 ? scores.reduce((total, score) => total + score, 0) / scores.length : null;
+    summary.maxScore = scores.length > 0 ? Math.max(...scores) : null;
+  }
+
+  return [...directions.values()];
+}
+
+function compareCreativeDirectionSummaries(a: CreativeDirectionSummary, b: CreativeDirectionSummary) {
+  const aApproved = a.approvedCount > 0;
+  const bApproved = b.approvedCount > 0;
+  if (aApproved !== bApproved) return aApproved ? -1 : 1;
+  if (a.maxScore !== null || b.maxScore !== null) {
+    const maxScoreDiff = (b.maxScore ?? -1) - (a.maxScore ?? -1);
+    if (maxScoreDiff !== 0) return maxScoreDiff;
+    const averageScoreDiff = (b.averageScore ?? -1) - (a.averageScore ?? -1);
+    if (averageScoreDiff !== 0) return averageScoreDiff;
+  }
+  return a.sortIndex - b.sortIndex;
+}
+
+function formatCreativeDirectionSummary(summary: CreativeDirectionSummary) {
+  const scoreLabel = summary.averageScore !== null ? `，平均评分 ${formatReviewScore(summary.averageScore)} 分` : "";
+  return `${summary.label}（通过 ${summary.approvedCount}/${summary.items.length}${scoreLabel}）`;
+}
+
+function getCreativeDirectionId(item: CreativeReviewItemForSummary) {
+  const directionId = item.metadata?.directionId;
+  return typeof directionId === "string" && directionId.trim() ? directionId.trim() : item.itemId;
+}
+
+function getCreativeDirectionLabel(item: CreativeReviewItemForSummary) {
+  const directionTitle = item.metadata?.directionTitle;
+  if (typeof directionTitle === "string" && directionTitle.trim()) return directionTitle.trim();
+  const itemLabel = getReviewItemLabel(item);
+  return removeSceneSuffix(itemLabel) ?? itemLabel;
+}
+
+function removeSceneSuffix(label: string) {
+  const trimmed = label.trim();
+  const withoutSuffix = trimmed.replace(/\s*(?:[-—–｜|]\s*)?(?:视觉)?场景\s*\d+\s*$/u, "").trim();
+  return withoutSuffix && withoutSuffix !== trimmed ? withoutSuffix : null;
+}
+
+function formatReviewScore(score: number) {
+  return Number.isInteger(score) ? String(score) : score.toFixed(1).replace(/\.0$/, "");
 }
 
 function getReviewItemLabel(item: { itemId: string; itemLabel?: string | null; metadata?: Record<string, unknown> | null }) {
@@ -809,9 +889,16 @@ function getReviewItemLabel(item: { itemId: string; itemLabel?: string | null; m
   return `方向 ${item.itemId}`;
 }
 
-function getReviewItemSortIndex(metadata?: Record<string, unknown> | null) {
+function getReviewFeedbackItemLabel(item: { itemId: string; itemLabel?: string | null; metadata?: Record<string, unknown> | null }) {
+  if (item.itemLabel?.trim()) return item.itemLabel.trim();
+  return getReviewItemLabel(item);
+}
+
+function getReviewItemSortIndex(metadata?: Record<string, unknown> | null, fallback = Number.MAX_SAFE_INTEGER) {
+  const sortOrder = metadata?.sortOrder;
+  if (typeof sortOrder === "number" && Number.isFinite(sortOrder)) return sortOrder;
   const sceneIndex = metadata?.sceneIndex;
-  return typeof sceneIndex === "number" && Number.isFinite(sceneIndex) ? sceneIndex : Number.MAX_SAFE_INTEGER;
+  return typeof sceneIndex === "number" && Number.isFinite(sceneIndex) ? sceneIndex : fallback;
 }
 
 async function markReviewCreatedProgress(input: {
