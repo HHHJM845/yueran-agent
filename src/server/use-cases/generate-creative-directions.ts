@@ -12,6 +12,7 @@ import {
 import { appendJobEvent, createJob, getJobInput, updateJobStatus } from "@/server/repositories/jobs";
 import { listScoringRules } from "@/server/repositories/scoring-rules";
 import { searchProjectMaterials } from "@/server/use-cases/material-search";
+import { normalizeCreativeDirections } from "@/server/use-cases/creative-proposal-rounds";
 import { recordStageProgress } from "@/server/use-cases/stage-progress";
 
 const creativeDirectionJobInputSchema = z.object({
@@ -57,7 +58,7 @@ export async function enqueueCreativeDirectionGeneration(input: {
   const { jobId } = await createJob({
     projectId: input.projectId,
     type: "creative_direction_generation",
-    title: "生成 Top 5 初始创意方向",
+    title: "生成 4 个创意方向",
     provider: env.TEXT_STRUCTURING_PROVIDER,
     modelName: env.ARK_TEXT_STRUCTURING_MODEL,
     inputJson: {
@@ -85,7 +86,7 @@ export async function runCreativeDirectionGenerationJob(jobId: string, options: 
   await updateJobStatus(jobId, {
     status: "processing",
     currentStep: "collecting_project_context",
-    userMessage: "正在汇总需求、样片解析和标签评分，用于生成 Top 5 创意方向。",
+    userMessage: "正在汇总需求、样片解析和标签评分，用于生成 SOP 3 的 4 个创意方向。",
   });
 
   await appendJobEvent(jobId, {
@@ -113,7 +114,7 @@ export async function runCreativeDirectionGenerationJob(jobId: string, options: 
       jobId,
       projectId: job.projectId,
       callId: "ark_creative_direction_generation",
-      title: "调用豆包生成 Top 5 创意方向",
+      title: "调用豆包生成 4 个创意方向",
       payload: {
         provider: env.TEXT_STRUCTURING_PROVIDER,
         model: env.ARK_TEXT_STRUCTURING_MODEL,
@@ -144,7 +145,7 @@ export async function runCreativeDirectionGenerationJob(jobId: string, options: 
         {
           role: "system",
           content:
-            "你是 AIGC 视频商业项目的创意总监。基于输入资料生成 5 个内部初选创意方向。只输出严格 JSON：{ directions: [...] }。每个 direction 必须包含 title, coreIdea, fitReason，可选 referenceTags 和 score。每项都要简短，适配三维风格和写实风格，不要 Markdown。",
+            "你是 AIGC 视频商业项目的创意总监。基于输入资料生成恰好 4 个 SOP 3 创意视觉提案方向。只输出严格 JSON：{ directions: [...] }。每个 direction 必须包含 title, coreIdea, fitReason，可选 referenceTags 和 score。每项都要简短，适配三维风格和写实风格，不要 Markdown。",
         },
         {
           role: "user",
@@ -154,13 +155,13 @@ export async function runCreativeDirectionGenerationJob(jobId: string, options: 
     });
 
     const parsed = creativeDirectionResponseSchema.parse(response);
-    const normalizedDirections = normalizeDirections(parsed.directions, context);
+    const normalizedDirections = normalizeCreativeDirections(normalizeDirections(parsed.directions, context));
 
-    if (normalizedDirections.length < 5) {
+    if (normalizedDirections.length !== 4) {
       throw new AppError({
         status: 502,
         code: "creative_direction_count_too_low",
-        userMessage: "模型没有返回足够的创意方向。请稍后重试，或补充更多需求和样片信息后再生成。",
+        userMessage: "模型没有返回恰好 4 个创意方向。请稍后重试，或补充更多需求和样片信息后再生成。",
       });
     }
 
@@ -168,7 +169,7 @@ export async function runCreativeDirectionGenerationJob(jobId: string, options: 
       projectId: job.projectId,
       sourceJobId: jobId,
       createdBy: parsedInput.requestedBy ?? null,
-      directions: normalizedDirections.slice(0, 5).map((direction, index) => ({
+      directions: normalizedDirections.slice(0, 4).map((direction, index) => ({
         ...direction,
         sortOrder: index + 1,
       })),
@@ -178,7 +179,7 @@ export async function runCreativeDirectionGenerationJob(jobId: string, options: 
     const artifact = await createArtifact({
       projectId: job.projectId,
       kind: "creative_direction",
-      title: "Top 5 初始创意方向",
+      title: "4 个创意方向",
       status: "draft",
       data: {
         directionIds: savedDirections.map((direction) => direction.id),
@@ -201,7 +202,7 @@ export async function runCreativeDirectionGenerationJob(jobId: string, options: 
       payload: {
         directionCount: savedDirections.length,
       },
-      userMessage: "Top 5 创意方向已生成，并保存到项目工作台。",
+      userMessage: "4 个创意方向已生成，并保存到项目工作台。",
       at: new Date().toISOString(),
     });
 
@@ -210,7 +211,7 @@ export async function runCreativeDirectionGenerationJob(jobId: string, options: 
       jobId,
       projectId: job.projectId,
       artifactId: artifact.id,
-      title: "已创建 Top 5 创意方向快照",
+      title: "已创建 4 个创意方向快照",
       payload: {
         artifactKind: artifact.kind,
         directionCount: savedDirections.length,
@@ -227,7 +228,7 @@ export async function runCreativeDirectionGenerationJob(jobId: string, options: 
       projectStatus: "in_progress",
       jobId,
       title: "技术可行性评估已完成",
-      userMessage: "Top 5 创意方向已生成，项目已进入创意方向提案阶段。",
+      userMessage: "4 个创意方向已生成，项目已进入两轮创意视觉提案阶段。",
       outputRefs: [
         { type: "artifact", id: artifact.id, kind: artifact.kind },
         ...savedDirections.map((direction) => ({ type: "creative_direction", id: direction.id })),
@@ -243,14 +244,14 @@ export async function runCreativeDirectionGenerationJob(jobId: string, options: 
       jobId,
       projectId: job.projectId,
       title: "创意方向生成完成",
-      userMessage: "Top 5 创意方向生成完成。",
+      userMessage: "4 个创意方向生成完成。",
       at: new Date().toISOString(),
     });
 
     await updateJobStatus(jobId, {
       status: "succeeded",
       currentStep: "completed",
-      userMessage: "Top 5 创意方向生成完成。",
+      userMessage: "4 个创意方向生成完成。",
     });
 
     return { jobId, directions: await listProjectCreativeDirections(job.projectId), artifact };
@@ -332,7 +333,7 @@ async function collectCreativeContext(projectId: string, sourceJobId?: string | 
     assetAnalysisCount: successfulAnalyses.length,
     scoreResultCount: scoreResults.length,
     promptInput: {
-      businessGoal: "为内部 AIGC 视频团队的一期商业闭环生成 Top 5 初始创意方向，用于给商务和创意团队初选。",
+      businessGoal: "为内部 AIGC 视频团队的一期商业闭环生成 4 个创意方向，用于进入 SOP 3 两轮创意视觉提案。",
       requiredOutputFields: [
         "标题",
         "核心创意",
@@ -459,11 +460,11 @@ function buildCompactCreativePrompt(context: Awaited<ReturnType<typeof collectCr
   const materialSummary = context.promptInput.materialMatches
     .map((item) => `相似度 ${Math.round(item.score * 100)}：${item.contentPreview}；标签：${item.labels.join("、")}`)
     .filter(Boolean)
-    .slice(0, 5)
+    .slice(0, 4)
     .join("\n");
 
   return [
-    "请为这个 AIGC 视频项目生成 5 个可供内部初选的创意方向。",
+    "请为这个 AIGC 视频项目生成恰好 4 个可供 SOP 3 两轮创意视觉提案使用的创意方向。",
     "输出严格 JSON：{ directions: [{ title, coreIdea, fitReason, referenceTags, score }] }。",
     "每个 title 不超过 14 个汉字；coreIdea 和 fitReason 各不超过 45 个汉字；referenceTags 最多 5 个；score 为 0-100。",
     "业务偏好：三维风格、写实风格、商业广告片质感。",

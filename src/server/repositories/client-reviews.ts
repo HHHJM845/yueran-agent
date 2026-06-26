@@ -224,7 +224,7 @@ export async function createClientReviewTask(input: {
          expires_at, sop_key, review_scene, round_number, batch_number, review_payload_version, payload_json, created_by
        )
        values (
-         $1, $2, $3, $4, $5, $6, $7, $8, 'active', $9, $10, $11, $12, $13, $14, $15, $16::jsonb, $17
+         $1, $2, $3, $4, $5, $6, $7, $8, 'active', $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18
        )
        returning id, project_id, module_key, review_type, target_scope_type, target_scope_id,
                  title, summary, version, status, expires_at, submitted_at, reviewed_at,

@@ -185,7 +185,7 @@ export function mapTechnicalFeasibilityStageProgress(input: {
     currentStage: "technical_feasibility" as ProjectStage,
     projectStatus: "in_progress" as StageStatus,
     title: "技术可行性评估已解除阻塞",
-    userMessage: `技术可行性评估已解除阻塞。${combinedDetail || "请重新发起评估或继续生成 Top 5 创意方向。"}`,
+    userMessage: `技术可行性评估已解除阻塞。${combinedDetail || "请重新发起评估或继续生成 4 个创意方向。"}`,
     errorMessage: null,
   };
 }

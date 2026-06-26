@@ -62,6 +62,8 @@ import {
   analyzeAsset,
   bootstrapAdmin,
   createAssetAccess,
+  createCreativeProposalRound,
+  createCreativeProposalRoundClientReview,
   createDocumentExportAccess,
   createProject,
   createReviewCut,
@@ -109,6 +111,9 @@ import {
   type CreativeDirectionView,
   type CreativeDirectionReviewAction,
   type CreativeExpansionView,
+  type CreativeProposalRoundView,
+  type CreativeSceneConceptView,
+  type CreativeSceneImageView,
   type ContractExportFormat,
   type ContractExportView,
   type ContractView,
@@ -633,6 +638,7 @@ export function WorkspaceShell() {
           creativeDirections={selectedWorkspaceData?.creativeDirections ?? []}
           creativeExpansions={selectedWorkspaceData?.creativeExpansions ?? []}
           generatedImages={selectedWorkspaceData?.generatedImages ?? []}
+          creativeProposalRounds={selectedWorkspaceData?.creativeProposalRounds?.rounds ?? []}
           scriptPackages={selectedWorkspaceData?.scriptPackages ?? []}
           scriptReferences={selectedWorkspaceData?.scriptReferences ?? []}
           storyboardScenes={selectedWorkspaceData?.storyboardScenes ?? []}
@@ -1185,6 +1191,7 @@ function WorkspaceCenter({
   creativeDirections,
   creativeExpansions,
   generatedImages,
+  creativeProposalRounds,
   scriptPackages,
   scriptReferences,
   storyboardScenes,
@@ -1226,6 +1233,7 @@ function WorkspaceCenter({
   creativeDirections: CreativeDirectionView[];
   creativeExpansions: CreativeExpansionView[];
   generatedImages: GeneratedImageView[];
+  creativeProposalRounds: CreativeProposalRoundView[];
   scriptPackages: ScriptDirectionPackageView[];
   scriptReferences: ScriptReferenceAssetView[];
   storyboardScenes: StoryboardSceneView[];
@@ -1425,6 +1433,8 @@ function WorkspaceCenter({
                     directions={creativeDirections}
                     expansions={creativeExpansions}
                     generatedImages={generatedImages}
+                    creativeProposalRounds={creativeProposalRounds}
+                    clientReviewTasks={clientReviewTasks}
                     artifacts={artifacts}
                     onRefresh={onWorkspaceRefresh}
                   />
@@ -3515,6 +3525,8 @@ function CreativeDirectionsCard({
   directions,
   expansions,
   generatedImages,
+  creativeProposalRounds,
+  clientReviewTasks,
   artifacts,
   onRefresh,
 }: {
@@ -3523,6 +3535,8 @@ function CreativeDirectionsCard({
   directions: CreativeDirectionView[];
   expansions: CreativeExpansionView[];
   generatedImages: GeneratedImageView[];
+  creativeProposalRounds: CreativeProposalRoundView[];
+  clientReviewTasks: ClientReviewTaskView[];
   artifacts: ArtifactView[];
   onRefresh: () => Promise<void>;
 }) {
@@ -3531,6 +3545,8 @@ function CreativeDirectionsCard({
   const [reviewingDirectionId, setReviewingDirectionId] = useState<string | null>(null);
   const [expandingDirectionId, setExpandingDirectionId] = useState<string | null>(null);
   const [generatingImageExpansionId, setGeneratingImageExpansionId] = useState<string | null>(null);
+  const [creatingRound, setCreatingRound] = useState<1 | 2 | null>(null);
+  const [reviewingRoundId, setReviewingRoundId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [directionError, setDirectionError] = useState<string | null>(null);
@@ -3538,6 +3554,8 @@ function CreativeDirectionsCard({
   const canEdit = user.role === "creative" || user.role === "admin";
   const latestArtifact = artifacts.find((artifact) => artifact.kind === "creative_direction");
   const selectedCount = directions.filter((direction) => direction.isSelected).length;
+  const round1 = creativeProposalRounds.find((round) => round.roundNumber === 1) ?? null;
+  const round2 = creativeProposalRounds.find((round) => round.roundNumber === 2) ?? null;
 
   async function handleGenerate() {
     setGenerating(true);
@@ -3649,6 +3667,42 @@ function CreativeDirectionsCard({
     setGeneratingImageExpansionId(null);
   }
 
+  async function handleCreateRound(roundNumber: 1 | 2) {
+    setCreatingRound(roundNumber);
+    setMessage(null);
+    setDirectionError(null);
+
+    const directionIds = roundNumber === 2 ? directions.filter((direction) => direction.isSelected).map((direction) => direction.id) : directions.map((direction) => direction.id);
+    const result = await createCreativeProposalRound(project.id, {
+      roundNumber,
+      directionIds,
+    });
+    if (result.ok) {
+      setMessage(result.data.message);
+      await onRefresh();
+    } else {
+      setDirectionError(result.error.message);
+    }
+
+    setCreatingRound(null);
+  }
+
+  async function handleCreateRoundClientReview(round: CreativeProposalRoundView) {
+    setReviewingRoundId(round.id);
+    setMessage(null);
+    setDirectionError(null);
+
+    const result = await createCreativeProposalRoundClientReview(project.id, round.id);
+    if (result.ok) {
+      setMessage(`${result.data.message} 验证码：${result.data.verificationCode}；链接：${result.data.reviewUrl}`);
+      await onRefresh();
+    } else {
+      setDirectionError(result.error.message);
+    }
+
+    setReviewingRoundId(null);
+  }
+
   return (
     <WorkspaceCard className="lg:col-span-2">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -3711,8 +3765,242 @@ function CreativeDirectionsCard({
           ))}
         </div>
       )}
+
+      <CreativeProposalRoundsPanel
+        directions={directions}
+        rounds={creativeProposalRounds}
+        round1={round1}
+        round2={round2}
+        clientReviewTasks={clientReviewTasks}
+        canCreateRound={canEdit}
+        canLaunchReview={user.role === "business" || user.role === "admin"}
+        creatingRound={creatingRound}
+        reviewingRoundId={reviewingRoundId}
+        onCreateRound={handleCreateRound}
+        onCreateRoundClientReview={(round) => void handleCreateRoundClientReview(round)}
+      />
     </WorkspaceCard>
   );
+}
+
+function CreativeProposalRoundsPanel({
+  directions,
+  rounds,
+  round1,
+  round2,
+  clientReviewTasks,
+  canCreateRound,
+  canLaunchReview,
+  creatingRound,
+  reviewingRoundId,
+  onCreateRound,
+  onCreateRoundClientReview,
+}: {
+  directions: CreativeDirectionView[];
+  rounds: CreativeProposalRoundView[];
+  round1: CreativeProposalRoundView | null;
+  round2: CreativeProposalRoundView | null;
+  clientReviewTasks: ClientReviewTaskView[];
+  canCreateRound: boolean;
+  canLaunchReview: boolean;
+  creatingRound: 1 | 2 | null;
+  reviewingRoundId: string | null;
+  onCreateRound: (roundNumber: 1 | 2) => void;
+  onCreateRoundClientReview: (round: CreativeProposalRoundView) => void;
+}) {
+  const selectedDirectionIds = directions.filter((direction) => direction.isSelected).map((direction) => direction.id);
+  return (
+    <div className="mt-5 grid gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border-soft)] pt-4">
+        <div>
+          <p className="text-sm font-medium">SOP 3 两轮创意视觉提案</p>
+          <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
+            第一轮固定展示 4 个方向，每个方向 2 个视觉场景；第二轮只深化保留方向，每个方向 4 个视觉场景。候选图只展示真实已生成记录或待生成状态。
+          </p>
+        </div>
+        <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">已保存 {rounds.length} 轮</span>
+      </div>
+
+      <CreativeProposalRoundSection
+        title="Round 1 / 四方向初选"
+        detail="用于让甲方确认方向优先级、保留方向和视觉偏好。"
+        round={round1}
+        expectedSceneCount={2}
+        directions={directions}
+        reviewTask={clientReviewTasks.find((task) => task.reviewScene === "creative_round_1") ?? null}
+        canCreateRound={canCreateRound && directions.length === 4}
+        canLaunchReview={canLaunchReview}
+        disabledMessage={directions.length === 4 ? null : "需要先生成恰好 4 个创意方向，才能创建第一轮提案。"}
+        creating={creatingRound === 1}
+        reviewingRoundId={reviewingRoundId}
+        onCreateRound={() => onCreateRound(1)}
+        onCreateRoundClientReview={onCreateRoundClientReview}
+      />
+      <CreativeProposalRoundSection
+        title="Round 2 / 保留方向深化"
+        detail="用于确认第二轮脚本与视觉方向，确认后再进入 SOP 4 报价合同。"
+        round={round2}
+        expectedSceneCount={4}
+        directions={directions.filter((direction) => selectedDirectionIds.includes(direction.id))}
+        reviewTask={clientReviewTasks.find((task) => task.reviewScene === "creative_round_2") ?? null}
+        canCreateRound={canCreateRound && selectedDirectionIds.length > 0}
+        canLaunchReview={canLaunchReview}
+        disabledMessage={selectedDirectionIds.length > 0 ? null : "需要先保留至少 1 个方向，才能创建第二轮深化提案。"}
+        creating={creatingRound === 2}
+        reviewingRoundId={reviewingRoundId}
+        onCreateRound={() => onCreateRound(2)}
+        onCreateRoundClientReview={onCreateRoundClientReview}
+      />
+    </div>
+  );
+}
+
+function CreativeProposalRoundSection({
+  title,
+  detail,
+  round,
+  expectedSceneCount,
+  directions,
+  reviewTask,
+  canCreateRound,
+  canLaunchReview,
+  disabledMessage,
+  creating,
+  reviewingRoundId,
+  onCreateRound,
+  onCreateRoundClientReview,
+}: {
+  title: string;
+  detail: string;
+  round: CreativeProposalRoundView | null;
+  expectedSceneCount: 2 | 4;
+  directions: CreativeDirectionView[];
+  reviewTask: ClientReviewTaskView | null;
+  canCreateRound: boolean;
+  canLaunchReview: boolean;
+  disabledMessage: string | null;
+  creating: boolean;
+  reviewingRoundId: string | null;
+  onCreateRound: () => void;
+  onCreateRoundClientReview: (round: CreativeProposalRoundView) => void;
+}) {
+  return (
+    <div className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium">{title}</p>
+          <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">{detail}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={onCreateRound}
+            disabled={!canCreateRound || creating}
+            className="inline-flex h-8 items-center gap-2 rounded-card-sm border border-[var(--border-soft)] px-3 text-xs font-medium disabled:opacity-50"
+            title={disabledMessage ?? "创建本轮创意视觉提案"}
+          >
+            {creating ? <Loader2 className="animate-spin" size={13} /> : <Plus size={13} />}
+            {round ? "生成新版本" : "创建本轮"}
+          </button>
+          {round && (
+            <button
+              type="button"
+              onClick={() => onCreateRoundClientReview(round)}
+              disabled={!canLaunchReview || reviewingRoundId === round.id}
+              className="inline-flex h-8 items-center gap-2 rounded-card-sm bg-[var(--foreground)] px-3 text-xs font-medium text-[var(--text-inverse)] disabled:opacity-60"
+              title={canLaunchReview ? "生成甲方审核链接" : "当前角色不能生成甲方审核链接"}
+            >
+              {reviewingRoundId === round.id ? <Loader2 className="animate-spin" size={13} /> : <Send size={13} />}
+              发起甲方审核
+            </button>
+          )}
+        </div>
+      </div>
+      {disabledMessage && !round && <p className="mt-3 rounded-card-sm bg-[var(--surface-soft)] p-2 text-xs leading-5 text-[var(--text-secondary)]">{disabledMessage}</p>}
+      {round ? (
+        <div className="mt-3 grid gap-3">
+          <div className="flex flex-wrap gap-2 text-xs">
+            <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">v{round.version}</span>
+            <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">{creativeProposalRoundStatusLabel(round.status)}</span>
+            <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">每方向 {expectedSceneCount} 个场景</span>
+            {reviewTask && <span className="ds-pill ds-pill-teal">甲方审核 {reviewTask.status}</span>}
+          </div>
+          <CreativeProposalReviewFeedback task={reviewTask} />
+          {directions.map((direction) => {
+            const concepts = round.concepts.filter((concept) => concept.directionId === direction.id);
+            return (
+              <div key={direction.id} className="ds-card-soft p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-medium">{direction.title}</p>
+                  <span className="ds-pill bg-[var(--surface-card)] text-[var(--text-secondary)]">
+                    {concepts.length}/{expectedSceneCount} 个视觉场景
+                  </span>
+                </div>
+                {concepts.length === 0 ? (
+                  <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">本方向还没有保存视觉场景。请重新创建本轮提案版本。</p>
+                ) : (
+                  <div className="mt-3 grid gap-2 md:grid-cols-2">
+                    {concepts.map((concept) => (
+                      <CreativeSceneConceptMiniCard key={concept.id} concept={concept} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="mt-3 text-xs leading-5 text-[var(--text-secondary)]">本轮还未创建。创建后场景、候选图和后续审核状态都会保存到数据库。</p>
+      )}
+    </div>
+  );
+}
+
+function CreativeSceneConceptMiniCard({ concept }: { concept: CreativeSceneConceptView }) {
+  const generatedCount = concept.images.filter((image) => image.status === "generated" || image.status === "selected").length;
+  const selectedCount = concept.images.filter((image) => image.isSelected).length;
+  return (
+    <div className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-2.5 text-xs">
+      <div className="flex items-start justify-between gap-2">
+        <p className="font-medium leading-5">{concept.sceneIndex}. {concept.title}</p>
+        <span className={cn("ds-pill", generatedCount > 0 ? "ds-pill-teal" : "ds-pill-yellow")}>{generatedCount}/{concept.requiredImageCount} 候选</span>
+      </div>
+      <p className="mt-2 leading-5 text-[var(--text-secondary)]">{concept.description}</p>
+      <div className="mt-2 flex flex-wrap gap-1">
+        {concept.images.map((image) => (
+          <CreativeSceneImagePill key={image.id} image={image} />
+        ))}
+      </div>
+      {selectedCount > 0 && <p className="mt-2 text-[var(--success)]">已确认 {selectedCount} 张候选图。</p>}
+      {generatedCount === 0 && <p className="mt-2 text-[var(--text-secondary)]">候选图还在等待真实氛围图生成记录，当前不会显示为生成成功。</p>}
+    </div>
+  );
+}
+
+function CreativeSceneImagePill({ image }: { image: CreativeSceneImageView }) {
+  return (
+    <span className={cn("ds-pill", image.isSelected ? "ds-selected-pill" : image.status === "generated" ? "bg-[var(--surface-soft)] text-[var(--text-secondary)]" : "ds-pill-yellow")}>
+      图 {image.sortOrder}：{creativeSceneImageStatusLabel(image.status)}
+    </span>
+  );
+}
+
+function CreativeProposalReviewFeedback({ task }: { task: ClientReviewTaskView | null }) {
+  if (!task || task.status !== "submitted") return null;
+  const directionPriority = readPayloadText(task.decisionPayload, "directionPriority");
+  const visualPreferenceNotes = readPayloadText(task.decisionPayload, "visualPreferenceNotes");
+  return (
+    <div className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-3 text-xs leading-5 text-[var(--text-secondary)]">
+      <p className="font-medium text-[var(--success)]">甲方反馈已回写</p>
+      <p className="mt-1">方向优先级：{directionPriority || "甲方未填写方向优先级，需商务继续追问确认。"}</p>
+      <p className="mt-1">视觉偏好：{visualPreferenceNotes || task.feedback || "甲方未填写视觉偏好备注，可在下一轮沟通中补齐。"}</p>
+    </div>
+  );
+}
+
+function readPayloadText(payload: Record<string, unknown>, key: string) {
+  const value = payload[key];
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function CreativeDirectionCard({
@@ -6099,6 +6387,31 @@ function creativeDirectionStatusLabel(status: string) {
     needs_revision: "需要修改",
     approved: "已确认",
     archived: "已归档",
+  };
+  return labels[status] ?? status;
+}
+
+function creativeProposalRoundStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    draft: "草稿",
+    generating: "生成中",
+    internal_review: "内部审核",
+    client_reviewing: "等待甲方审核",
+    client_rejected: "甲方打回",
+    client_approved: "甲方确认",
+    locked: "已锁定",
+    archived: "已归档",
+  };
+  return labels[status] ?? status;
+}
+
+function creativeSceneImageStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    queued: "待真实生成",
+    generated: "已生成",
+    failed: "生成失败",
+    selected: "已确认",
+    discarded: "已废弃",
   };
   return labels[status] ?? status;
 }

@@ -6,6 +6,7 @@ import { listProjectAssets } from "@/server/repositories/assets";
 import { listProjectArtifacts } from "@/server/repositories/artifacts";
 import { listProjectCreativeDirections } from "@/server/repositories/creative-directions";
 import { listProjectCreativeExpansions } from "@/server/repositories/creative-expansions";
+import { listCreativeProposalRounds } from "@/server/repositories/creative-proposals";
 import { getProjectContract } from "@/server/repositories/contracts";
 import { listProjectDocumentExports } from "@/server/repositories/document-exports";
 import { listProjectFeishuDeliveries } from "@/server/repositories/feishu-deliveries";
@@ -33,6 +34,7 @@ export async function GET(request: Request, context: { params: Promise<{ project
       creativeDirections,
       creativeExpansions,
       generatedImages,
+      creativeProposalRounds,
       proposal,
       proposalSnapshots,
       quote,
@@ -57,6 +59,7 @@ export async function GET(request: Request, context: { params: Promise<{ project
       listProjectCreativeDirections(projectId),
       listProjectCreativeExpansions(projectId),
       listProjectGeneratedImages(projectId),
+      listCreativeProposalRounds(projectId),
       getProjectProposal(projectId),
       listProjectDocumentSnapshots(projectId, "proposal"),
       getProjectQuote(projectId),
@@ -84,6 +87,7 @@ export async function GET(request: Request, context: { params: Promise<{ project
         creativeDirections,
         creativeExpansions,
         generatedImages,
+        creativeProposalRounds,
         proposal,
         proposalSnapshots,
         quote,

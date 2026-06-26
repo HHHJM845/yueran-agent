@@ -15,6 +15,7 @@ import {
 } from "@/server/repositories/client-reviews";
 import { listProjectArtifacts } from "@/server/repositories/artifacts";
 import { getProjectById } from "@/server/repositories/projects";
+import { getCreativeProposalRound, updateCreativeProposalRoundClientDecision } from "@/server/repositories/creative-proposals";
 import { getProjectProposal, updateProposalStatus } from "@/server/repositories/proposals";
 import { getProjectQuote, updateQuoteStatus } from "@/server/repositories/quotes";
 import { getProjectContract, updateContractStatus } from "@/server/repositories/contracts";
@@ -365,6 +366,41 @@ async function buildWorkflowReviewSpec(input: {
     };
   }
 
+  if (input.reviewType === "project_proposal" && input.targetScopeId) {
+    const creativeRound = await getCreativeProposalRound({ projectId: input.projectId, roundId: input.targetScopeId });
+    if (creativeRound) {
+      const sceneLabel = creativeRound.roundNumber === 1 ? "第一轮" : "第二轮";
+      return {
+        moduleKey: "creative_visual_proposal",
+        reviewType: "project_proposal",
+        targetScopeType: "proposal",
+        targetScopeId: creativeRound.id,
+        title: `${sceneLabel}创意视觉提案确认`,
+        summary:
+          creativeRound.roundNumber === 1
+            ? "请确认 4 个创意方向的优先级、保留方向和视觉偏好；如需调整，请打回并填写方向排序与偏好说明。"
+            : "请确认第二轮深化后的脚本/视觉方向是否可进入报价合同模块；如需调整，请填写具体视觉偏好和修改意见。",
+        payload: {
+          project,
+          creativeProposalRound: creativeRound,
+        },
+        items: creativeRound.concepts.map((concept) => ({
+          itemType: "proposal" as const,
+          itemId: concept.id,
+          itemLabel: concept.title,
+          metadata: {
+            roundNumber: creativeRound.roundNumber,
+            directionId: concept.directionId,
+            sceneIndex: concept.sceneIndex,
+            requiredImageCount: concept.requiredImageCount,
+            candidateImageCount: concept.images.filter((image) => image.status === "generated" || image.status === "selected").length,
+            previewText: summarizeText(`${concept.description}\n${concept.imagePrompt}`, 800),
+          },
+        })),
+      };
+    }
+  }
+
   if (input.reviewType === "project_proposal") {
     const proposal = await getProjectProposal(input.projectId);
     if (!proposal || (input.targetScopeId && proposal.id !== input.targetScopeId)) {
@@ -659,9 +695,12 @@ export async function submitClientReviewByToken(token: string, rawInput: unknown
       targetScopeType: task.targetScopeType,
       targetScopeId: task.targetScopeId,
       decision: input.decision,
+      reviewScene: task.reviewScene as ClientReviewScene | null,
       itemDecisions: normalizedItems,
       timecodeAnnotations: input.timecodeAnnotations,
       reviewerName: input.reviewerName,
+      feedback: input.feedback,
+      decisionPayload: result.task.decisionPayload,
     });
   }
 
@@ -766,6 +805,7 @@ async function applyWorkflowReviewDecision(input: {
   targetScopeType: ClientReviewTargetScopeType;
   targetScopeId: string;
   decision: "approved" | "rejected";
+  reviewScene?: ClientReviewScene | null;
   itemDecisions: Array<{
     itemId: string;
     decision: Exclude<ClientReviewItemDecision, "pending">;
@@ -774,10 +814,20 @@ async function applyWorkflowReviewDecision(input: {
   }>;
   timecodeAnnotations?: Array<{ timeSeconds: number; feedback: string }>;
   reviewerName?: string | null;
+  feedback?: string | null;
+  decisionPayload?: Record<string, unknown>;
 }) {
   const approved = input.decision === "approved";
 
-  if (input.reviewType === "project_proposal" && input.targetScopeType === "proposal") {
+  if (input.reviewType === "project_proposal" && input.targetScopeType === "proposal" && (input.reviewScene === "creative_round_1" || input.reviewScene === "creative_round_2")) {
+    await updateCreativeProposalRoundClientDecision({
+      projectId: input.projectId,
+      roundId: input.targetScopeId,
+      approved,
+      feedback: input.feedback ?? "",
+      decisionPayload: input.decisionPayload ?? {},
+    });
+  } else if (input.reviewType === "project_proposal" && input.targetScopeType === "proposal") {
     await updateProposalStatus({
       projectId: input.projectId,
       proposalId: input.targetScopeId,
@@ -840,7 +890,7 @@ async function applyWorkflowReviewDecision(input: {
     });
   }
 
-  const stage = reviewSubmittedStage(input.reviewType, input.decision);
+  const stage = reviewSubmittedStage(input.reviewType, input.decision, input.reviewScene ?? null);
   await recordStageProgress({
     projectId: input.projectId,
     stageKey: stage.stageKey,
@@ -854,6 +904,7 @@ async function applyWorkflowReviewDecision(input: {
     snapshot: {
       reviewTaskId: input.reviewTaskId,
       reviewType: input.reviewType,
+      reviewScene: input.reviewScene ?? null,
       decision: input.decision,
       itemDecisions: input.itemDecisions,
       timecodeAnnotationCount: input.timecodeAnnotations?.length ?? 0,
@@ -898,7 +949,7 @@ function reviewCreatedStage(reviewType: ClientReviewType) {
   };
 }
 
-export function reviewSubmittedStage(reviewType: ClientReviewType, decision: "approved" | "rejected") {
+export function reviewSubmittedStage(reviewType: ClientReviewType, decision: "approved" | "rejected", reviewScene?: ClientReviewScene | null) {
   const approved = decision === "approved";
   if (reviewType === "brief_confirmation") {
     return {
@@ -910,6 +961,15 @@ export function reviewSubmittedStage(reviewType: ClientReviewType, decision: "ap
     };
   }
   if (reviewType === "project_proposal") {
+    if (reviewScene === "creative_round_1") {
+      return {
+        stageKey: "creative_direction_proposal" as const,
+        status: approved ? ("waiting_review" as const) : ("needs_revision" as const),
+        currentStage: "creative_direction_proposal" as const,
+        projectStatus: approved ? ("in_progress" as const) : ("needs_revision" as const),
+        userMessage: approved ? "甲方已确认第一轮创意视觉提案，请根据方向优先级和视觉偏好进入第二轮深化。" : "甲方已打回第一轮创意视觉提案，方向排序和视觉偏好意见已回写内部端。",
+      };
+    }
     return {
       stageKey: "creative_direction_proposal" as const,
       status: approved ? ("approved" as const) : ("needs_revision" as const),

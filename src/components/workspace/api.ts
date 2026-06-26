@@ -238,6 +238,56 @@ export type CreativeExpansionView = {
   updatedAt: string;
 };
 
+export type CreativeSceneImageView = {
+  id: string;
+  projectId: string;
+  roundId: string;
+  sceneConceptId: string;
+  generatedImageId: string | null;
+  assetId: string | null;
+  ossUrl: string | null;
+  prompt: string;
+  status: string;
+  isSelected: boolean;
+  sortOrder: number;
+  failureReason: string | null;
+  updatedAt: string;
+};
+
+export type CreativeSceneConceptView = {
+  id: string;
+  projectId: string;
+  roundId: string;
+  directionId: string | null;
+  sceneIndex: number;
+  title: string;
+  description: string;
+  sourceText: string;
+  imagePrompt: string;
+  requiredImageCount: number;
+  selectedImageIds: string[];
+  status: string;
+  version: number;
+  snapshot: Record<string, unknown>;
+  images: CreativeSceneImageView[];
+  updatedAt: string;
+};
+
+export type CreativeProposalRoundView = {
+  id: string;
+  projectId: string;
+  roundNumber: 1 | 2;
+  status: string;
+  version: number;
+  directionIds: string[];
+  retainedDirectionIds: string[];
+  clientFeedback: Record<string, unknown>;
+  clientReviewTaskId: string | null;
+  snapshot: Record<string, unknown>;
+  concepts: CreativeSceneConceptView[];
+  updatedAt: string;
+};
+
 export type GeneratedImageView = {
   id: string;
   projectId: string;
@@ -697,6 +747,7 @@ export type WorkspaceData = {
   creativeDirections: CreativeDirectionView[];
   creativeExpansions: CreativeExpansionView[];
   generatedImages: GeneratedImageView[];
+  creativeProposalRounds: { rounds: CreativeProposalRoundView[] };
   scriptPackages: ScriptDirectionPackageView[];
   scriptReferences: ScriptReferenceAssetView[];
   storyboardScenes: StoryboardSceneView[];
@@ -1160,6 +1211,39 @@ export async function createWorkflowClientReview(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
+    })
+  );
+}
+
+export async function createCreativeProposalRound(
+  projectId: string,
+  input: {
+    roundNumber: 1 | 2;
+    directionIds?: string[];
+  }
+) {
+  return readApi<{
+    round: CreativeProposalRoundView;
+    message: string;
+  }>(
+    await fetch(`/api/projects/${projectId}/creative-proposal-rounds`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    })
+  );
+}
+
+export async function createCreativeProposalRoundClientReview(projectId: string, roundId: string) {
+  return readApi<{
+    task: ClientReviewTaskView;
+    items: ClientReviewItemView[];
+    reviewUrl: string;
+    verificationCode: string;
+    message: string;
+  }>(
+    await fetch(`/api/projects/${projectId}/creative-proposal-rounds/${roundId}/client-review`, {
+      method: "POST",
     })
   );
 }
