@@ -23,6 +23,58 @@ test("normalizes generic review metadata for SOP scenes", async () => {
   );
 });
 
+test("rejects invalid reviewScene values at the use-case schema boundary", async () => {
+  const { createClientReviewInputSchema } = await import("./client-review.ts");
+
+  assert.throws(
+    () =>
+      createClientReviewInputSchema.parse({
+        reviewType: "project_proposal",
+        reviewScene: "totally_not_real",
+      }),
+    /Invalid option/
+  );
+});
+
+test("builds explicit client review task metadata for repository input", async () => {
+  const { buildClientReviewTaskMetadataInput } = await import("./client-review.ts");
+
+  assert.deepEqual(
+    buildClientReviewTaskMetadataInput({
+      reviewType: "project_proposal",
+      sopKey: "sop_3",
+      reviewScene: "creative_round_1",
+      roundNumber: 2,
+      batchNumber: 3,
+      payloadVersion: 4,
+    }),
+    {
+      sopKey: "sop_3",
+      reviewScene: "creative_round_1",
+      roundNumber: 2,
+      batchNumber: 3,
+      reviewPayloadVersion: 4,
+    }
+  );
+});
+
+test("builds default client review task metadata when optional values are omitted", async () => {
+  const { buildClientReviewTaskMetadataInput } = await import("./client-review.ts");
+
+  assert.deepEqual(
+    buildClientReviewTaskMetadataInput({
+      reviewType: "project_proposal",
+    }),
+    {
+      sopKey: null,
+      reviewScene: null,
+      roundNumber: null,
+      batchNumber: null,
+      reviewPayloadVersion: 1,
+    }
+  );
+});
+
 test("storyboard scene review keeps per-shot scores when the whole scene is rejected", async () => {
   const { normalizeReviewItemsForSubmission } = await import("./client-review.ts");
 

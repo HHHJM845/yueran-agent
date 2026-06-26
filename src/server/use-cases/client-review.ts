@@ -59,6 +59,18 @@ export const submitClientReviewSchema = z.object({
   timecodeAnnotations: z.array(submitTimecodeAnnotationSchema).default([]),
 });
 
+export const clientReviewScenes = [
+  "brief_confirmation",
+  "creative_round_1",
+  "creative_round_2",
+  "production_setup",
+  "storyboard_image_batch",
+  "a_copy_round",
+  "b_copy_final",
+] as const;
+
+export type ClientReviewScene = (typeof clientReviewScenes)[number];
+
 export const createClientReviewInputSchema = z.object({
   reviewType: z.enum([
     "brief_confirmation",
@@ -71,25 +83,16 @@ export const createClientReviewInputSchema = z.object({
   ]),
   targetScopeId: z.string().uuid().optional(),
   sopKey: z.string().max(80).optional().nullable(),
-  reviewScene: z.string().max(120).optional().nullable(),
+  reviewScene: z.enum(clientReviewScenes).optional().nullable(),
   roundNumber: z.number().int().positive().optional().nullable(),
   batchNumber: z.number().int().positive().optional().nullable(),
   payloadVersion: z.number().int().positive().optional().nullable(),
 });
 
-export type ClientReviewScene =
-  | "brief_confirmation"
-  | "creative_round_1"
-  | "creative_round_2"
-  | "production_setup"
-  | "storyboard_image_batch"
-  | "a_copy_round"
-  | "b_copy_final";
-
 export function normalizeClientReviewMetadata(input: {
   reviewType: ClientReviewType;
   sopKey?: string | null;
-  reviewScene?: string | null;
+  reviewScene?: ClientReviewScene | null;
   roundNumber?: number | null;
   batchNumber?: number | null;
   payloadVersion?: number | null;
@@ -100,6 +103,25 @@ export function normalizeClientReviewMetadata(input: {
     roundNumber: input.roundNumber ?? null,
     batchNumber: input.batchNumber ?? null,
     payloadVersion: input.payloadVersion ?? 1,
+  };
+}
+
+export function buildClientReviewTaskMetadataInput(input: {
+  reviewType: ClientReviewType;
+  sopKey?: string | null;
+  reviewScene?: ClientReviewScene | null;
+  roundNumber?: number | null;
+  batchNumber?: number | null;
+  payloadVersion?: number | null;
+}) {
+  const metadata = normalizeClientReviewMetadata(input);
+
+  return {
+    sopKey: metadata.sopKey,
+    reviewScene: metadata.reviewScene,
+    roundNumber: metadata.roundNumber,
+    batchNumber: metadata.batchNumber,
+    reviewPayloadVersion: metadata.payloadVersion,
   };
 }
 
@@ -124,7 +146,7 @@ export async function createWorkflowClientReview(input: {
     batchNumber: input.batchNumber ?? null,
     payloadVersion: input.payloadVersion ?? null,
   });
-  const metadata = normalizeClientReviewMetadata({
+  const metadata = buildClientReviewTaskMetadataInput({
     reviewType: parsed.reviewType,
     sopKey: parsed.sopKey,
     reviewScene: parsed.reviewScene,
@@ -160,7 +182,7 @@ export async function createWorkflowClientReview(input: {
     reviewScene: metadata.reviewScene,
     roundNumber: metadata.roundNumber,
     batchNumber: metadata.batchNumber,
-    reviewPayloadVersion: metadata.payloadVersion,
+    reviewPayloadVersion: metadata.reviewPayloadVersion,
     payload: spec.payload,
     items: spec.items,
   });
