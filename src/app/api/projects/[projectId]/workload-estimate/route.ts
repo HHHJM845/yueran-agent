@@ -18,7 +18,7 @@ const saveWorkloadEstimateRequestSchema = z.object({
   maxPriceCny: z.union([z.number(), z.string()]).optional(),
   rationale: z.string().optional(),
   riskNotes: z.string().optional(),
-  status: z.enum(["draft", "generated", "confirmed", "archived"]).optional(),
+  status: z.enum(["draft", "generated"]).optional(),
 });
 
 export async function GET(request: Request, context: { params: Promise<{ projectId: string }> }) {

@@ -46,7 +46,19 @@ export async function saveProjectArchive(input: SaveProjectArchiveInput): Promis
     });
   }
 
+  const existing = await getProjectArchiveRecord(input.projectId);
+  assertArchiveRecordMutable(existing);
   return saveArchiveRecord(input);
+}
+
+export function assertArchiveRecordMutable(existing: ArchiveRecordView | null) {
+  if (!existing || (existing.status !== "completed" && existing.status !== "archived")) return;
+
+  throw new AppError({
+    status: 409,
+    code: "archive_record_closed",
+    userMessage: "这个项目归档已经完成或关闭，不能通过普通保存修改归档证据。如需调整，请先走重新打开或管理员处理流程。",
+  });
 }
 
 export async function completeProjectArchive(input: {

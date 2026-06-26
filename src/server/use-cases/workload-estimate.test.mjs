@@ -57,6 +57,52 @@ test("normalizeSop4DeliveryChecklistStatus rejects confirmed in SOP 4", async ()
   );
 });
 
+test("normalizeSop4WorkloadEstimateStatus rejects confirmed and archived in SOP 4", async () => {
+  const { normalizeSop4WorkloadEstimateStatus } = await import("./workload-estimate.ts");
+
+  assert.equal(normalizeSop4WorkloadEstimateStatus(undefined), "draft");
+  assert.equal(normalizeSop4WorkloadEstimateStatus("generated"), "generated");
+  assert.throws(
+    () => normalizeSop4WorkloadEstimateStatus("confirmed"),
+    (error) =>
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === "workload_estimate_status_not_supported_in_sop4"
+  );
+  assert.throws(
+    () => normalizeSop4WorkloadEstimateStatus("archived"),
+    (error) =>
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === "workload_estimate_status_not_supported_in_sop4"
+  );
+});
+
+test("SOP 4 workload estimate requires approved SOP 3 round 2 client review", async () => {
+  const { assertSop3Round2ClientApproved } = await import("./workload-estimate.ts");
+
+  assert.throws(
+    () =>
+      assertSop3Round2ClientApproved([
+        { roundNumber: 1, status: "client_approved", clientReviewTaskId: "review-round-1" },
+        { roundNumber: 2, status: "client_reviewing", clientReviewTaskId: "review-round-2" },
+      ]),
+    (error) =>
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === "sop3_round2_client_review_required"
+  );
+
+  assert.doesNotThrow(() =>
+    assertSop3Round2ClientApproved([
+      { roundNumber: 2, status: "client_approved", clientReviewTaskId: "review-round-2" },
+    ])
+  );
+});
+
 test("normalizeSop4ChecklistItemStatus rejects confirmed item status in SOP 4", async () => {
   const { normalizeSop4ChecklistItemStatus } = await import("./workload-estimate.ts");
 

@@ -1,5 +1,9 @@
 import { AppError } from "@/lib/errors";
 import {
+  listCreativeProposalRounds,
+  type CreativeProposalRoundView,
+} from "@/server/repositories/creative-proposals";
+import {
   getProjectDeliveryChecklist,
   getProjectDeliveryChecklistWithCancelled,
   createOrUpdateDeliveryChecklist,
@@ -42,6 +46,7 @@ const allowedChecklistKinds: DeliveryChecklistItemKind[] = [
   "generated_assets",
   "other",
 ];
+const sop4WorkloadEstimateStatuses = new Set<WorkloadEstimateView["status"]>(["draft", "generated"]);
 const sop4ChecklistStatuses = new Set<DeliveryChecklistView["status"]>(["draft", "changed"]);
 const sop4ChecklistItemStatuses = new Set(["planned", "changed"]);
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -93,11 +98,12 @@ export async function saveProjectWorkloadEstimate(input: {
     });
   }
 
+  await assertProjectSop3Round2ClientApproved(input.projectId);
   const estimate = normalizeWorkloadEstimate(input.estimate);
   return saveWorkloadEstimateDraft({
     projectId: input.projectId,
     actorId: input.actorId,
-    status: input.status ?? "draft",
+    status: normalizeSop4WorkloadEstimateStatus(input.status),
     roleCount: estimate.roleCount,
     sceneCount: estimate.sceneCount,
     shotCount: estimate.shotCount,
@@ -118,6 +124,7 @@ export async function createDeliveryChecklistFromEstimate(input: {
   estimateId: string;
   actorId: string;
 }): Promise<DeliveryChecklistView> {
+  await assertProjectSop3Round2ClientApproved(input.projectId);
   const estimate = await getProjectWorkloadEstimate(input.projectId);
   if (!estimate || estimate.id !== input.estimateId) {
     throw new AppError({
@@ -171,6 +178,39 @@ export async function saveProjectDeliveryChecklist(input: {
     notes: String(input.notes ?? "").trim(),
     items: normalizedItems,
     removedItemIds,
+  });
+}
+
+async function assertProjectSop3Round2ClientApproved(projectId: string) {
+  const bundle = await listCreativeProposalRounds(projectId);
+  assertSop3Round2ClientApproved(bundle.rounds);
+}
+
+export function assertSop3Round2ClientApproved(
+  rounds: Array<Pick<CreativeProposalRoundView, "roundNumber" | "status" | "clientReviewTaskId">>
+) {
+  const approvedRound2 = rounds.some(
+    (round) => round.roundNumber === 2 && round.status === "client_approved" && Boolean(round.clientReviewTaskId)
+  );
+  if (approvedRound2) return;
+
+  throw new AppError({
+    status: 409,
+    code: "sop3_round2_client_review_required",
+    userMessage: "请先完成 SOP 3 第二轮创意视觉提案的甲方确认，再保存 SOP 4 工作量估算或生成交付清单。",
+  });
+}
+
+export function normalizeSop4WorkloadEstimateStatus(status?: WorkloadEstimateView["status"]) {
+  const normalizedStatus = status ?? "draft";
+  if (sop4WorkloadEstimateStatuses.has(normalizedStatus)) {
+    return normalizedStatus;
+  }
+
+  throw new AppError({
+    status: 422,
+    code: "workload_estimate_status_not_supported_in_sop4",
+    userMessage: "SOP 4 只能保存工作量估算草稿或生成状态。确认和归档状态不能通过工作量估算入口写入。",
   });
 }
 
