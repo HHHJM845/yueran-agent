@@ -904,6 +904,25 @@ export type ProjectStageStateView = {
   updatedAt: string;
 };
 
+export type ArchiveRecordView = {
+  id: string;
+  projectId: string;
+  status: "draft" | "ready" | "completed" | "blocked" | "archived";
+  finalFilesReady: boolean;
+  finalTechnicalCheckPassed: boolean;
+  tailPaymentConfirmed: boolean;
+  clientReceivedConfirmed: boolean;
+  rightsConfirmed: boolean;
+  caseStudyPermission: "allowed" | "not_allowed" | "pending";
+  nasArchiveCompleted: boolean;
+  deliveryChannel: string;
+  archiveLocation: string;
+  afterSalesNote: string;
+  completedBy: string | null;
+  completedAt: string | null;
+  updatedAt: string;
+};
+
 export type WorkspaceData = {
   projectId: string;
   jobs: JobSummary[];
@@ -940,6 +959,7 @@ export type WorkspaceData = {
   riskCheck: RiskCheckBundleView | null;
   workloadEstimate: WorkloadEstimateView | null;
   deliveryChecklist: DeliveryChecklistView | null;
+  archiveRecord: ArchiveRecordView | null;
   changeRequests: ChangeRequestView[];
   artifacts: Array<{
     id: string;
@@ -1641,6 +1661,40 @@ export async function updateDeliveryChecklistItemStatus(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "update_item_status", ...input }),
+    })
+  );
+}
+
+export async function saveArchiveRecord(
+  projectId: string,
+  input: {
+    finalFilesReady: boolean;
+    finalTechnicalCheckPassed: boolean;
+    tailPaymentConfirmed: boolean;
+    clientReceivedConfirmed: boolean;
+    rightsConfirmed: boolean;
+    caseStudyPermission: ArchiveRecordView["caseStudyPermission"];
+    nasArchiveCompleted: boolean;
+    deliveryChannel: string;
+    archiveLocation: string;
+    afterSalesNote: string;
+  }
+) {
+  return readApi<{ archiveRecord: ArchiveRecordView; missingItems: string[]; message: string }>(
+    await fetch(`/api/projects/${projectId}/archive-record`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    })
+  );
+}
+
+export async function completeArchiveRecord(projectId: string, archiveRecordId: string) {
+  return readApi<{ archiveRecord: ArchiveRecordView; missingItems: string[]; message: string }>(
+    await fetch(`/api/projects/${projectId}/archive-record`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "complete", archiveRecordId }),
     })
   );
 }

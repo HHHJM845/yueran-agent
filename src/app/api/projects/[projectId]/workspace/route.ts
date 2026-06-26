@@ -25,6 +25,7 @@ import { getStoryboardImageBatchWorkspace } from "@/server/use-cases/storyboard-
 import { getProjectRiskCheck } from "@/server/repositories/risk-checks";
 import { getProjectWorkloadEstimate } from "@/server/repositories/workload-estimates";
 import { getProjectDeliveryChecklist } from "@/server/repositories/delivery-checklists";
+import { getProjectArchiveRecord } from "@/server/repositories/archive-records";
 
 export async function GET(request: Request, context: { params: Promise<{ projectId: string }> }) {
   try {
@@ -61,6 +62,7 @@ export async function GET(request: Request, context: { params: Promise<{ project
       riskCheck,
       workloadEstimate,
       deliveryChecklist,
+      archiveRecord,
       changeRequests,
     ] = await Promise.all([
       listProjectJobs(projectId),
@@ -92,6 +94,7 @@ export async function GET(request: Request, context: { params: Promise<{ project
       getProjectRiskCheck(projectId),
       getProjectWorkloadEstimate(projectId),
       getProjectDeliveryChecklist(projectId),
+      getProjectArchiveRecord(projectId),
       listProjectChangeRequests(projectId),
     ]);
     return Response.json({
@@ -126,6 +129,7 @@ export async function GET(request: Request, context: { params: Promise<{ project
         riskCheck,
         workloadEstimate,
         deliveryChecklist,
+        archiveRecord,
         changeRequests,
       },
     });

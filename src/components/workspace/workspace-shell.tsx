@@ -61,6 +61,7 @@ import {
   type DashboardSectionView,
   analyzeAsset,
   bootstrapAdmin,
+  completeArchiveRecord,
   createAssetAccess,
   createCreativeProposalRound,
   createCreativeProposalRoundClientReview,
@@ -103,6 +104,7 @@ import {
   reviewQuote,
   reviewTechnicalFeasibility,
   retryFeishuDelivery,
+  saveArchiveRecord,
   saveContract,
   saveDeliveryChecklist,
   saveFeishuReceiver,
@@ -117,6 +119,7 @@ import {
   submitProductionSetupClientReview,
   structureRequirement,
   type AssetAnalysisView,
+  type ArchiveRecordView,
   type AssetView,
   type ArtifactView,
   type CreativeDirectionView,
@@ -701,6 +704,7 @@ export function WorkspaceShell() {
           riskCheck={selectedWorkspaceData?.riskCheck ?? null}
           workloadEstimate={selectedWorkspaceData?.workloadEstimate ?? null}
           deliveryChecklist={selectedWorkspaceData?.deliveryChecklist ?? null}
+          archiveRecord={selectedWorkspaceData?.archiveRecord ?? null}
           changeRequests={selectedWorkspaceData?.changeRequests ?? []}
           artifacts={selectedWorkspaceData?.artifacts ?? []}
           governance={governance}
@@ -1261,6 +1265,7 @@ function WorkspaceCenter({
   riskCheck,
   workloadEstimate,
   deliveryChecklist,
+  archiveRecord,
   changeRequests,
   artifacts,
   onProjectUpdated,
@@ -1310,6 +1315,7 @@ function WorkspaceCenter({
   riskCheck: RiskCheckBundleView | null;
   workloadEstimate: WorkloadEstimateView | null;
   deliveryChecklist: DeliveryChecklistView | null;
+  archiveRecord: ArchiveRecordView | null;
   changeRequests: ChangeRequestView[];
   artifacts: ArtifactView[];
   governance: GovernanceView | null;
@@ -1706,7 +1712,24 @@ function WorkspaceCenter({
               />
             </StagePanel>
             <StagePanel stage="settlement_delivery_archive" selectedStage={selectedStage}>
-              <ReservedStageCard stage="settlement_delivery_archive" />
+              <StageWorkCard
+                icon={<Download size={18} />}
+                title="结算交付与完整归档"
+                detail="核对尾款、最终文件、签收、授权和 NAS 归档；全部完成后才关闭项目。"
+                badges={[
+                  archiveRecord ? archiveRecordStatusLabel(archiveRecord.status) : "待保存",
+                  archiveRecord?.completedAt ? "已关闭" : "未关闭",
+                  deliveryChecklist ? `${deliveryChecklist.items.length} 项交付物` : "交付清单未生成",
+                ]}
+              >
+                <ArchiveRecordCard
+                  project={project}
+                  user={user}
+                  archiveRecord={archiveRecord}
+                  deliveryChecklist={deliveryChecklist}
+                  onRefresh={onWorkspaceRefresh}
+                />
+              </StageWorkCard>
             </StagePanel>
       </div>
     </div>
@@ -1816,20 +1839,279 @@ function StageWorkCard({
   );
 }
 
-function ReservedStageCard({ stage }: { stage: ProjectStage }) {
+function ArchiveRecordCard({
+  project,
+  user,
+  archiveRecord,
+  deliveryChecklist,
+  onRefresh,
+}: {
+  project: ProjectSummary;
+  user: CurrentUser;
+  archiveRecord: ArchiveRecordView | null;
+  deliveryChecklist: DeliveryChecklistView | null;
+  onRefresh: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState<"save" | "complete" | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const canEdit = user.role === "business" || user.role === "admin";
+  const missingItems = archiveRecord
+    ? validateArchiveRecordDraft(archiveRecord)
+    : ["请先保存结算交付与归档信息"];
+  const canComplete = canEdit && archiveRecord && archiveRecord.status !== "completed" && missingItems.length === 0;
+  const deliveredItems = deliveryChecklist?.items.filter((item) => item.status === "delivered" || item.status === "confirmed").length ?? 0;
+
+  async function handleSave(formData: FormData) {
+    setBusy("save");
+    setMessage(null);
+    setError(null);
+    const result = await saveArchiveRecord(project.id, {
+      tailPaymentConfirmed: formData.get("tailPaymentConfirmed") === "on",
+      finalFilesReady: formData.get("finalFilesReady") === "on",
+      finalTechnicalCheckPassed: formData.get("finalTechnicalCheckPassed") === "on",
+      deliveryChannel: String(formData.get("deliveryChannel") ?? "").trim(),
+      clientReceivedConfirmed: formData.get("clientReceivedConfirmed") === "on",
+      rightsConfirmed: formData.get("rightsConfirmed") === "on",
+      caseStudyPermission: normalizeCaseStudyPermission(formData.get("caseStudyPermission")),
+      nasArchiveCompleted: formData.get("nasArchiveCompleted") === "on",
+      archiveLocation: String(formData.get("archiveLocation") ?? "").trim(),
+      afterSalesNote: String(formData.get("afterSalesNote") ?? "").trim(),
+    });
+
+    if (result.ok) {
+      setMessage(result.data.message);
+      await onRefresh();
+    } else {
+      setError(result.error.message);
+    }
+    setBusy(null);
+  }
+
+  async function handleComplete() {
+    if (!archiveRecord) return;
+    setBusy("complete");
+    setMessage(null);
+    setError(null);
+    const result = await completeArchiveRecord(project.id, archiveRecord.id);
+    if (result.ok) {
+      setMessage(result.data.message);
+      await onRefresh();
+    } else {
+      setError(result.error.message);
+    }
+    setBusy(null);
+  }
+
   return (
-    <Card size="sm" className="ds-card">
-      <CardContent className="flex items-start gap-3">
-        <CircleDashed className="mt-0.5 shrink-0 text-[var(--text-secondary)]" size={18} />
-        <div className="min-w-0">
-          <p className="text-sm font-medium">{stageLabels[stage]}</p>
-          <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
-            该阶段当前只保留导航与状态展示，具体业务工作区会在后续批次接入；已有持久化阶段状态仍会在上方步骤条中展示。
-          </p>
+    <div className="space-y-4">
+      <div className="grid gap-3 md:grid-cols-3">
+        {[
+          ["交付清单", deliveryChecklist ? `${deliveredItems}/${deliveryChecklist.items.length} 项已确认或交付` : "尚未生成交付清单"],
+          ["归档状态", archiveRecordStatusLabel(archiveRecord?.status ?? "draft")],
+          ["完成时间", archiveRecord?.completedAt ? formatDateTime(archiveRecord.completedAt) : "尚未关闭项目"],
+        ].map(([label, value]) => (
+          <div key={label} className="ds-card-soft p-3">
+            <p className="text-[0.72rem] text-[var(--text-secondary)]">{label}</p>
+            <p className="mt-1 text-sm font-medium text-[var(--text-primary)]">{value}</p>
+          </div>
+        ))}
+      </div>
+
+      <form key={archiveRecord?.id ?? "new-archive-record"} action={handleSave} className="space-y-4">
+        <div className="grid gap-3 md:grid-cols-2">
+          <ArchiveCheckbox
+            name="tailPaymentConfirmed"
+            title="尾款"
+            detail="尾款已确认到账，结算金额没有待核对项。"
+            defaultChecked={archiveRecord?.tailPaymentConfirmed ?? false}
+            disabled={!canEdit || busy !== null || archiveRecord?.status === "completed"}
+          />
+          <ArchiveCheckbox
+            name="finalFilesReady"
+            title="最终文件"
+            detail="成片、封面、工程文件和约定素材已准备完整。"
+            defaultChecked={archiveRecord?.finalFilesReady ?? false}
+            disabled={!canEdit || busy !== null || archiveRecord?.status === "completed"}
+          />
+          <ArchiveCheckbox
+            name="finalTechnicalCheckPassed"
+            title="技术检查"
+            detail="格式、分辨率、字幕、音画同步和命名规范已复核。"
+            defaultChecked={archiveRecord?.finalTechnicalCheckPassed ?? false}
+            disabled={!canEdit || busy !== null || archiveRecord?.status === "completed"}
+          />
+          <ArchiveCheckbox
+            name="clientReceivedConfirmed"
+            title="甲方签收"
+            detail="甲方已确认收到最终文件，交付渠道记录完整。"
+            defaultChecked={archiveRecord?.clientReceivedConfirmed ?? false}
+            disabled={!canEdit || busy !== null || archiveRecord?.status === "completed"}
+          />
+          <ArchiveCheckbox
+            name="rightsConfirmed"
+            title="版权 / 授权"
+            detail="素材授权、成片版权和使用范围已确认。"
+            defaultChecked={archiveRecord?.rightsConfirmed ?? false}
+            disabled={!canEdit || busy !== null || archiveRecord?.status === "completed"}
+          />
+          <ArchiveCheckbox
+            name="nasArchiveCompleted"
+            title="NAS 归档"
+            detail="最终文件、源文件、合同和交付记录已归档到 NAS。"
+            defaultChecked={archiveRecord?.nasArchiveCompleted ?? false}
+            disabled={!canEdit || busy !== null || archiveRecord?.status === "completed"}
+          />
         </div>
-      </CardContent>
-    </Card>
+
+        <div className="grid gap-3 md:grid-cols-2">
+          <label className="space-y-2 text-sm">
+            <span className="font-medium">交付渠道</span>
+            <Input
+              name="deliveryChannel"
+              defaultValue={archiveRecord?.deliveryChannel ?? ""}
+              disabled={!canEdit || busy !== null || archiveRecord?.status === "completed"}
+              placeholder="例如：飞书文档、OSS 链接、客户网盘"
+            />
+          </label>
+          <label className="space-y-2 text-sm">
+            <span className="font-medium">NAS 归档位置</span>
+            <Input
+              name="archiveLocation"
+              defaultValue={archiveRecord?.archiveLocation ?? ""}
+              disabled={!canEdit || busy !== null || archiveRecord?.status === "completed"}
+              placeholder="例如：NAS/AIGC/客户/项目名"
+            />
+          </label>
+        </div>
+
+        <label className="block space-y-2 text-sm">
+          <span className="font-medium">案例展示权</span>
+          <select
+            name="caseStudyPermission"
+            defaultValue={archiveRecord?.caseStudyPermission ?? "pending"}
+            disabled={!canEdit || busy !== null || archiveRecord?.status === "completed"}
+            className="h-10 w-full rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] px-3 text-sm"
+          >
+            <option value="pending">待确认</option>
+            <option value="allowed">允许案例展示</option>
+            <option value="not_allowed">不允许案例展示</option>
+          </select>
+        </label>
+
+        <label className="block space-y-2 text-sm">
+          <span className="font-medium">售后说明</span>
+          <textarea
+            name="afterSalesNote"
+            defaultValue={archiveRecord?.afterSalesNote ?? ""}
+            disabled={!canEdit || busy !== null || archiveRecord?.status === "completed"}
+            className="min-h-24 w-full rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-sm leading-6"
+            placeholder="记录售后联系人、保留期限、可重发路径或客户特别说明。"
+          />
+        </label>
+
+        <div className="ds-card-soft p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium">完成归档检查</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
+                缺项清空后才可以关闭项目；关闭会写入阶段状态机和项目 completed 状态。
+              </p>
+            </div>
+            <Badge variant={missingItems.length === 0 ? "default" : "secondary"}>
+              {missingItems.length === 0 ? "可完成" : `${missingItems.length} 项待补齐`}
+            </Badge>
+          </div>
+          {missingItems.length > 0 ? (
+            <ul className="mt-3 grid gap-2 text-xs leading-5 text-[var(--warning)] md:grid-cols-2">
+              {missingItems.map((item) => (
+                <li key={item} className="flex gap-2">
+                  <AlertCircle className="mt-0.5 shrink-0" size={14} />
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-3 text-xs leading-5 text-[var(--success)]">所有归档条件已满足，可以完成 SOP 10 并关闭项目。</p>
+          )}
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <Button type="submit" disabled={!canEdit || busy !== null || archiveRecord?.status === "completed"}>
+            {busy === "save" ? <Loader2 className="animate-spin" size={16} /> : <ClipboardList size={16} />}
+            保存归档信息
+          </Button>
+          <Button type="button" variant="secondary" disabled={!canComplete || busy !== null} onClick={() => void handleComplete()}>
+            {busy === "complete" ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
+            完成归档并关闭项目
+          </Button>
+        </div>
+      </form>
+
+      {!canEdit && (
+        <p className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3 text-sm text-[var(--text-secondary)]">
+          当前角色只能查看归档记录。如需关闭项目，请联系商务团队或管理团队处理。
+        </p>
+      )}
+      {message && <p className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-3 text-sm text-[var(--success)]">{message}</p>}
+      {error && <p className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm text-[var(--warning)]">{error}</p>}
+    </div>
   );
+}
+
+function ArchiveCheckbox({
+  name,
+  title,
+  detail,
+  defaultChecked,
+  disabled,
+}: {
+  name: string;
+  title: string;
+  detail: string;
+  defaultChecked: boolean;
+  disabled: boolean;
+}) {
+  return (
+    <label className="flex min-h-24 gap-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-sm">
+      <input
+        name={name}
+        type="checkbox"
+        defaultChecked={defaultChecked}
+        disabled={disabled}
+        className="mt-1 size-4 shrink-0 accent-[var(--accent)]"
+      />
+      <span>
+        <span className="block font-medium text-[var(--text-primary)]">{title}</span>
+        <span className="mt-1 block text-xs leading-5 text-[var(--text-secondary)]">{detail}</span>
+      </span>
+    </label>
+  );
+}
+
+function validateArchiveRecordDraft(input: Pick<
+  ArchiveRecordView,
+  | "finalFilesReady"
+  | "finalTechnicalCheckPassed"
+  | "tailPaymentConfirmed"
+  | "clientReceivedConfirmed"
+  | "rightsConfirmed"
+  | "caseStudyPermission"
+  | "nasArchiveCompleted"
+>) {
+  const missing: string[] = [];
+  if (!input.finalFilesReady) missing.push("最终交付文件尚未准备完成");
+  if (!input.finalTechnicalCheckPassed) missing.push("最终技术检查尚未通过");
+  if (!input.tailPaymentConfirmed) missing.push("尾款尚未确认到账");
+  if (!input.clientReceivedConfirmed) missing.push("甲方尚未确认收到文件");
+  if (!input.rightsConfirmed) missing.push("版权和授权尚未确认");
+  if (input.caseStudyPermission === "pending") missing.push("案例展示权尚未确认");
+  if (!input.nasArchiveCompleted) missing.push("NAS 归档尚未完成");
+  return missing;
+}
+
+function normalizeCaseStudyPermission(value: FormDataEntryValue | null): ArchiveRecordView["caseStudyPermission"] {
+  return value === "allowed" || value === "not_allowed" || value === "pending" ? value : "pending";
 }
 
 function ScriptStoryboardModule({
@@ -7912,6 +8194,17 @@ function deliveryChecklistItemStatusLabel(status: DeliveryChecklistItemStatus) {
     changed: "已变更",
     delivered: "已交付",
     cancelled: "已取消",
+  };
+  return labels[status] ?? status;
+}
+
+function archiveRecordStatusLabel(status: ArchiveRecordView["status"]) {
+  const labels: Record<ArchiveRecordView["status"], string> = {
+    draft: "草稿",
+    ready: "待完成",
+    completed: "已完成",
+    blocked: "已阻塞",
+    archived: "已归档",
   };
   return labels[status] ?? status;
 }
