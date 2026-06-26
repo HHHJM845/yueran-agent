@@ -49,6 +49,52 @@
    - Output summary:
      - no whitespace/conflict errors
 
+---
+
+# Review-fix follow-up: empty state and redline persistence
+
+## What I fixed
+
+- Changed the SOP 2 risk-check header empty state so projects without a risk card show `未生成风险体检卡` with a neutral pill instead of falling back to green/low-risk copy.
+- Added persistent `risk_check_cards.redline_alerts` storage and updated the repository select/insert/update/return mapping so new writes round-trip `draft.redlineAlerts` exactly instead of reconstructing a single derived compliance alert.
+- Added a focused regression test that guards the repository against returning `deriveRedlineAlerts(...)` instead of the persisted array.
+
+## Files changed
+
+- `src/components/workspace/workspace-shell.tsx`
+- `src/server/database/schema.sql`
+- `src/server/repositories/risk-checks.ts`
+- `src/server/use-cases/risk-check-card.test.mjs`
+
+## Exact verification commands and results
+
+1. `node --test --import tsx src/server/use-cases/risk-check-card.test.mjs`
+   - Result: passed
+   - Output summary:
+     - `pass 4`
+     - `fail 0`
+
+2. `npm run typecheck`
+   - Result: passed
+   - Output summary:
+     - `tsc --noEmit`
+     - exit code `0`
+
+3. `npm run lint`
+   - Result: passed
+   - Output summary:
+     - `eslint .`
+     - exit code `0`
+
+4. `git diff --check -- src/server/repositories/risk-checks.ts src/server/database/schema.sql src/server/use-cases/risk-check-card.test.mjs src/components/workspace/workspace-shell.tsx`
+   - Result: passed
+   - Output summary:
+     - no whitespace/conflict errors
+
+## Commit sha
+
+- `6f29197afe40d557284741fd57f08b5098a9fac8`
+
 # TDD evidence: RED and GREEN commands/output
 
 ## RED
