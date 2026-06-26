@@ -1403,6 +1403,15 @@ function WorkspaceCenter({
       </div>
 
       <div className="workspace-main-area">
+            <div className="mb-5">
+              <ChangeRequestsPanel
+                project={project}
+                user={user}
+                selectedStage={selectedStage}
+                changeRequests={changeRequests}
+                onRefresh={onWorkspaceRefresh}
+              />
+            </div>
             <StagePanel stage="brand_requirement_intake" selectedStage={selectedStage}>
               <div className="grid gap-5 lg:grid-cols-2">
                 <StageWorkCard
@@ -1693,7 +1702,6 @@ function WorkspaceCenter({
                 annotations={reviewCutAnnotations}
                 clientReviewTasks={clientReviewTasks}
                 deliveryChecklist={deliveryChecklist}
-                changeRequests={changeRequests}
                 onRefresh={onWorkspaceRefresh}
               />
             </StagePanel>
@@ -2920,7 +2928,6 @@ function ReviewCutStageModule({
   annotations,
   clientReviewTasks,
   deliveryChecklist,
-  changeRequests = [],
   onRefresh,
 }: {
   project: ProjectSummary;
@@ -2932,7 +2939,6 @@ function ReviewCutStageModule({
   annotations: ReviewCutAnnotationView[];
   clientReviewTasks: ClientReviewTaskView[];
   deliveryChecklist?: DeliveryChecklistView | null;
-  changeRequests?: ChangeRequestView[];
   onRefresh: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
@@ -3074,20 +3080,12 @@ function ReviewCutStageModule({
           />
         </WorkspaceCard>
         {cutType === "b_copy" && (
-          <>
-            <BcopyDeliveryChecklistPanel
-              project={project}
-              user={user}
-              checklist={deliveryChecklist ?? null}
-              onRefresh={onRefresh}
-            />
-            <ChangeRequestsPanel
-              project={project}
-              user={user}
-              changeRequests={changeRequests}
-              onRefresh={onRefresh}
-            />
-          </>
+          <BcopyDeliveryChecklistPanel
+            project={project}
+            user={user}
+            checklist={deliveryChecklist ?? null}
+            onRefresh={onRefresh}
+          />
         )}
       </div>
       <aside className="grid gap-5">
@@ -3241,11 +3239,13 @@ function BcopyDeliveryChecklistPanel({
 function ChangeRequestsPanel({
   project,
   user,
+  selectedStage,
   changeRequests,
   onRefresh,
 }: {
   project: ProjectSummary;
   user: CurrentUser;
+  selectedStage: ProjectStage;
   changeRequests: ChangeRequestView[];
   onRefresh: () => Promise<void>;
 }) {
@@ -3255,13 +3255,14 @@ function ChangeRequestsPanel({
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const openRequests = changeRequests.filter((request) => request.status === "draft" || request.status === "submitted" || request.status === "approved");
+  const defaultSourceSop = sourceSopForStage(selectedStage);
 
   async function handleCreate(formData: FormData) {
     setBusy("create");
     setMessage(null);
     setError(null);
     const result = await createChangeRequest(project.id, {
-      sourceSop: String(formData.get("sourceSop") ?? "sop_9").trim(),
+      sourceSop: String(formData.get("sourceSop") ?? defaultSourceSop).trim(),
       originalScope: String(formData.get("originalScope") ?? "").trim(),
       requestedScope: String(formData.get("requestedScope") ?? "").trim(),
       impactJson: {
@@ -3347,7 +3348,7 @@ function ChangeRequestsPanel({
         <div className="grid gap-3 md:grid-cols-3">
           <label className="grid gap-1 text-xs font-medium">
             来源 SOP
-            <Input name="sourceSop" defaultValue="sop_9" disabled={!canCreate || busy === "create"} />
+            <Input name="sourceSop" defaultValue={defaultSourceSop} disabled={!canCreate || busy === "create"} />
           </label>
           <label className="grid gap-1 text-xs font-medium">
             费用影响
@@ -3373,6 +3374,11 @@ function ChangeRequestsPanel({
       </form>
     </WorkspaceCard>
   );
+}
+
+function sourceSopForStage(stage: ProjectStage) {
+  const stageIndex = projectStages.indexOf(stage);
+  return stageIndex >= 0 ? `sop_${stageIndex + 1}` : "sop_1";
 }
 
 function sceneStatusLabel(status: string) {
