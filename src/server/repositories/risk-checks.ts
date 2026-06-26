@@ -62,6 +62,7 @@ type RiskCheckCardRow = {
   project_id: string;
   status: RiskCheckCardView["status"];
   overall_alert: RiskCheckCardView["overallAlert"];
+  redline_alerts: unknown;
   human_decision: RiskCheckDecision | null;
   decision_reason: string;
   decided_by: string | null;
@@ -102,7 +103,7 @@ type RiskCheckDimensionRow = {
 
 export async function getProjectRiskCheck(projectId: string): Promise<RiskCheckBundleView | null> {
   const cardResult = await query<RiskCheckCardRow>(
-    `select id, project_id, status, overall_alert, human_decision, decision_reason,
+    `select id, project_id, status, overall_alert, redline_alerts, human_decision, decision_reason,
             decided_by, decided_at, source_artifact_id, created_by, created_at, updated_at
      from risk_check_cards
      where project_id = $1
@@ -132,12 +133,12 @@ export async function getProjectRiskCheck(projectId: string): Promise<RiskCheckB
     ),
   ]);
 
-  const dimensions = dimensionsResult.rows.map(mapDimension);
+  const card = mapCard(cardRow);
   return {
-    card: mapCard(cardRow),
+    card,
     facts: factsResult.rows.map(mapFact),
-    dimensions,
-    redlineAlerts: deriveRedlineAlerts(mapCard(cardRow).overallAlert, dimensions),
+    dimensions: dimensionsResult.rows.map(mapDimension),
+    redlineAlerts: mapRedlineAlerts(cardRow),
   };
 }
 
@@ -150,22 +151,30 @@ export async function upsertRiskCheckDraft(input: {
   return withTransaction(async (tx) => {
     const cardResult = await tx<RiskCheckCardRow>(
       `insert into risk_check_cards (
-         project_id, status, overall_alert, human_decision, decision_reason, decided_by, decided_at, source_artifact_id, created_by
+         project_id, status, overall_alert, redline_alerts, human_decision, decision_reason, decided_by, decided_at, source_artifact_id, created_by
        )
        values (
-         $1, $2, $3, null, '', null, null, $4,
-         case when exists (select 1 from users where id = $5::uuid) then $5::uuid else null end
+         $1, $2, $3, $4::jsonb, null, '', null, null, $5,
+         case when exists (select 1 from users where id = $6::uuid) then $6::uuid else null end
        )
        on conflict (project_id)
        do update set
          status = excluded.status,
          overall_alert = excluded.overall_alert,
+         redline_alerts = excluded.redline_alerts,
 ${RISK_CHECK_REGENERATE_DECISION_RESET_SQL}
          source_artifact_id = excluded.source_artifact_id,
          updated_at = now()
-       returning id, project_id, status, overall_alert, human_decision, decision_reason,
+       returning id, project_id, status, overall_alert, redline_alerts, human_decision, decision_reason,
                  decided_by, decided_at, source_artifact_id, created_by, created_at, updated_at`,
-      [input.projectId, input.draft.status, input.draft.overallAlert, input.sourceArtifactId ?? null, input.actorId]
+      [
+        input.projectId,
+        input.draft.status,
+        input.draft.overallAlert,
+        JSON.stringify(input.draft.redlineAlerts),
+        input.sourceArtifactId ?? null,
+        input.actorId,
+      ]
     );
 
     const cardRow = cardResult.rows[0];
@@ -225,7 +234,7 @@ ${RISK_CHECK_REGENERATE_DECISION_RESET_SQL}
       card,
       facts: factsResult.rows.map(mapFact),
       dimensions,
-      redlineAlerts: deriveRedlineAlerts(card.overallAlert, dimensions),
+      redlineAlerts: mapRedlineAlerts(cardRow),
     };
   });
 }
@@ -246,7 +255,7 @@ export async function updateRiskCheckDecision(input: {
          status = case when $3 = 'reject' then 'needs_revision' else 'approved' end,
          updated_at = now()
      where project_id = $1 and id = $2
-     returning id, project_id, status, overall_alert, human_decision, decision_reason,
+     returning id, project_id, status, overall_alert, redline_alerts, human_decision, decision_reason,
                decided_by, decided_at, source_artifact_id, created_by, created_at, updated_at`,
     [input.projectId, input.cardId, input.decision, input.reason.trim(), input.actorId]
   );
@@ -362,14 +371,7 @@ function mapDimension(row: RiskCheckDimensionRow): RiskCheckDimensionView {
   };
 }
 
-function deriveRedlineAlerts(
-  overallAlert: RiskCheckCardView["overallAlert"],
-  dimensions: RiskCheckDimensionView[]
-) {
-  if (overallAlert !== "redline") return [];
-  const compliance = dimensions.find((item) => item.dimensionKey === "compliance");
-  if (compliance?.evidence) {
-    return [`红线风险：${compliance.evidence}`];
-  }
-  return ["红线风险：当前 Brief 命中了需要老板决策的高风险组合。"];
+function mapRedlineAlerts(row: RiskCheckCardRow) {
+  if (!Array.isArray(row.redline_alerts)) return [];
+  return row.redline_alerts.filter((item): item is string => typeof item === "string");
 }

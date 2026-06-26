@@ -897,6 +897,7 @@ create table if not exists risk_check_cards (
   project_id uuid not null references projects(id) on delete cascade,
   status text not null default 'draft' check (status in ('draft', 'in_review', 'needs_revision', 'approved', 'archived')),
   overall_alert text not null default 'low' check (overall_alert in ('low', 'medium', 'high', 'redline')),
+  redline_alerts jsonb not null default '[]'::jsonb,
   human_decision text check (human_decision is null or human_decision in ('accept', 'reject', 'conditional_accept')),
   decision_reason text not null default '',
   decided_by uuid references users(id),
@@ -907,6 +908,9 @@ create table if not exists risk_check_cards (
   updated_at timestamptz not null default now(),
   unique (project_id)
 );
+
+alter table risk_check_cards
+  add column if not exists redline_alerts jsonb not null default '[]'::jsonb;
 
 create table if not exists risk_check_facts (
   id uuid primary key default gen_random_uuid(),

@@ -179,6 +179,7 @@ const riskAlertLabels: Record<NonNullable<RiskCheckCardView["overallAlert"]>, st
   high: "需重点评估",
   redline: "命中红线",
 };
+const riskCheckEmptyAlertLabel = "未生成风险体检卡";
 
 const riskDecisionLabels: Record<Exclude<RiskCheckDecision, never>, string> = {
   accept: "可以接",
@@ -3284,8 +3285,8 @@ function TechnicalFeasibilityReviewCard({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <span className={cn("ds-pill", alertToneClassName(riskCheck?.card?.overallAlert ?? "low"))}>
-            {riskAlertLabels[riskCheck?.card?.overallAlert ?? "low"]}
+          <span className={cn("ds-pill", riskCheck ? alertToneClassName(riskCheck.card.overallAlert) : "bg-[var(--surface-soft)] text-[var(--text-secondary)]")}>
+            {riskCheck ? riskAlertLabels[riskCheck.card.overallAlert] : riskCheckEmptyAlertLabel}
           </span>
           <span className={cn("ds-pill", technicalStage?.status === "blocked" ? "ds-pill-pink" : "bg-[var(--surface-soft)] text-[var(--text-secondary)]")}>
             {statusLabels[technicalStage?.status ?? (project.currentStage === "technical_feasibility" ? project.status : "not_started")]}

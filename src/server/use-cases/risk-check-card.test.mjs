@@ -55,3 +55,11 @@ test("regenerating a draft clears prior human decision fields in conflict update
   assert.match(RISK_CHECK_REGENERATE_DECISION_RESET_SQL, /decided_by = null/);
   assert.match(RISK_CHECK_REGENERATE_DECISION_RESET_SQL, /decided_at = null/);
 });
+
+test("risk check repository persists draft redline alerts instead of deriving one alert", async () => {
+  const source = await import("node:fs/promises").then((fs) => fs.readFile(new URL("../repositories/risk-checks.ts", import.meta.url), "utf8"));
+
+  assert.match(source, /redline_alerts/);
+  assert.match(source, /JSON\.stringify\(input\.draft\.redlineAlerts\)/);
+  assert.doesNotMatch(source, /redlineAlerts:\s*deriveRedlineAlerts/);
+});
