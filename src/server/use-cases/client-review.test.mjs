@@ -1,6 +1,28 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+test("normalizes generic review metadata for SOP scenes", async () => {
+  const { normalizeClientReviewMetadata } = await import("./client-review.ts");
+
+  assert.deepEqual(
+    normalizeClientReviewMetadata({
+      reviewType: "project_proposal",
+      sopKey: "sop_3",
+      reviewScene: "creative_round_1",
+      roundNumber: 1,
+      batchNumber: null,
+      payloadVersion: 2,
+    }),
+    {
+      sopKey: "sop_3",
+      reviewScene: "creative_round_1",
+      roundNumber: 1,
+      batchNumber: null,
+      payloadVersion: 2,
+    }
+  );
+});
+
 test("storyboard scene review keeps per-shot scores when the whole scene is rejected", async () => {
   const { normalizeReviewItemsForSubmission } = await import("./client-review.ts");
 

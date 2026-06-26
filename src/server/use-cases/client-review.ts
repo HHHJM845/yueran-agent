@@ -70,7 +70,38 @@ export const createClientReviewInputSchema = z.object({
     "b_copy_review",
   ]),
   targetScopeId: z.string().uuid().optional(),
+  sopKey: z.string().max(80).optional().nullable(),
+  reviewScene: z.string().max(120).optional().nullable(),
+  roundNumber: z.number().int().positive().optional().nullable(),
+  batchNumber: z.number().int().positive().optional().nullable(),
+  payloadVersion: z.number().int().positive().optional().nullable(),
 });
+
+export type ClientReviewScene =
+  | "brief_confirmation"
+  | "creative_round_1"
+  | "creative_round_2"
+  | "production_setup"
+  | "storyboard_image_batch"
+  | "a_copy_round"
+  | "b_copy_final";
+
+export function normalizeClientReviewMetadata(input: {
+  reviewType: ClientReviewType;
+  sopKey?: string | null;
+  reviewScene?: string | null;
+  roundNumber?: number | null;
+  batchNumber?: number | null;
+  payloadVersion?: number | null;
+}) {
+  return {
+    sopKey: input.sopKey ?? null,
+    reviewScene: input.reviewScene ?? null,
+    roundNumber: input.roundNumber ?? null,
+    batchNumber: input.batchNumber ?? null,
+    payloadVersion: input.payloadVersion ?? 1,
+  };
+}
 
 export async function createWorkflowClientReview(input: {
   projectId: string;
@@ -78,10 +109,28 @@ export async function createWorkflowClientReview(input: {
   origin: string;
   reviewType: z.infer<typeof createClientReviewInputSchema>["reviewType"];
   targetScopeId?: string | null;
+  sopKey?: string | null;
+  reviewScene?: ClientReviewScene | null;
+  roundNumber?: number | null;
+  batchNumber?: number | null;
+  payloadVersion?: number | null;
 }) {
   const parsed = createClientReviewInputSchema.parse({
     reviewType: input.reviewType,
     targetScopeId: input.targetScopeId ?? undefined,
+    sopKey: input.sopKey ?? null,
+    reviewScene: input.reviewScene ?? null,
+    roundNumber: input.roundNumber ?? null,
+    batchNumber: input.batchNumber ?? null,
+    payloadVersion: input.payloadVersion ?? null,
+  });
+  const metadata = normalizeClientReviewMetadata({
+    reviewType: parsed.reviewType,
+    sopKey: parsed.sopKey,
+    reviewScene: parsed.reviewScene,
+    roundNumber: parsed.roundNumber,
+    batchNumber: parsed.batchNumber,
+    payloadVersion: parsed.payloadVersion,
   });
   const spec = await buildWorkflowReviewSpec({
     projectId: input.projectId,
@@ -107,6 +156,11 @@ export async function createWorkflowClientReview(input: {
     verificationCodeHash: credentials.codeHash,
     expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString(),
     createdBy: input.actorId,
+    sopKey: metadata.sopKey,
+    reviewScene: metadata.reviewScene,
+    roundNumber: metadata.roundNumber,
+    batchNumber: metadata.batchNumber,
+    reviewPayloadVersion: metadata.payloadVersion,
     payload: spec.payload,
     items: spec.items,
   });

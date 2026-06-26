@@ -2,7 +2,7 @@ import { z } from "zod";
 import { jsonError } from "@/lib/errors";
 import { requireProjectAccess, requireRole } from "@/server/auth/rbac";
 import { requireUser } from "@/server/auth/session";
-import { createWorkflowClientReview } from "@/server/use-cases/client-review";
+import { createWorkflowClientReview, type ClientReviewScene } from "@/server/use-cases/client-review";
 
 const createClientReviewRequestSchema = z.object({
   reviewType: z.enum([
@@ -15,6 +15,11 @@ const createClientReviewRequestSchema = z.object({
     "b_copy_review",
   ]),
   targetScopeId: z.string().uuid().optional(),
+  sopKey: z.string().max(80).optional().nullable(),
+  reviewScene: z.string().max(120).optional().nullable(),
+  roundNumber: z.number().int().positive().optional().nullable(),
+  batchNumber: z.number().int().positive().optional().nullable(),
+  payloadVersion: z.number().int().positive().optional().nullable(),
 });
 
 export async function POST(request: Request, context: { params: Promise<{ projectId: string }> }) {
@@ -37,6 +42,11 @@ export async function POST(request: Request, context: { params: Promise<{ projec
       origin: url.origin,
       reviewType: body.reviewType,
       targetScopeId: body.targetScopeId ?? null,
+      sopKey: body.sopKey ?? null,
+      reviewScene: (body.reviewScene as ClientReviewScene | null | undefined) ?? null,
+      roundNumber: body.roundNumber ?? null,
+      batchNumber: body.batchNumber ?? null,
+      payloadVersion: body.payloadVersion ?? null,
     });
 
     return Response.json({

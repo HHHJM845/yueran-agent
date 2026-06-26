@@ -394,6 +394,11 @@ export type ClientReviewTaskView = {
   expiresAt: string | null;
   submittedAt: string | null;
   reviewedAt: string | null;
+  sopKey: string | null;
+  reviewScene: string | null;
+  roundNumber: number | null;
+  batchNumber: number | null;
+  reviewPayloadVersion: number;
   payload: Record<string, unknown>;
   decisionPayload: Record<string, unknown>;
   reviewerName: string | null;
@@ -411,6 +416,15 @@ export type CreateClientReviewType =
   | "script_package"
   | "a_copy_review"
   | "b_copy_review";
+
+export type ClientReviewScene =
+  | "brief_confirmation"
+  | "creative_round_1"
+  | "creative_round_2"
+  | "production_setup"
+  | "storyboard_image_batch"
+  | "a_copy_round"
+  | "b_copy_final";
 
 export type ClientReviewItemView = {
   id: string;
@@ -1044,6 +1058,11 @@ export async function createWorkflowClientReview(
   input: {
     reviewType: CreateClientReviewType;
     targetScopeId?: string | null;
+    sopKey?: string | null;
+    reviewScene?: ClientReviewScene | null;
+    roundNumber?: number | null;
+    batchNumber?: number | null;
+    payloadVersion?: number | null;
   }
 ) {
   return readApi<{
