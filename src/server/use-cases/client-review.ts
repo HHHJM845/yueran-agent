@@ -640,6 +640,20 @@ export async function submitClientReviewByToken(token: string, rawInput: unknown
     submittedItems: input.items,
     existingItems,
   });
+  const creativeReviewFeedback =
+    task.reviewScene === "creative_round_1" || task.reviewScene === "creative_round_2"
+      ? formatCreativeReviewDecisionPayload({
+          overallFeedback: input.feedback,
+          items: normalizedItems.map((item) => {
+            const existingItem = existingItems.find((candidate) => candidate.itemId === item.itemId);
+            return {
+              ...item,
+              itemLabel: existingItem?.itemLabel ?? item.itemId,
+              metadata: existingItem?.metadata ?? {},
+            };
+          }),
+        })
+      : {};
 
   const result = await submitClientReviewTaskRecord({
     taskId: task.id,
@@ -649,7 +663,9 @@ export async function submitClientReviewByToken(token: string, rawInput: unknown
     feedback: input.feedback,
     decisionPayload: {
       submittedAt: new Date().toISOString(),
+      decision: input.decision,
       itemDecisionCount: normalizedItems.length,
+      ...creativeReviewFeedback,
     },
     items: normalizedItems,
   });
@@ -736,6 +752,66 @@ export function normalizeReviewItemsForSubmission(input: {
       feedback: submitted?.feedback ?? "",
     };
   });
+}
+
+export function formatCreativeReviewDecisionPayload(input: {
+  overallFeedback?: string | null;
+  items: Array<{
+    itemId: string;
+    itemLabel?: string | null;
+    decision: Exclude<ClientReviewItemDecision, "pending">;
+    score?: number | null;
+    feedback?: string | null;
+    metadata?: Record<string, unknown> | null;
+  }>;
+}) {
+  const sortedItems = [...input.items].sort((a, b) => {
+    const scoreA = typeof a.score === "number" ? a.score : null;
+    const scoreB = typeof b.score === "number" ? b.score : null;
+    if (scoreA !== null || scoreB !== null) return (scoreB ?? -1) - (scoreA ?? -1);
+    if (a.decision !== b.decision) return a.decision === "approved" ? -1 : 1;
+    return getReviewItemSortIndex(a.metadata) - getReviewItemSortIndex(b.metadata);
+  });
+  const directionPriority = sortedItems.map(formatCreativeReviewPriorityItem).join("；");
+  const visualNotes = [
+    ...input.items
+      .map((item) => {
+        const feedback = item.feedback?.trim();
+        if (!feedback) return "";
+        return `${getReviewItemLabel(item)}：${feedback}`;
+      })
+      .filter(Boolean),
+    input.overallFeedback?.trim() ?? "",
+  ].filter(Boolean);
+
+  return {
+    directionPriority,
+    visualPreferenceNotes: visualNotes.join("；"),
+  };
+}
+
+function formatCreativeReviewPriorityItem(item: {
+  itemId: string;
+  itemLabel?: string | null;
+  decision: Exclude<ClientReviewItemDecision, "pending">;
+  score?: number | null;
+  metadata?: Record<string, unknown> | null;
+}) {
+  const decisionLabel = item.decision === "approved" ? "通过" : "打回";
+  const scoreLabel = typeof item.score === "number" ? `，评分 ${item.score} 分` : "";
+  return `${getReviewItemLabel(item)}（${decisionLabel}${scoreLabel}）`;
+}
+
+function getReviewItemLabel(item: { itemId: string; itemLabel?: string | null; metadata?: Record<string, unknown> | null }) {
+  const directionTitle = item.metadata?.directionTitle;
+  if (typeof directionTitle === "string" && directionTitle.trim()) return directionTitle.trim();
+  if (item.itemLabel?.trim()) return item.itemLabel.trim();
+  return `方向 ${item.itemId}`;
+}
+
+function getReviewItemSortIndex(metadata?: Record<string, unknown> | null) {
+  const sceneIndex = metadata?.sceneIndex;
+  return typeof sceneIndex === "number" && Number.isFinite(sceneIndex) ? sceneIndex : Number.MAX_SAFE_INTEGER;
 }
 
 async function markReviewCreatedProgress(input: {

@@ -4126,11 +4126,15 @@ function CreativeSceneImageChoice({
 function CreativeProposalReviewFeedback({ task }: { task: ClientReviewTaskView | null }) {
   if (!task || task.status !== "submitted") return null;
   const itemDecisionCount = readPayloadNumber(task.decisionPayload, "itemDecisionCount");
+  const directionPriority = readPayloadString(task.decisionPayload, "directionPriority");
+  const visualPreferenceNotes = readPayloadString(task.decisionPayload, "visualPreferenceNotes");
   const decisionLabel = task.decisionPayload.decision === "approved" ? "本轮已确认" : task.decisionPayload.decision === "rejected" ? "本轮被打回" : "甲方已提交反馈";
   return (
     <div className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-3 text-xs leading-5 text-[var(--text-secondary)]">
       <p className="font-medium text-[var(--success)]">甲方反馈已回写</p>
       <p className="mt-1">审核结论：{decisionLabel}</p>
+      <p className="mt-1">方向优先级：{directionPriority || "甲方未逐项标注方向优先级，请结合整体反馈继续沟通确认。"}</p>
+      <p className="mt-1">视觉偏好：{visualPreferenceNotes || "甲方未填写具体视觉偏好，可在下一轮深化前补齐偏好说明。"}</p>
       <p className="mt-1">整体反馈：{task.feedback?.trim() || "甲方未填写整体备注，可在下一轮沟通中补齐。"}</p>
       {itemDecisionCount > 0 && <p className="mt-1">逐项反馈：已收到 {itemDecisionCount} 条方向或场景判断。</p>}
     </div>
@@ -4140,6 +4144,11 @@ function CreativeProposalReviewFeedback({ task }: { task: ClientReviewTaskView |
 function readPayloadNumber(payload: Record<string, unknown>, key: string) {
   const value = payload[key];
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function readPayloadString(payload: Record<string, unknown>, key: string) {
+  const value = payload[key];
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function CreativeDirectionCard({
