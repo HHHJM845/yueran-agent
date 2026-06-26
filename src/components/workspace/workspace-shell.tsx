@@ -6736,6 +6736,9 @@ function DeliveryChecklistCard({
           <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
             清单会持久化到数据库，并作为合同交付范围和 SOP 9 交付核对的依据。
           </p>
+          <p className="mt-1 text-sm leading-6 text-[var(--text-secondary)]">
+            SOP 4 只保存草稿或签约前变更；最终确认会在 SOP 9 完成，归档在 SOP 10 处理。
+          </p>
         </div>
         <div className="flex flex-wrap gap-2 text-xs">
           <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">当前 v{checklist?.version ?? 0}</span>
@@ -6779,9 +6782,7 @@ function DeliveryChecklistCard({
               className="h-9 ds-card-sm px-3 text-sm disabled:bg-[var(--muted)]"
             >
               <option value="draft">草稿</option>
-              <option value="confirmed">已确认</option>
               <option value="changed">已变更</option>
-              <option value="archived">已归档</option>
             </select>
           </label>
           <label className="grid gap-1 text-sm">

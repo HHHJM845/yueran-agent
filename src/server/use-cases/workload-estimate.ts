@@ -38,6 +38,7 @@ const allowedChecklistKinds: DeliveryChecklistItemKind[] = [
   "generated_assets",
   "other",
 ];
+const sop4ChecklistStatuses = new Set<DeliveryChecklistView["status"]>(["draft", "changed"]);
 
 export function normalizeWorkloadEstimate(value: unknown): WorkloadEstimateDraft {
   const record = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
@@ -157,9 +158,22 @@ export async function saveProjectDeliveryChecklist(input: {
     projectId: input.projectId,
     actorId: input.actorId,
     estimateId: input.estimateId ?? existing?.estimateId ?? null,
-    status: input.status ?? "draft",
+    status: normalizeSop4DeliveryChecklistStatus(input.status),
     notes: String(input.notes ?? "").trim(),
     items: normalizedItems,
+  });
+}
+
+export function normalizeSop4DeliveryChecklistStatus(status?: DeliveryChecklistView["status"]) {
+  const normalizedStatus = status ?? "draft";
+  if (sop4ChecklistStatuses.has(normalizedStatus)) {
+    return normalizedStatus;
+  }
+
+  throw new AppError({
+    status: 422,
+    code: "delivery_checklist_status_not_supported_in_sop4",
+    userMessage: "SOP 4 只能保存交付清单草稿或变更状态。最终确认请在 SOP 9 完成，归档请在 SOP 10 处理。",
   });
 }
 

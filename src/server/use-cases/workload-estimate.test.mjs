@@ -44,6 +44,19 @@ test("normalizeWorkloadEstimate sorts reversed price values", async () => {
   assert.equal(estimate.priceRange.maxCny, 80000);
 });
 
+test("normalizeSop4DeliveryChecklistStatus rejects confirmed in SOP 4", async () => {
+  const { normalizeSop4DeliveryChecklistStatus } = await import("./workload-estimate.ts");
+
+  assert.throws(
+    () => normalizeSop4DeliveryChecklistStatus("confirmed"),
+    (error) =>
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === "delivery_checklist_status_not_supported_in_sop4"
+  );
+});
+
 test("delivery checklist bulk save preserves existing item identity and change request traceability", async () => {
   const source = await import("node:fs/promises").then((fs) =>
     fs.readFile(new URL("../repositories/delivery-checklists.ts", import.meta.url), "utf8")

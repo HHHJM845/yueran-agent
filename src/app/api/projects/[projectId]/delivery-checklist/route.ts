@@ -32,7 +32,7 @@ const saveChecklistRequestSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("save"),
     estimateId: z.string().uuid().nullable().optional(),
-    status: z.enum(["draft", "confirmed", "changed", "archived"]).optional(),
+    status: z.enum(["draft", "changed"]).optional(),
     notes: z.string().optional(),
     items: z.array(checklistItemSchema),
   }),
