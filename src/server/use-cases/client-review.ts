@@ -36,6 +36,11 @@ import {
   updateStoryboardSceneStatus,
   updateStoryboardShotClientDecision,
 } from "@/server/repositories/story-production";
+import {
+  listProductionEntities,
+  listProductionReferenceSets,
+  updateProjectProductionSetupStatus,
+} from "@/server/repositories/production-entities";
 import { recordStageProgress } from "@/server/use-cases/stage-progress";
 
 const submitItemSchema = z.object({
@@ -159,6 +164,7 @@ export async function createWorkflowClientReview(input: {
     projectId: input.projectId,
     reviewType: parsed.reviewType,
     targetScopeId: parsed.targetScopeId ?? null,
+    reviewScene: parsed.reviewScene ?? null,
   });
   const credentials = createReviewCredentials();
   const version = await getNextClientReviewVersion({
@@ -195,6 +201,7 @@ export async function createWorkflowClientReview(input: {
     reviewType: spec.reviewType,
     targetScopeType: spec.targetScopeType,
     targetScopeId: spec.targetScopeId,
+    reviewScene: metadata.reviewScene,
   });
   if (spec.targetScopeType === "review_cut") {
     await markReviewCutClientReviewing({
@@ -327,6 +334,7 @@ async function buildWorkflowReviewSpec(input: {
   projectId: string;
   reviewType: Exclude<ClientReviewType, "storyboard_scene_images">;
   targetScopeId: string | null;
+  reviewScene?: ClientReviewScene | null;
 }): Promise<WorkflowReviewSpec> {
   const project = await getProjectById(input.projectId);
   if (!project) {
@@ -551,6 +559,42 @@ async function buildWorkflowReviewSpec(input: {
           },
         },
       ],
+    };
+  }
+
+  if (input.reviewType === "script_package" && input.reviewScene === "production_setup") {
+    const [entities, referenceSets] = await Promise.all([
+      listProductionEntities(input.projectId),
+      listProductionReferenceSets(input.projectId),
+    ]);
+    if (entities.length === 0) {
+      throw new AppError({
+        status: 422,
+        code: "production_entities_empty",
+        userMessage: "人物和场景设定还没有生成。请先拆分文字分镜，再提交人物场景设定审核。",
+      });
+    }
+    return {
+      moduleKey: "script_storyboard_confirmation",
+      reviewType: "script_package",
+      targetScopeType: "script_package",
+      targetScopeId: input.targetScopeId ?? entities[0].id,
+      title: "人物场景设定确认",
+      summary: "请确认完整脚本拆分后抽取的人物、场景和参考设定深度；如需修改，请打回并说明调整意见。",
+      payload: { project, productionEntities: entities, productionReferenceSets: referenceSets },
+      items: entities.map((entity) => ({
+        itemType: "reference_asset" as ClientReviewItemType,
+        itemId: entity.id,
+        itemLabel: `${entity.entityType === "character" ? "人物设定" : entity.entityType === "scene" ? "场景设定" : "道具设定"}｜${entity.name}`,
+        metadata: {
+          entityType: entity.entityType,
+          referenceDepth: entity.referenceDepth,
+          status: entity.status,
+          sourceShotIds: entity.sourceShotIds,
+          referenceSetCount: referenceSets.filter((set) => set.entityId === entity.id).length,
+          previewText: summarizeText(entity.description || entity.name, 800),
+        },
+      })),
     };
   }
 
@@ -908,6 +952,7 @@ async function markReviewCreatedProgress(input: {
   reviewType: ClientReviewType;
   targetScopeType: ClientReviewTargetScopeType;
   targetScopeId: string;
+  reviewScene?: ClientReviewScene | null;
 }) {
   if (input.reviewType === "project_proposal" && input.targetScopeType === "proposal") {
     await updateProposalStatus({
@@ -933,16 +978,18 @@ async function markReviewCreatedProgress(input: {
       actorId: input.actorId,
     });
   }
-  if (input.reviewType === "script_package" && input.targetScopeType === "script_package") {
-    await updateScriptDirectionPackageStatus({
-      projectId: input.projectId,
-      packageId: input.targetScopeId,
-      status: "client_reviewing",
-      actorId: input.actorId,
-    });
+  if (input.reviewType === "script_package" && input.targetScopeType === "script_package" && input.reviewScene !== "production_setup") {
+    if (input.targetScopeId) {
+      await updateScriptDirectionPackageStatus({
+        projectId: input.projectId,
+        packageId: input.targetScopeId,
+        status: "client_reviewing",
+        actorId: input.actorId,
+      });
+    }
   }
 
-  const stage = reviewCreatedStage(input.reviewType);
+  const stage = reviewCreatedStage(input.reviewType, input.reviewScene ?? null);
   await recordStageProgress({
     projectId: input.projectId,
     stageKey: stage.stageKey,
@@ -1012,11 +1059,18 @@ async function applyWorkflowReviewDecision(input: {
     });
   }
   if (input.reviewType === "script_package" && input.targetScopeType === "script_package") {
-    await updateScriptDirectionPackageStatus({
-      projectId: input.projectId,
-      packageId: input.targetScopeId,
-      status: approved ? "client_approved" : "client_rejected",
-    });
+    if (input.reviewScene === "production_setup") {
+      await updateProjectProductionSetupStatus({
+        projectId: input.projectId,
+        status: approved ? "locked" : "client_rejected",
+      });
+    } else {
+      await updateScriptDirectionPackageStatus({
+        projectId: input.projectId,
+        packageId: input.targetScopeId,
+        status: approved ? "client_approved" : "client_rejected",
+      });
+    }
   }
   if ((input.reviewType === "a_copy_review" || input.reviewType === "b_copy_review") && input.targetScopeType === "review_cut") {
     const [scenes, shots] = await Promise.all([
@@ -1075,7 +1129,7 @@ async function applyWorkflowReviewDecision(input: {
   });
 }
 
-function reviewCreatedStage(reviewType: ClientReviewType) {
+function reviewCreatedStage(reviewType: ClientReviewType, reviewScene?: ClientReviewScene | null) {
   if (reviewType === "brief_confirmation") {
     return {
       stageKey: "brand_requirement_intake" as const,
@@ -1089,6 +1143,12 @@ function reviewCreatedStage(reviewType: ClientReviewType) {
     };
   }
   if (reviewType === "script_package") {
+    if (reviewScene === "production_setup") {
+      return {
+        stageKey: "script_storyboard_confirmation" as const,
+        userMessage: "人物和场景设定已提交甲方审核，等待甲方确认后锁定生产设定。",
+      };
+    }
     return {
       stageKey: "script_storyboard_confirmation" as const,
       userMessage: "脚本方向、人物参考、场景参考和完整剧本已提交甲方审核。",
@@ -1142,6 +1202,17 @@ export function reviewSubmittedStage(reviewType: ClientReviewType, decision: "ap
     };
   }
   if (reviewType === "script_package") {
+    if (reviewScene === "production_setup") {
+      return {
+        stageKey: "script_storyboard_confirmation" as const,
+        status: approved ? ("approved" as const) : ("needs_revision" as const),
+        currentStage: "script_storyboard_confirmation" as const,
+        projectStatus: approved ? ("in_progress" as const) : ("needs_revision" as const),
+        userMessage: approved
+          ? "甲方已确认人物和场景设定，生产设定已锁定。后续图片阶段可以使用这些设定作为门禁依据。"
+          : "甲方已打回人物和场景设定，修改意见已回写内部端。",
+      };
+    }
     return {
       stageKey: "script_storyboard_confirmation" as const,
       status: approved ? ("approved" as const) : ("needs_revision" as const),

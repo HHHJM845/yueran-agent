@@ -108,6 +108,7 @@ import {
   saveWorkloadEstimate,
   saveScriptPackage,
   selectCreativeSceneImages,
+  submitProductionSetupClientReview,
   structureRequirement,
   type AssetAnalysisView,
   type AssetView,
@@ -135,6 +136,8 @@ import {
   type ClientReviewItemView,
   type ClientReviewTaskView,
   type CreateClientReviewType,
+  type ProductionEntityView,
+  type ProductionReferenceSetView,
   type ProjectStageStateView,
   type ProposalView,
   type QuoteItemView,
@@ -158,6 +161,7 @@ import {
   updateProjectBasics,
   updateCreativeDirectionContent,
   updateCreativeDirectionSelection,
+  updateProductionEntityReferenceDepth,
   generateStoryboardImage,
   generateStoryboardVideo,
   splitScriptPackage,
@@ -651,6 +655,8 @@ export function WorkspaceShell() {
           scriptReferences={selectedWorkspaceData?.scriptReferences ?? []}
           storyboardScenes={selectedWorkspaceData?.storyboardScenes ?? []}
           storyboardShots={selectedWorkspaceData?.storyboardShots ?? []}
+          productionEntities={selectedWorkspaceData?.productionEntities ?? []}
+          productionReferenceSets={selectedWorkspaceData?.productionReferenceSets ?? []}
           storyboardImages={selectedWorkspaceData?.storyboardImages ?? []}
           storyboardVideos={selectedWorkspaceData?.storyboardVideos ?? []}
           reviewCuts={selectedWorkspaceData?.reviewCuts ?? []}
@@ -1206,6 +1212,8 @@ function WorkspaceCenter({
   scriptReferences,
   storyboardScenes,
   storyboardShots,
+  productionEntities,
+  productionReferenceSets,
   storyboardImages,
   storyboardVideos,
   reviewCuts,
@@ -1250,6 +1258,8 @@ function WorkspaceCenter({
   scriptReferences: ScriptReferenceAssetView[];
   storyboardScenes: StoryboardSceneView[];
   storyboardShots: StoryboardShotView[];
+  productionEntities: ProductionEntityView[];
+  productionReferenceSets: ProductionReferenceSetView[];
   storyboardImages: StoryboardImageView[];
   storyboardVideos: StoryboardVideoView[];
   reviewCuts: ReviewCutView[];
@@ -1581,6 +1591,8 @@ function WorkspaceCenter({
                   scriptReferences={scriptReferences}
                   storyboardScenes={storyboardScenes}
                   storyboardShots={storyboardShots}
+                  productionEntities={productionEntities}
+                  productionReferenceSets={productionReferenceSets}
                   clientReviewTasks={clientReviewTasks}
                   onRefresh={onWorkspaceRefresh}
                 />
@@ -1784,6 +1796,8 @@ function ScriptStoryboardModule({
   scriptReferences,
   storyboardScenes,
   storyboardShots,
+  productionEntities,
+  productionReferenceSets,
   clientReviewTasks,
   onRefresh,
 }: {
@@ -1794,11 +1808,16 @@ function ScriptStoryboardModule({
   scriptReferences: ScriptReferenceAssetView[];
   storyboardScenes: StoryboardSceneView[];
   storyboardShots: StoryboardShotView[];
+  productionEntities: ProductionEntityView[];
+  productionReferenceSets: ProductionReferenceSetView[];
   clientReviewTasks: ClientReviewTaskView[];
   onRefresh: () => Promise<void>;
 }) {
   const [saving, setSaving] = useState(false);
   const [splittingPackageId, setSplittingPackageId] = useState<string | null>(null);
+  const [savingEntityId, setSavingEntityId] = useState<string | null>(null);
+  const [submittingSetupReview, setSubmittingSetupReview] = useState(false);
+  const [createdSetupReview, setCreatedSetupReview] = useState<{ url: string; code: string } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const canEdit = user.role === "creative" || user.role === "admin";
@@ -1850,6 +1869,44 @@ function ScriptStoryboardModule({
     }
     setSplittingPackageId(null);
   }
+
+  async function handleDepthChange(entityId: string, depth: "basic" | "full") {
+    setSavingEntityId(entityId);
+    setMessage(null);
+    setError(null);
+    const result = await updateProductionEntityReferenceDepth(project.id, entityId, depth);
+    if (result.ok) {
+      setMessage(result.data.message);
+      await onRefresh();
+    } else {
+      setError(result.error.message);
+    }
+    setSavingEntityId(null);
+  }
+
+  async function handleSubmitProductionSetupReview() {
+    setSubmittingSetupReview(true);
+    setCreatedSetupReview(null);
+    setMessage(null);
+    setError(null);
+    const result = await submitProductionSetupClientReview(project.id);
+    if (result.ok) {
+      setCreatedSetupReview({ url: result.data.reviewUrl, code: result.data.verificationCode });
+      setMessage(result.data.message);
+      await onRefresh();
+    } else {
+      setError(result.error.message);
+    }
+    setSubmittingSetupReview(false);
+  }
+
+  const hasRequiredReferences =
+    productionEntities.length > 0 &&
+    productionEntities.every((entity) =>
+      productionReferenceSets.some((referenceSet) => referenceSet.entityId === entity.id && referenceSet.depth === entity.referenceDepth)
+    );
+  const latestSetupReview =
+    clientReviewTasks.find((task) => task.reviewType === "script_package" && task.reviewScene === "production_setup") ?? null;
 
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)]">
@@ -1908,6 +1965,14 @@ function ScriptStoryboardModule({
               placeholder="粘贴或整理已经与甲方确认到本轮的完整剧本。"
             />
           </label>
+          {latestPackage?.fullScript && (
+            <div className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3">
+              <p className="text-xs font-semibold">当前完整脚本</p>
+              <p className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap text-xs leading-5 text-[var(--text-secondary)]">
+                {latestPackage.fullScript}
+              </p>
+            </div>
+          )}
           <div className="flex flex-wrap gap-2">
             <Button disabled={!canEdit || saving}>
               {saving ? <Loader2 className="animate-spin" size={15} /> : <CheckCircle2 size={15} />}
@@ -1963,6 +2028,106 @@ function ScriptStoryboardModule({
                 </div>
               </div>
             ))
+          )}
+        </div>
+      </WorkspaceCard>
+      <WorkspaceCard>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="ds-text-section-title">人物场景设定</h3>
+            <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
+              系统会从文字分镜的人物引用和场景引用中抽取唯一设定；这些设定需要甲方审核通过并锁定后，后续图片阶段才能使用。
+            </p>
+          </div>
+          <Badge variant="outline">{productionEntities.length} 个设定</Badge>
+        </div>
+        {productionEntities.length === 0 ? (
+          <p className="mt-4 ds-card-soft p-3 text-sm leading-6 text-[var(--text-secondary)]">
+            暂无人物或场景设定。请先自动拆分文字分镜，系统会根据分镜中的 characterRefs 和 sceneRefs 生成设定记录。
+          </p>
+        ) : (
+          <div className="mt-4 grid gap-3">
+            {productionEntities.map((entity) => {
+              const referenceSets = productionReferenceSets.filter((set) => set.entityId === entity.id);
+              const activeReference = referenceSets.find((set) => set.depth === entity.referenceDepth) ?? referenceSets[0] ?? null;
+              return (
+                <div key={entity.id} className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="outline">{productionEntityTypeLabel(entity.entityType)}</Badge>
+                        <p className="font-semibold">{entity.name}</p>
+                        <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">
+                          {productionEntityStatusLabel(entity.status)}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">
+                        {entity.description || `来自 ${entity.sourceShotIds.length} 条分镜引用，等待补充设定描述。`}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      {(["basic", "full"] as const).map((depth) => (
+                        <Button
+                          key={depth}
+                          type="button"
+                          size="sm"
+                          variant={entity.referenceDepth === depth ? "default" : "outline"}
+                          disabled={!canEdit || savingEntityId === entity.id || entity.status === "locked"}
+                          onClick={() => void handleDepthChange(entity.id, depth)}
+                        >
+                          {savingEntityId === entity.id && entity.referenceDepth !== depth ? <Loader2 className="animate-spin" size={14} /> : null}
+                          {depth === "basic" ? "基础" : "完整"}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="mt-3 rounded-card-sm bg-[var(--surface-soft)] p-2 text-xs leading-5 text-[var(--text-secondary)]">
+                    参考集：{activeReference ? `${referenceDepthLabel(activeReference.depth)} · ${productionEntityStatusLabel(activeReference.status)} · v${activeReference.version}` : "尚未生成参考集"}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <div className="mt-4 ds-card-soft p-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium">提交人物场景设定审核</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
+                审核 metadata 使用 sop_5 / production_setup / round 1；甲方通过后设定和参考集会锁定，打回后回到 needs_revision。
+              </p>
+              {latestSetupReview && (
+                <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
+                  最近一轮：v{latestSetupReview.version} · {clientReviewStatusLabel(latestSetupReview.status)} · {formatDateTime(latestSetupReview.updatedAt)}
+                </p>
+              )}
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!canEdit || !hasRequiredReferences || submittingSetupReview}
+              onClick={() => void handleSubmitProductionSetupReview()}
+            >
+              {submittingSetupReview ? <Loader2 className="animate-spin" size={15} /> : <Send size={15} />}
+              提交人物场景设定审核
+            </Button>
+          </div>
+          {!hasRequiredReferences && (
+            <p className="mt-2 text-xs leading-5 text-[var(--warning)]">
+              请先拆分文字分镜并保存每个人物、场景的设定深度，再提交审核。
+            </p>
+          )}
+          {createdSetupReview && (
+            <div className="mt-3 grid gap-2 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-xs">
+              <div className="grid gap-1">
+                <span className="font-medium">审核链接</span>
+                <code className="break-all rounded bg-[var(--surface-soft)] px-2 py-1 text-[var(--text-secondary)]">{createdSetupReview.url}</code>
+              </div>
+              <div className="grid gap-1">
+                <span className="font-medium">验证码 / 密钥</span>
+                <code className="w-fit rounded bg-[var(--surface-soft)] px-2 py-1 text-[var(--text-primary)]">{createdSetupReview.code}</code>
+              </div>
+            </div>
           )}
         </div>
       </WorkspaceCard>
@@ -2602,6 +2767,32 @@ function sceneStatusLabel(status: string) {
     video_generating: "视频生成中",
     video_internal_review: "视频内部审核",
     video_confirmed: "视频已确认",
+  };
+  return labels[status] ?? status;
+}
+
+function productionEntityTypeLabel(type: ProductionEntityView["entityType"]) {
+  const labels: Record<ProductionEntityView["entityType"], string> = {
+    character: "人物",
+    scene: "场景",
+    prop: "道具",
+  };
+  return labels[type];
+}
+
+function referenceDepthLabel(depth: ProductionEntityView["referenceDepth"]) {
+  return depth === "full" ? "完整设定" : "基础设定";
+}
+
+function productionEntityStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    draft: "草稿",
+    generating: "生成中",
+    internal_confirmed: "内部已确认",
+    client_reviewing: "甲方审核中",
+    client_rejected: "甲方已打回",
+    client_approved: "甲方已通过",
+    locked: "已锁定",
   };
   return labels[status] ?? status;
 }

@@ -18,6 +18,7 @@ import { getProjectProposal, listProjectDocumentSnapshots } from "@/server/repos
 import { getProjectQuote } from "@/server/repositories/quotes";
 import { listProjectClientReviewItems, listProjectClientReviewTasks } from "@/server/repositories/client-reviews";
 import { listProjectReviewCutAnnotations, listProjectReviewCuts } from "@/server/repositories/review-cuts";
+import { listProductionEntities, listProductionReferenceSets } from "@/server/repositories/production-entities";
 import { listStoryProduction } from "@/server/repositories/story-production";
 import { getProjectRiskCheck } from "@/server/repositories/risk-checks";
 import { getProjectWorkloadEstimate } from "@/server/repositories/workload-estimates";
@@ -48,6 +49,8 @@ export async function GET(request: Request, context: { params: Promise<{ project
       feishuReceivers,
       stageStates,
       storyProduction,
+      productionEntities,
+      productionReferenceSets,
       clientReviewTasks,
       clientReviewItems,
       reviewCuts,
@@ -75,6 +78,8 @@ export async function GET(request: Request, context: { params: Promise<{ project
       user.role === "business" || user.role === "admin" ? listProjectFeishuReceivers(projectId) : Promise.resolve([]),
       listProjectStageStates(projectId),
       listStoryProduction(projectId),
+      listProductionEntities(projectId),
+      listProductionReferenceSets(projectId),
       listProjectClientReviewTasks(projectId),
       listProjectClientReviewItems(projectId),
       listProjectReviewCuts(projectId),
@@ -105,6 +110,8 @@ export async function GET(request: Request, context: { params: Promise<{ project
         feishuReceivers,
         stageStates,
         ...storyProduction,
+        productionEntities,
+        productionReferenceSets,
         clientReviewTasks,
         clientReviewItems,
         reviewCuts,

@@ -10,6 +10,7 @@ import {
   getScriptDirectionPackage,
   updateScriptDirectionPackageStatus,
 } from "@/server/repositories/story-production";
+import { createProductionSetupFromStoryboard } from "@/server/use-cases/production-setup";
 import { recordStageProgress } from "@/server/use-cases/stage-progress";
 
 const storyboardSplitResponseSchema = z.object({
@@ -195,6 +196,11 @@ export async function splitScriptIntoStoryboard(input: {
     },
     createdBy: input.actorId,
   });
+  const productionSetup = await createProductionSetupFromStoryboard({
+    projectId: input.projectId,
+    storyboardShots: saved.shots,
+    actorId: input.actorId,
+  });
 
   await updateScriptDirectionPackageStatus({
     projectId: input.projectId,
@@ -205,19 +211,30 @@ export async function splitScriptIntoStoryboard(input: {
   await recordStageProgress({
     projectId: input.projectId,
     stageKey: "script_storyboard_confirmation",
-    status: "approved",
-    currentStage: "storyboard_image_canvas",
+    status: "in_progress",
+    currentStage: "script_storyboard_confirmation",
     projectStatus: "in_progress",
-    userMessage: "文字分镜已拆分并保存，项目可以进入分镜图片自由画布。",
+    userMessage: "文字分镜已拆分并保存，人物和场景设定已生成，等待提交甲方审核后再进入分镜图片阶段。",
     inputRefs: [{ type: "script_direction_package", id: pkg.id }],
-    outputRefs: [{ type: "artifact", id: artifact.id, kind: artifact.kind }],
-    snapshot: { packageId: pkg.id, sceneCount: saved.scenes.length, shotCount: saved.shots.length },
+    outputRefs: [
+      { type: "artifact", id: artifact.id, kind: artifact.kind },
+      ...productionSetup.entities.map((entity) => ({ type: "production_entity", id: entity.id })),
+    ],
+    snapshot: {
+      packageId: pkg.id,
+      sceneCount: saved.scenes.length,
+      shotCount: saved.shots.length,
+      productionEntityCount: productionSetup.entities.length,
+      productionReferenceSetCount: productionSetup.referenceSets.length,
+    },
   });
 
   return {
     ...saved,
     artifact,
-    message: "文字分镜已自动拆分并保存。你可以在模块二按场次生成分镜图片。",
+    productionEntities: productionSetup.entities,
+    productionReferenceSets: productionSetup.referenceSets,
+    message: "文字分镜已自动拆分并保存。人物和场景设定已生成，请先提交甲方审核，通过后再进入分镜图片阶段。",
   };
 }
 

@@ -1,0 +1,332 @@
+import { query } from "@/lib/db";
+
+export type ProductionEntityType = "character" | "scene" | "prop";
+export type ReferenceSetDepth = "basic" | "full";
+export type ProductionEntityStatus =
+  | "draft"
+  | "generating"
+  | "internal_confirmed"
+  | "client_reviewing"
+  | "client_rejected"
+  | "client_approved"
+  | "locked";
+
+export type ProductionEntityView = {
+  id: string;
+  projectId: string;
+  entityType: ProductionEntityType;
+  name: string;
+  description: string;
+  importance: "normal" | "important" | "key";
+  referenceDepth: ReferenceSetDepth;
+  sourceShotIds: string[];
+  status: ProductionEntityStatus;
+  version: number;
+  lockedAt: string | null;
+  updatedAt: string;
+};
+
+export type ProductionReferenceSetView = {
+  id: string;
+  projectId: string;
+  entityId: string;
+  depth: ReferenceSetDepth;
+  status: ProductionEntityStatus;
+  prompt: string;
+  referenceImageIds: string[];
+  snapshot: Record<string, unknown>;
+  version: number;
+  updatedAt: string;
+};
+
+export type UpsertProductionEntityInput = {
+  projectId: string;
+  entityType: ProductionEntityType;
+  name: string;
+  description?: string;
+  importance?: "normal" | "important" | "key";
+  referenceDepth?: ReferenceSetDepth;
+  sourceShotIds?: string[];
+  status?: ProductionEntityStatus;
+  actorId?: string | null;
+};
+
+export type UpsertReferenceSetInput = {
+  projectId: string;
+  entityId: string;
+  depth: ReferenceSetDepth;
+  status?: ProductionEntityStatus;
+  prompt?: string;
+  referenceImageIds?: string[];
+  snapshot?: Record<string, unknown>;
+  actorId?: string | null;
+};
+
+export type UpdateProductionEntityStatusInput = {
+  projectId: string;
+  entityId: string;
+  status: ProductionEntityStatus;
+  actorId?: string | null;
+};
+
+type ProductionEntityRow = {
+  id: string;
+  project_id: string;
+  entity_type: ProductionEntityType;
+  name: string;
+  description: string;
+  importance: "normal" | "important" | "key";
+  reference_depth: ReferenceSetDepth;
+  source_shot_ids: unknown;
+  status: ProductionEntityStatus;
+  version: number;
+  locked_at: string | null;
+  updated_at: string;
+};
+
+type ProductionReferenceSetRow = {
+  id: string;
+  project_id: string;
+  entity_id: string;
+  depth: ReferenceSetDepth;
+  status: ProductionEntityStatus;
+  prompt: string;
+  reference_image_ids: unknown;
+  snapshot_json: unknown;
+  version: number;
+  updated_at: string;
+};
+
+export async function listProductionEntities(projectId: string): Promise<ProductionEntityView[]> {
+  const result = await query<ProductionEntityRow>(
+    `select id, project_id, entity_type, name, description, importance, reference_depth,
+            source_shot_ids, status, version, locked_at, updated_at
+     from production_entities
+     where project_id = $1
+     order by entity_type, name asc, updated_at desc`,
+    [projectId]
+  );
+  return result.rows.map(mapEntity);
+}
+
+export async function listProductionReferenceSets(projectId: string): Promise<ProductionReferenceSetView[]> {
+  const result = await query<ProductionReferenceSetRow>(
+    `select id, project_id, entity_id, depth, status, prompt, reference_image_ids,
+            snapshot_json, version, updated_at
+     from production_reference_sets
+     where project_id = $1
+     order by entity_id, depth, version desc`,
+    [projectId]
+  );
+  return result.rows.map(mapReferenceSet);
+}
+
+export async function upsertProductionEntity(input: UpsertProductionEntityInput): Promise<ProductionEntityView> {
+  const existing = await query<{ id: string }>(
+    `select id
+     from production_entities
+     where project_id = $1
+       and entity_type = $2
+       and lower(name) = lower($3)
+     order by updated_at desc
+     limit 1`,
+    [input.projectId, input.entityType, input.name]
+  );
+
+  if (existing.rows[0]) {
+    const updated = await query<ProductionEntityRow>(
+      `update production_entities
+     set description = case when $4 <> '' then $4 else description end,
+         importance = $5,
+         reference_depth = $6,
+         status = coalesce($9, status),
+         source_shot_ids = coalesce((
+           select jsonb_agg(distinct value)
+           from jsonb_array_elements_text(source_shot_ids || $7::jsonb) as value
+         ), '[]'::jsonb),
+         updated_by = coalesce($8, updated_by),
+         updated_at = now()
+     where project_id = $1
+       and entity_type = $2
+       and lower(name) = lower($3)
+     returning id, project_id, entity_type, name, description, importance, reference_depth,
+               source_shot_ids, status, version, locked_at, updated_at`,
+      [
+        input.projectId,
+        input.entityType,
+        input.name,
+        input.description ?? "",
+        input.importance ?? "normal",
+        input.referenceDepth ?? "basic",
+        JSON.stringify(input.sourceShotIds ?? []),
+        input.actorId ?? null,
+        input.status ?? null,
+      ]
+    );
+    return mapEntity(updated.rows[0]);
+  }
+
+  const inserted = await query<ProductionEntityRow>(
+    `insert into production_entities (
+       project_id, entity_type, name, description, importance, reference_depth,
+       source_shot_ids, status, created_by, updated_by
+     )
+     values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $9)
+     returning id, project_id, entity_type, name, description, importance, reference_depth,
+               source_shot_ids, status, version, locked_at, updated_at`,
+    [
+      input.projectId,
+      input.entityType,
+      input.name,
+      input.description ?? "",
+      input.importance ?? "normal",
+      input.referenceDepth ?? "basic",
+      JSON.stringify(input.sourceShotIds ?? []),
+      input.status ?? "draft",
+      input.actorId ?? null,
+    ]
+  );
+  return mapEntity(inserted.rows[0]);
+}
+
+export async function upsertReferenceSet(input: UpsertReferenceSetInput): Promise<ProductionReferenceSetView> {
+  const existing = await query<{ id: string }>(
+    `select id
+     from production_reference_sets
+     where project_id = $1
+       and entity_id = $2
+       and depth = $3
+     order by version desc, updated_at desc
+     limit 1`,
+    [input.projectId, input.entityId, input.depth]
+  );
+
+  if (existing.rows[0]) {
+    const updated = await query<ProductionReferenceSetRow>(
+      `update production_reference_sets
+       set status = $4,
+           prompt = $5,
+           reference_image_ids = coalesce($6::jsonb, reference_image_ids),
+           snapshot_json = $7::jsonb,
+           version = version + 1,
+           updated_by = coalesce($8, updated_by),
+           updated_at = now()
+       where id = $9
+       returning id, project_id, entity_id, depth, status, prompt, reference_image_ids,
+                 snapshot_json, version, updated_at`,
+      [
+        input.projectId,
+        input.entityId,
+        input.depth,
+        input.status ?? "draft",
+        input.prompt ?? "",
+        input.referenceImageIds ? JSON.stringify(input.referenceImageIds) : null,
+        JSON.stringify(input.snapshot ?? {}),
+        input.actorId ?? null,
+        existing.rows[0].id,
+      ]
+    );
+    return mapReferenceSet(updated.rows[0]);
+  }
+
+  const result = await query<ProductionReferenceSetRow>(
+    `insert into production_reference_sets (
+       project_id, entity_id, depth, status, prompt, reference_image_ids,
+       snapshot_json, created_by, updated_by
+     )
+     values ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $8)
+     returning id, project_id, entity_id, depth, status, prompt, reference_image_ids,
+               snapshot_json, version, updated_at`,
+    [
+      input.projectId,
+      input.entityId,
+      input.depth,
+      input.status ?? "draft",
+      input.prompt ?? "",
+      JSON.stringify(input.referenceImageIds ?? []),
+      JSON.stringify(input.snapshot ?? {}),
+      input.actorId ?? null,
+    ]
+  );
+  return mapReferenceSet(result.rows[0]);
+}
+
+export async function updateProductionEntityStatus(input: UpdateProductionEntityStatusInput): Promise<ProductionEntityView | null> {
+  const result = await query<ProductionEntityRow>(
+    `update production_entities
+     set status = $3,
+         locked_at = case when $3 = 'locked' then now() else locked_at end,
+         updated_by = coalesce($4, updated_by),
+         updated_at = now()
+     where project_id = $1 and id = $2
+     returning id, project_id, entity_type, name, description, importance, reference_depth,
+               source_shot_ids, status, version, locked_at, updated_at`,
+    [input.projectId, input.entityId, input.status, input.actorId ?? null]
+  );
+  return result.rows[0] ? mapEntity(result.rows[0]) : null;
+}
+
+export async function updateProjectProductionSetupStatus(input: {
+  projectId: string;
+  status: ProductionEntityStatus;
+  actorId?: string | null;
+}) {
+  await query(
+    `update production_entities
+     set status = $2,
+         locked_at = case when $2 = 'locked' then now() else locked_at end,
+         updated_by = coalesce($3, updated_by),
+         updated_at = now()
+     where project_id = $1`,
+    [input.projectId, input.status, input.actorId ?? null]
+  );
+  await query(
+    `update production_reference_sets
+     set status = $2,
+         updated_by = coalesce($3, updated_by),
+         updated_at = now()
+     where project_id = $1`,
+    [input.projectId, input.status, input.actorId ?? null]
+  );
+}
+
+function mapEntity(row: ProductionEntityRow): ProductionEntityView {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    entityType: row.entity_type,
+    name: row.name,
+    description: row.description,
+    importance: row.importance,
+    referenceDepth: row.reference_depth,
+    sourceShotIds: normalizeStringArray(row.source_shot_ids),
+    status: row.status,
+    version: row.version,
+    lockedAt: row.locked_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapReferenceSet(row: ProductionReferenceSetRow): ProductionReferenceSetView {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    entityId: row.entity_id,
+    depth: row.depth,
+    status: row.status,
+    prompt: row.prompt,
+    referenceImageIds: normalizeStringArray(row.reference_image_ids),
+    snapshot: normalizeRecord(row.snapshot_json),
+    version: row.version,
+    updatedAt: row.updated_at,
+  };
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item).trim()).filter(Boolean);
+}
+
+function normalizeRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}

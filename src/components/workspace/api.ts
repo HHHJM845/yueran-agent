@@ -373,6 +373,36 @@ export type StoryboardShotView = {
   updatedAt: string;
 };
 
+export type ReferenceSetDepth = "basic" | "full";
+
+export type ProductionEntityView = {
+  id: string;
+  projectId: string;
+  entityType: "character" | "scene" | "prop";
+  name: string;
+  description: string;
+  importance: "normal" | "important" | "key";
+  referenceDepth: ReferenceSetDepth;
+  sourceShotIds: string[];
+  status: string;
+  version: number;
+  lockedAt: string | null;
+  updatedAt: string;
+};
+
+export type ProductionReferenceSetView = {
+  id: string;
+  projectId: string;
+  entityId: string;
+  depth: ReferenceSetDepth;
+  status: string;
+  prompt: string;
+  referenceImageIds: string[];
+  snapshot: Record<string, unknown>;
+  version: number;
+  updatedAt: string;
+};
+
 export type StoryboardImageView = {
   id: string;
   projectId: string;
@@ -811,6 +841,8 @@ export type WorkspaceData = {
   scriptReferences: ScriptReferenceAssetView[];
   storyboardScenes: StoryboardSceneView[];
   storyboardShots: StoryboardShotView[];
+  productionEntities: ProductionEntityView[];
+  productionReferenceSets: ProductionReferenceSetView[];
   storyboardImages: StoryboardImageView[];
   storyboardVideos: StoryboardVideoView[];
   reviewCuts: ReviewCutView[];
@@ -1209,9 +1241,41 @@ export async function splitScriptPackage(projectId: string, packageId: string) {
     scenes: StoryboardSceneView[];
     shots: StoryboardShotView[];
     artifact: ArtifactView;
+    productionEntities: ProductionEntityView[];
+    productionReferenceSets: ProductionReferenceSetView[];
     message: string;
   }>(
     await fetch(`/api/projects/${projectId}/script-packages/${packageId}/split-storyboard`, {
+      method: "POST",
+    })
+  );
+}
+
+export async function updateProductionEntityReferenceDepth(
+  projectId: string,
+  entityId: string,
+  referenceDepth: ReferenceSetDepth
+) {
+  return readApi<{
+    entity: ProductionEntityView;
+    referenceSet: ProductionReferenceSetView;
+    message: string;
+  }>(
+    await fetch(`/api/projects/${projectId}/production-entities`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entityId, referenceDepth }),
+    })
+  );
+}
+
+export async function submitProductionSetupClientReview(projectId: string) {
+  return readApi<{
+    reviewUrl: string;
+    verificationCode: string;
+    message: string;
+  }>(
+    await fetch(`/api/projects/${projectId}/production-entities`, {
       method: "POST",
     })
   );
