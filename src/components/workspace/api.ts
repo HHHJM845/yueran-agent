@@ -1441,6 +1441,7 @@ export async function saveDeliveryChecklist(
       sortOrder?: number;
       metadata?: Record<string, unknown>;
     }>;
+    removedItemIds?: string[];
   }
 ) {
   return readApi<{ deliveryChecklist: DeliveryChecklistView; message: string }>(

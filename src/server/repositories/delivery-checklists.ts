@@ -57,6 +57,7 @@ export type SaveDeliveryChecklistInput = {
   status?: DeliveryChecklistView["status"];
   notes?: string;
   items: SaveDeliveryChecklistItemInput[];
+  removedItemIds?: string[];
   actorId?: string | null;
 };
 
@@ -115,6 +116,23 @@ export const DELIVERY_CHECKLIST_ITEM_SAVE_UPDATE_SQL = `
         and checklist_id = $2
         and id = $3`;
 
+export const DELIVERY_CHECKLIST_ITEM_REMOVE_SQL = `
+      update delivery_checklist_items
+         set status = 'cancelled',
+             updated_by = case when exists (select 1 from users where id = $4::uuid) then $4::uuid else updated_by end,
+             updated_at = now()
+       where project_id = $1
+         and checklist_id = $2
+         and id = any($3::uuid[])`;
+
+export const DELIVERY_CHECKLIST_ITEM_LIST_SQL = `
+    select id, project_id, checklist_id, item_kind, title, description, quantity,
+           status, change_request_id, sort_order, metadata_json, updated_at
+      from delivery_checklist_items
+     where checklist_id = $1
+       and status <> 'cancelled'
+     order by sort_order asc, updated_at asc`;
+
 export async function getProjectDeliveryChecklist(projectId: string): Promise<DeliveryChecklistView | null> {
   const checklistResult = await query<DeliveryChecklistRow>(
     `select id, project_id, estimate_id, status, version, notes, confirmed_by, confirmed_at, updated_at
@@ -158,6 +176,13 @@ export async function createOrUpdateDeliveryChecklist(input: SaveDeliveryCheckli
       [input.projectId, input.estimateId ?? null, input.status ?? "draft", input.notes ?? "", input.actorId ?? null]
     );
     const checklist = checklistResult.rows[0];
+
+    if (input.removedItemIds?.length) {
+      await tx(
+        DELIVERY_CHECKLIST_ITEM_REMOVE_SQL,
+        [input.projectId, checklist.id, input.removedItemIds, input.actorId ?? null]
+      );
+    }
 
     for (const [index, item] of input.items.entries()) {
       const saved = item.id
@@ -294,11 +319,7 @@ async function insertChecklistItem(
 
 async function listChecklistItems(checklistId: string, tx: TransactionQuery = query) {
   const result = await tx<DeliveryChecklistItemRow>(
-    `select id, project_id, checklist_id, item_kind, title, description, quantity,
-            status, change_request_id, sort_order, metadata_json, updated_at
-       from delivery_checklist_items
-      where checklist_id = $1
-      order by sort_order asc, updated_at asc`,
+    DELIVERY_CHECKLIST_ITEM_LIST_SQL,
     [checklistId]
   );
   return result.rows.map(mapChecklistItem);

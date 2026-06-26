@@ -74,7 +74,11 @@ test("delivery checklist bulk save preserves existing item identity and change r
   const source = await import("node:fs/promises").then((fs) =>
     fs.readFile(new URL("../repositories/delivery-checklists.ts", import.meta.url), "utf8")
   );
-  const { DELIVERY_CHECKLIST_ITEM_SAVE_UPDATE_SQL } = await import("../repositories/delivery-checklists.ts");
+  const {
+    DELIVERY_CHECKLIST_ITEM_SAVE_UPDATE_SQL,
+    DELIVERY_CHECKLIST_ITEM_REMOVE_SQL,
+    DELIVERY_CHECKLIST_ITEM_LIST_SQL,
+  } = await import("../repositories/delivery-checklists.ts");
 
   assert.doesNotMatch(source, /delete\s+from\s+delivery_checklist_items\s+where\s+checklist_id/i);
   assert.match(DELIVERY_CHECKLIST_ITEM_SAVE_UPDATE_SQL, /where\s+project_id\s*=\s*\$1\s+and\s+checklist_id\s*=\s*\$2\s+and\s+id\s*=\s*\$3/i);
@@ -82,6 +86,13 @@ test("delivery checklist bulk save preserves existing item identity and change r
     DELIVERY_CHECKLIST_ITEM_SAVE_UPDATE_SQL.replace(/where[\s\S]*$/i, ""),
     /change_request_id/i
   );
+  assert.match(DELIVERY_CHECKLIST_ITEM_REMOVE_SQL, /set\s+status\s*=\s*'cancelled'/i);
+  assert.match(DELIVERY_CHECKLIST_ITEM_REMOVE_SQL, /where\s+project_id\s*=\s*\$1\s+and\s+checklist_id\s*=\s*\$2\s+and\s+id\s*=\s*any\(\$3::uuid\[\]\)/i);
+  assert.doesNotMatch(
+    DELIVERY_CHECKLIST_ITEM_REMOVE_SQL.replace(/where[\s\S]*$/i, ""),
+    /change_request_id/i
+  );
+  assert.match(DELIVERY_CHECKLIST_ITEM_LIST_SQL, /status\s*<>\s*'cancelled'/i);
 });
 
 test("mergeChecklistItemsWithExistingIds reuses ids by item kind to avoid duplicate generated checklist items", async () => {

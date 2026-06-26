@@ -40,6 +40,7 @@ const allowedChecklistKinds: DeliveryChecklistItemKind[] = [
 ];
 const sop4ChecklistStatuses = new Set<DeliveryChecklistView["status"]>(["draft", "changed"]);
 const sop4ChecklistItemStatuses = new Set(["planned", "changed"]);
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function normalizeWorkloadEstimate(value: unknown): WorkloadEstimateDraft {
   const record = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
@@ -144,9 +145,12 @@ export async function saveProjectDeliveryChecklist(input: {
   status?: DeliveryChecklistView["status"];
   notes?: string;
   items: Array<SaveDeliveryChecklistItemInput>;
+  removedItemIds?: string[];
 }) {
   const existing = await getProjectDeliveryChecklist(input.projectId);
   const normalizedItems = input.items.map((item, index) => normalizeChecklistItem(item, index)).filter((item) => item.title);
+  const submittedItemIds = new Set(normalizedItems.map((item) => item.id).filter(Boolean));
+  const removedItemIds = normalizeRemovedChecklistItemIds(input.removedItemIds).filter((itemId) => !submittedItemIds.has(itemId));
   if (normalizedItems.length === 0) {
     throw new AppError({
       status: 422,
@@ -162,6 +166,7 @@ export async function saveProjectDeliveryChecklist(input: {
     status: normalizeSop4DeliveryChecklistStatus(input.status),
     notes: String(input.notes ?? "").trim(),
     items: normalizedItems,
+    removedItemIds,
   });
 }
 
@@ -247,6 +252,20 @@ function normalizeChecklistItem(item: SaveDeliveryChecklistItemInput, index: num
     sortOrder: item.sortOrder ?? index,
     metadata: item.metadata ?? {},
   };
+}
+
+function normalizeRemovedChecklistItemIds(itemIds?: string[]) {
+  if (!itemIds?.length) return [];
+  const normalizedItemIds = Array.from(new Set(itemIds.map((itemId) => String(itemId).trim()).filter(Boolean)));
+  const invalidItemId = normalizedItemIds.find((itemId) => !uuidPattern.test(itemId));
+  if (invalidItemId) {
+    throw new AppError({
+      status: 422,
+      code: "delivery_checklist_removed_item_id_invalid",
+      userMessage: "交付清单里有无法识别的删除项。请刷新项目工作台后重试。",
+    });
+  }
+  return normalizedItemIds;
 }
 
 export function normalizeSop4ChecklistItemStatus(status?: SaveDeliveryChecklistItemInput["status"]) {

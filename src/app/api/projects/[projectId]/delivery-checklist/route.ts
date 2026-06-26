@@ -35,6 +35,7 @@ const saveChecklistRequestSchema = z.discriminatedUnion("action", [
     status: z.enum(["draft", "changed"]).optional(),
     notes: z.string().optional(),
     items: z.array(checklistItemSchema),
+    removedItemIds: z.array(z.string().uuid()).optional(),
   }),
 ]);
 
@@ -77,6 +78,7 @@ export async function POST(request: Request, context: { params: Promise<{ projec
             status: body.status,
             notes: body.notes,
             items: body.items,
+            removedItemIds: body.removedItemIds,
           });
 
     return Response.json({

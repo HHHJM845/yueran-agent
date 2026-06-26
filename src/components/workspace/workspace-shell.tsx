@@ -6703,7 +6703,7 @@ function DeliveryChecklistCard({
     setSaving(true);
     setMessage(null);
     setChecklistError(null);
-    const items = parseChecklistItems(formData);
+    const { items, removedItemIds } = parseChecklistItems(formData);
     if (items.length === 0) {
       setChecklistError("请至少填写一条交付物，包括名称、类型和数量。");
       setSaving(false);
@@ -6715,6 +6715,7 @@ function DeliveryChecklistCard({
       status: String(formData.get("status") ?? "draft") as DeliveryChecklistView["status"],
       notes: String(formData.get("notes") ?? ""),
       items,
+      removedItemIds,
     });
     if (result.ok) {
       setMessage(result.data.message);
@@ -7010,7 +7011,7 @@ function buildChecklistRows(checklist: DeliveryChecklistView | null) {
 }
 
 function parseChecklistItems(formData: FormData) {
-  return Array.from({ length: 8 }, (_, index) => {
+  const parsedItems = Array.from({ length: 8 }, (_, index) => {
     const idValue = String(formData.get(`checklist_${index}_id`) ?? "").trim();
     const itemKind = String(formData.get(`checklist_${index}_kind`) ?? "other") as DeliveryChecklistItemKind;
     const title = String(formData.get(`checklist_${index}_title`) ?? "").trim();
@@ -7018,7 +7019,12 @@ function parseChecklistItems(formData: FormData) {
     const quantity = Number(formData.get(`checklist_${index}_quantity`) ?? 0);
     const status = String(formData.get(`checklist_${index}_status`) ?? "planned") as DeliveryChecklistItemStatus;
     return { id: idValue || undefined, itemKind, title, description, quantity, status, sortOrder: index };
-  }).filter((item) => item.title && item.quantity > 0);
+  });
+
+  return {
+    items: parsedItems.filter((item) => item.title && item.quantity > 0),
+    removedItemIds: parsedItems.filter((item) => item.id && !item.title).map((item) => item.id as string),
+  };
 }
 
 function parseCommaList(value: string) {
