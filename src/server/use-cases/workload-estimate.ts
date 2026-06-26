@@ -39,6 +39,7 @@ const allowedChecklistKinds: DeliveryChecklistItemKind[] = [
   "other",
 ];
 const sop4ChecklistStatuses = new Set<DeliveryChecklistView["status"]>(["draft", "changed"]);
+const sop4ChecklistItemStatuses = new Set(["planned", "changed"]);
 
 export function normalizeWorkloadEstimate(value: unknown): WorkloadEstimateDraft {
   const record = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
@@ -242,10 +243,23 @@ function normalizeChecklistItem(item: SaveDeliveryChecklistItemInput, index: num
     title: String(item.title ?? "").trim(),
     description: String(item.description ?? "").trim(),
     quantity: Math.max(1, toNonnegativeInteger(item.quantity)),
-    status: item.status ?? "planned",
+    status: normalizeSop4ChecklistItemStatus(item.status),
     sortOrder: item.sortOrder ?? index,
     metadata: item.metadata ?? {},
   };
+}
+
+export function normalizeSop4ChecklistItemStatus(status?: SaveDeliveryChecklistItemInput["status"]) {
+  const normalizedStatus = status ?? "planned";
+  if (sop4ChecklistItemStatuses.has(normalizedStatus)) {
+    return normalizedStatus;
+  }
+
+  throw new AppError({
+    status: 422,
+    code: "delivery_checklist_item_status_not_supported_in_sop4",
+    userMessage: "SOP 4 的交付清单项只能保存为计划中或已变更。最终确认请在 SOP 9 完成，交付归档请在 SOP 10 处理。",
+  });
 }
 
 function findExistingChecklistItemIndex(

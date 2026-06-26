@@ -57,6 +57,19 @@ test("normalizeSop4DeliveryChecklistStatus rejects confirmed in SOP 4", async ()
   );
 });
 
+test("normalizeSop4ChecklistItemStatus rejects confirmed item status in SOP 4", async () => {
+  const { normalizeSop4ChecklistItemStatus } = await import("./workload-estimate.ts");
+
+  assert.throws(
+    () => normalizeSop4ChecklistItemStatus("confirmed"),
+    (error) =>
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === "delivery_checklist_item_status_not_supported_in_sop4"
+  );
+});
+
 test("delivery checklist bulk save preserves existing item identity and change request traceability", async () => {
   const source = await import("node:fs/promises").then((fs) =>
     fs.readFile(new URL("../repositories/delivery-checklists.ts", import.meta.url), "utf8")

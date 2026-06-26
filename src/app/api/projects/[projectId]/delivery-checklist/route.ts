@@ -19,7 +19,7 @@ const checklistItemSchema = z.object({
   title: z.string(),
   description: z.string().optional(),
   quantity: z.number(),
-  status: z.enum(["planned", "confirmed", "changed", "delivered", "cancelled"]).optional(),
+  status: z.enum(["planned", "changed"]).optional(),
   sortOrder: z.number().optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });

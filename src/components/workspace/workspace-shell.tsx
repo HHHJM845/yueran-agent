@@ -1489,7 +1489,7 @@ function WorkspaceCenter({
                 <StageWorkCard
                   icon={<List size={18} />}
                   title="交付清单核对"
-                  detail="根据估算生成交付物清单，签约前可确认和微调；新增交付物在后续 SOP 9 应创建变更请求。"
+                  detail="根据估算生成交付物清单，签约前可核对和草拟；最终确认与交付处理会在后续 SOP 9 / SOP 10 完成。"
                   badges={[
                     deliveryChecklist ? `v${deliveryChecklist.version}` : "待生成",
                     deliveryChecklist ? deliveryChecklistStatusLabel(deliveryChecklist.status) : "未保存",
@@ -6737,7 +6737,7 @@ function DeliveryChecklistCard({
             清单会持久化到数据库，并作为合同交付范围和 SOP 9 交付核对的依据。
           </p>
           <p className="mt-1 text-sm leading-6 text-[var(--text-secondary)]">
-            SOP 4 只保存草稿或签约前变更；最终确认会在 SOP 9 完成，归档在 SOP 10 处理。
+            SOP 4 只保存草稿、签约前核对和变更草案；最终确认会在 SOP 9 完成，归档在 SOP 10 处理。
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-xs">
@@ -6907,10 +6907,7 @@ function ChecklistItemInputs({
         className="h-9 min-w-0 ds-card-sm px-2 text-sm disabled:bg-[var(--muted)]"
       >
         <option value="planned">计划中</option>
-        <option value="confirmed">已确认</option>
         <option value="changed">已变更</option>
-        <option value="delivered">已交付</option>
-        <option value="cancelled">已取消</option>
       </select>
     </div>
   );
