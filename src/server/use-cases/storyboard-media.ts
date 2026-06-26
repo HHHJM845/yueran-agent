@@ -51,6 +51,12 @@ const storyboardVideoJobInputSchema = z.object({
 
 export type StoryboardVideoInputMode = "single_image" | "start_end_frame" | "multi_reference";
 
+type StoryboardVideoInputCandidate = {
+  mode: StoryboardVideoInputMode;
+  imageIds: string[];
+  source: "persisted" | "job" | "legacy_selected_image";
+};
+
 export function validateStoryboardVideoInput(input: { mode: StoryboardVideoInputMode; imageIds: string[] }) {
   if (input.mode === "single_image" && input.imageIds.length !== 1) {
     throw new AppError({
@@ -73,6 +79,32 @@ export function validateStoryboardVideoInput(input: { mode: StoryboardVideoInput
       userMessage: "多图参考生成至少需要 2 张图。",
     });
   }
+}
+
+export function resolveStoryboardVideoInputCandidate(input: {
+  persistedInput: { mode: StoryboardVideoInputMode; inputImageIds: string[] } | null;
+  jobMode?: StoryboardVideoInputMode;
+  jobImageIds?: string[];
+}): StoryboardVideoInputCandidate {
+  if (input.persistedInput?.inputImageIds.length) {
+    return {
+      mode: input.persistedInput.mode,
+      imageIds: input.persistedInput.inputImageIds,
+      source: "persisted",
+    };
+  }
+  if (input.jobImageIds?.length) {
+    return {
+      mode: input.jobMode ?? "single_image",
+      imageIds: input.jobImageIds,
+      source: "job",
+    };
+  }
+  return {
+    mode: "single_image",
+    imageIds: [],
+    source: "legacy_selected_image",
+  };
 }
 
 export async function enqueueStoryboardImageGeneration(input: {
@@ -444,9 +476,16 @@ export async function runStoryboardVideoGenerationJob(jobId: string) {
     projectId: job.projectId,
     storyboardVideoId: input.storyboardVideoId,
   });
-  const mode = persistedInput?.mode ?? input.mode ?? "single_image";
-  const imageIds = persistedInput?.inputImageIds.length ? persistedInput.inputImageIds : input.imageIds ?? [];
-  validateStoryboardVideoInput({ mode, imageIds });
+  const videoInputCandidate = resolveStoryboardVideoInputCandidate({
+    persistedInput,
+    jobMode: input.mode,
+    jobImageIds: input.imageIds,
+  });
+  const { mode } = videoInputCandidate;
+  let { imageIds } = videoInputCandidate;
+  if (videoInputCandidate.source !== "legacy_selected_image") {
+    validateStoryboardVideoInput({ mode, imageIds });
+  }
   const inputImages = imageIds.length
     ? await listStoryboardImagesByIds({ projectId: job.projectId, imageIds })
     : [];
@@ -464,6 +503,10 @@ export async function runStoryboardVideoGenerationJob(jobId: string) {
       code: "storyboard_image_required",
       userMessage: "请先为这条分镜确认正式图片，再生成视频候选。",
     });
+  }
+  if (videoInputCandidate.source === "legacy_selected_image") {
+    imageIds = [selectedImage.id];
+    validateStoryboardVideoInput({ mode: "single_image", imageIds });
   }
 
   await markStoryboardVideoProcessing(input.storyboardVideoId);
