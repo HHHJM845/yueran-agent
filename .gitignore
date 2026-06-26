@@ -9,6 +9,7 @@ out/
 dist/
 coverage/
 *.tsbuildinfo
+.worktrees/
 
 .DS_Store
 npm-debug.log*
