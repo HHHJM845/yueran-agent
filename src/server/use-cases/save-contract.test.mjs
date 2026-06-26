@@ -42,3 +42,33 @@ test("buildContractSnapshotData captures versioned contract content", async () =
   assert.equal(snapshot.templateFields.partyAName, "耐克中国");
   assert.ok(snapshot.content.length > snapshot.summary.length);
 });
+
+test("buildContractStageProgressInput advances signed contracts into script confirmation", async () => {
+  const { buildContractStageProgressInput } = await import("./save-contract.ts");
+
+  const progress = buildContractStageProgressInput({
+    projectId: "project-1",
+    contractId: "contract-1",
+    snapshotId: "snapshot-1",
+    artifactId: "artifact-1",
+    artifactKind: "contract",
+    status: "signed",
+    version: 3,
+  });
+
+  assert.equal(progress.currentStage, "script_storyboard_confirmation");
+  assert.equal(progress.stageKey, "selection_quote_contract");
+  assert.equal(progress.status, "completed");
+  assert.equal(progress.projectStatus, "in_progress");
+  assert.equal(progress.title, "报价与签约已完成");
+  assert.match(progress.userMessage, /脚本/);
+  assert.match(progress.userMessage, /人物/);
+  assert.match(progress.userMessage, /场景设定/);
+  assert.match(progress.userMessage, /文字分镜确认/);
+  assert.deepEqual(progress.snapshot, {
+    contractId: "contract-1",
+    snapshotId: "snapshot-1",
+    status: "signed",
+    version: 3,
+  });
+});

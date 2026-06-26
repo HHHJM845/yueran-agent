@@ -30,6 +30,41 @@ export const saveContractInputSchema = z.object({
   clientContractAssetId: z.string().uuid().nullable().optional(),
 });
 
+export function buildContractStageProgressInput(input: {
+  projectId: string;
+  contractId: string;
+  snapshotId: string;
+  artifactId: string;
+  artifactKind: string;
+  status: string;
+  version: number;
+}) {
+  const signed = input.status === "signed";
+
+  return {
+    projectId: input.projectId,
+    stageKey: "selection_quote_contract" as const,
+    status: signed ? ("completed" as const) : input.status === "confirmed" || input.status === "sent" ? ("waiting_review" as const) : ("in_progress" as const),
+    currentStage: signed ? ("script_storyboard_confirmation" as const) : ("selection_quote_contract" as const),
+    projectStatus: signed ? ("in_progress" as const) : input.status === "needs_revision" ? ("needs_revision" as const) : ("in_progress" as const),
+    title: signed ? "报价与签约已完成" : "合同快照已保存",
+    userMessage: signed
+      ? "合同已签署，项目可以进入脚本、人物、场景设定与文字分镜确认。"
+      : "合同已保存到项目快照，可以继续确认、导出或发送飞书。",
+    outputRefs: [
+      { type: "contract", id: input.contractId },
+      { type: "document_snapshot", id: input.snapshotId },
+      { type: "artifact", id: input.artifactId, kind: input.artifactKind },
+    ],
+    snapshot: {
+      contractId: input.contractId,
+      snapshotId: input.snapshotId,
+      status: input.status,
+      version: input.version,
+    },
+  };
+}
+
 export async function saveProjectContract(input: {
   projectId: string;
   actorId: string;
@@ -106,29 +141,17 @@ export async function saveProjectContract(input: {
     },
   });
 
-  await recordStageProgress({
-    projectId: input.projectId,
-    stageKey: "selection_quote_contract",
-    status: contract.status === "signed" ? "completed" : contract.status === "confirmed" || contract.status === "sent" ? "waiting_review" : "in_progress",
-    currentStage: contract.status === "signed" ? "script_storyboard_confirmation" : "selection_quote_contract",
-    projectStatus: contract.status === "signed" ? "in_progress" : contract.status === "needs_revision" ? "needs_revision" : "in_progress",
-    title: contract.status === "signed" ? "报价与签约已完成" : "合同快照已保存",
-    userMessage:
-      contract.status === "signed"
-        ? "合同已签约，项目可以进入脚本、人物场景设定与文字分镜确认。"
-        : "合同已保存到项目快照，可以继续确认、导出或发送飞书。",
-    outputRefs: [
-      { type: "contract", id: contract.id },
-      { type: "document_snapshot", id: snapshot.id },
-      { type: "artifact", id: artifact.id, kind: artifact.kind },
-    ],
-    snapshot: {
+  await recordStageProgress(
+    buildContractStageProgressInput({
+      projectId: input.projectId,
       contractId: contract.id,
       snapshotId: snapshot.id,
+      artifactId: artifact.id,
+      artifactKind: artifact.kind,
       status: contract.status,
       version: contract.version,
-    },
-  });
+    }),
+  );
 
   await createAuditLog({
     actorId: input.actorId,
