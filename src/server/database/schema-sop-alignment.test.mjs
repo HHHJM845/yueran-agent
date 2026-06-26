@@ -4,6 +4,30 @@ import test from "node:test";
 
 const schema = readFileSync(new URL("./schema.sql", import.meta.url), "utf8");
 
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function expectAlterTableBlock(tableName, columnFragments) {
+  const blockPattern = new RegExp(
+    `alter table ${tableName}\\s+([\\s\\S]*?);`,
+    "i",
+  );
+  const blockMatch = schema.match(blockPattern);
+
+  assert.ok(blockMatch, `Expected alter table block for ${tableName}`);
+
+  const block = blockMatch[1];
+
+  for (const columnFragment of columnFragments) {
+    assert.match(
+      block,
+      new RegExp(escapeRegex(columnFragment), "i"),
+      `Expected ${tableName} block to contain "${columnFragment}"`,
+    );
+  }
+}
+
 test("schema contains SOP alignment tables and review metadata", () => {
   for (const table of [
     "risk_check_cards",
@@ -27,20 +51,25 @@ test("schema contains SOP alignment tables and review metadata", () => {
     assert.match(schema, new RegExp(`create table if not exists ${table}\\b`));
   }
 
-  for (const columnPattern of [
-    /add column if not exists sop_key text/,
-    /add column if not exists review_scene text/,
-    /add column if not exists round_number integer/,
-    /add column if not exists batch_number integer/,
-    /add column if not exists review_payload_version integer not null default 1/,
-    /add column if not exists target_kind text/,
-    /add column if not exists target_version integer/,
-    /add column if not exists feedback_payload_json jsonb not null default '\{\}'::jsonb/,
-    /add column if not exists snapshot_json jsonb not null default '\{\}'::jsonb/,
-    /add column if not exists change_request_hint text/,
-  ]) {
-    assert.match(schema, columnPattern);
-  }
+  expectAlterTableBlock("client_review_tasks", [
+    "add column if not exists sop_key text",
+    "add column if not exists review_scene text",
+    "add column if not exists round_number integer",
+    "add column if not exists batch_number integer",
+    "add column if not exists review_payload_version integer not null default 1",
+  ]);
+
+  expectAlterTableBlock("client_review_items", [
+    "add column if not exists target_kind text",
+    "add column if not exists target_version integer",
+    "add column if not exists feedback_payload_json jsonb not null default '{}'::jsonb",
+  ]);
+
+  expectAlterTableBlock("review_cuts", [
+    "add column if not exists round_number integer not null default 1",
+    "add column if not exists snapshot_json jsonb not null default '{}'::jsonb",
+    "add column if not exists change_request_hint text",
+  ]);
 
   for (const representativePattern of [
     /create table if not exists creative_proposal_rounds[\s\S]*round_number integer not null check \(round_number in \(1, 2\)\)/,
