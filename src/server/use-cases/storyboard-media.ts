@@ -9,6 +9,10 @@ import { createArtifact } from "@/server/repositories/artifacts";
 import { appendJobEvent, createJob, getJobInput, updateJobStatus } from "@/server/repositories/jobs";
 import { listProductionEntities } from "@/server/repositories/production-entities";
 import {
+  createStoryboardImageVersion,
+  listStoryboardImageVersions,
+} from "@/server/repositories/storyboard-image-batches";
+import {
   createStoryboardImageRecord,
   createStoryboardVideoRecord,
   getSelectedStoryboardImage,
@@ -245,8 +249,37 @@ export async function confirmStoryboardImage(input: {
       userMessage: "没有找到这张分镜图片。它可能已经被删除或不属于当前项目。",
     });
   }
+  const selectedImages = (await listStoryboardImageVersions(input.projectId))
+    .filter((version) => version.shotId === image.shotId && version.status !== "client_rejected")
+    .flatMap((version) => version.selectedImageIds);
+  const selectedImageIds = Array.from(new Set([image.id, ...selectedImages]));
+  const imageVersion = await createStoryboardImageVersion({
+    projectId: input.projectId,
+    sceneId: image.sceneId,
+    shotId: image.shotId,
+    storyboardImageId: image.id,
+    selectedImageIds,
+    status: "selected",
+    snapshot: {
+      shotId: image.shotId,
+      sceneId: image.sceneId,
+      selectedImageId: image.id,
+      selectedImageIds,
+      image: {
+        id: image.id,
+        prompt: image.prompt,
+        provider: image.provider,
+        modelName: image.modelName,
+        ossKey: image.ossKey,
+        ossUrl: image.ossUrl,
+        generationStatus: image.generationStatus,
+      },
+    },
+    actorId: input.actorId,
+  });
   return {
     image,
+    imageVersion,
     message: "这张分镜图片已设为该分镜的正式候选，可随场次一起提交甲方审核。",
   };
 }

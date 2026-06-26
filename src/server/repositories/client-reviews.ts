@@ -9,9 +9,10 @@ export type ClientReviewType =
   | "contract_confirmation"
   | "script_package"
   | "storyboard_scene_images"
+  | "storyboard_image_batch"
   | "a_copy_review"
   | "b_copy_review";
-export type ClientReviewTargetScopeType = "project" | "proposal" | "quote" | "contract" | "script_package" | "storyboard_scene" | "review_cut";
+export type ClientReviewTargetScopeType = "project" | "proposal" | "quote" | "contract" | "script_package" | "storyboard_scene" | "storyboard_image_batch" | "review_cut";
 export type ClientReviewItemDecision = "pending" | "approved" | "rejected";
 export type ClientReviewItemType =
   | "brief"

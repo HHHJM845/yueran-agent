@@ -71,6 +71,8 @@ import {
   createSystemUser,
   createUploadUrl,
   createWorkflowClientReview,
+  createStoryboardImageBatch,
+  createStoryboardImageBatchClientReview,
   deliverToFeishu,
   exportContract,
   fetchBootstrapStatus,
@@ -152,6 +154,8 @@ import {
   type ScriptDirectionPackageView,
   type ScriptReferenceAssetView,
   type StoryboardImageView,
+  type StoryboardImageBatchView,
+  type StoryboardImageVersionView,
   type StoryboardSceneView,
   type StoryboardShotView,
   type StoryboardVideoView,
@@ -658,6 +662,8 @@ export function WorkspaceShell() {
           productionEntities={selectedWorkspaceData?.productionEntities ?? []}
           productionReferenceSets={selectedWorkspaceData?.productionReferenceSets ?? []}
           storyboardImages={selectedWorkspaceData?.storyboardImages ?? []}
+          storyboardImageBatches={selectedWorkspaceData?.storyboardImageBatches ?? []}
+          storyboardImageVersions={selectedWorkspaceData?.storyboardImageVersions ?? []}
           storyboardVideos={selectedWorkspaceData?.storyboardVideos ?? []}
           reviewCuts={selectedWorkspaceData?.reviewCuts ?? []}
           reviewCutAnnotations={selectedWorkspaceData?.reviewCutAnnotations ?? []}
@@ -1215,6 +1221,8 @@ function WorkspaceCenter({
   productionEntities,
   productionReferenceSets,
   storyboardImages,
+  storyboardImageBatches,
+  storyboardImageVersions,
   storyboardVideos,
   reviewCuts,
   reviewCutAnnotations,
@@ -1261,6 +1269,8 @@ function WorkspaceCenter({
   productionEntities: ProductionEntityView[];
   productionReferenceSets: ProductionReferenceSetView[];
   storyboardImages: StoryboardImageView[];
+  storyboardImageBatches: StoryboardImageBatchView[];
+  storyboardImageVersions: StoryboardImageVersionView[];
   storyboardVideos: StoryboardVideoView[];
   reviewCuts: ReviewCutView[];
   reviewCutAnnotations: ReviewCutAnnotationView[];
@@ -1611,6 +1621,8 @@ function WorkspaceCenter({
                   scenes={storyboardScenes}
                   shots={storyboardShots}
                   images={storyboardImages}
+                  batches={storyboardImageBatches}
+                  imageVersions={storyboardImageVersions}
                   clientReviewTasks={clientReviewTasks}
                   clientReviewItems={clientReviewItems}
                   onRefresh={onWorkspaceRefresh}
@@ -2180,6 +2192,8 @@ function StoryboardImageCanvasModule({
   scenes,
   shots,
   images,
+  batches,
+  imageVersions,
   clientReviewTasks,
   clientReviewItems,
   onRefresh,
@@ -2189,12 +2203,15 @@ function StoryboardImageCanvasModule({
   scenes: StoryboardSceneView[];
   shots: StoryboardShotView[];
   images: StoryboardImageView[];
+  batches: StoryboardImageBatchView[];
+  imageVersions: StoryboardImageVersionView[];
   clientReviewTasks: ClientReviewTaskView[];
   clientReviewItems: ClientReviewItemView[];
   onRefresh: () => Promise<void>;
 }) {
   const [activeShotId, setActiveShotId] = useState<string | null>(shots[0]?.id ?? null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [batchSceneDrafts, setBatchSceneDrafts] = useState<Record<number, string>>({});
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const activeShot = shots.find((shot) => shot.id === activeShotId) ?? shots[0] ?? null;
@@ -2202,6 +2219,22 @@ function StoryboardImageCanvasModule({
   const activeImages = activeShot ? images.filter((image) => image.shotId === activeShot.id) : [];
   const selectedImage = activeImages.find((image) => image.isSelected) ?? activeImages[0] ?? null;
   const canOperate = user.role === "creative" || user.role === "admin";
+  const batchNumbers = [1, 2, 3] as const;
+  const latestBatches = batchNumbers.map((batchNumber) => batches.find((batch) => batch.batchNumber === batchNumber) ?? null);
+  const latestBatchById = new Map(batches.map((batch) => [batch.id, batch]));
+  const batchReviewTasks = clientReviewTasks.filter((task) => task.reviewType === "storyboard_image_batch");
+  const latestBatchFeedback = batchReviewTasks
+    .flatMap((task) =>
+      clientReviewItems
+        .filter((item) => item.reviewTaskId === task.id)
+        .map((item) => ({
+          task,
+          item,
+          batch: latestBatchById.get(task.targetScopeId) ?? null,
+        }))
+    )
+    .sort((a, b) => b.item.updatedAt.localeCompare(a.item.updatedAt));
+  const activeImageVersions = activeShot ? imageVersions.filter((version) => version.shotId === activeShot.id) : [];
   const latestSceneReview = activeScene
     ? clientReviewTasks.find((task) => task.reviewType === "storyboard_scene_images" && task.targetScopeId === activeScene.id)
     : null;
@@ -2221,6 +2254,19 @@ function StoryboardImageCanvasModule({
       setError(result.error.message);
     }
     setBusyKey(null);
+  }
+
+  function sceneSelectionForBatch(batchNumber: 1 | 2 | 3, batch: StoryboardImageBatchView | null) {
+    const draft = batchSceneDrafts[batchNumber];
+    if (draft !== undefined) return draft;
+    return batch?.sceneIds.join(",") ?? "";
+  }
+
+  function selectedSceneIdsForBatch(batchNumber: 1 | 2 | 3, batch: StoryboardImageBatchView | null) {
+    return sceneSelectionForBatch(batchNumber, batch)
+      .split(",")
+      .map((sceneId) => sceneId.trim())
+      .filter(Boolean);
   }
 
   return (
@@ -2255,6 +2301,36 @@ function StoryboardImageCanvasModule({
                 已保存 {selectedImage.annotations.length} 条批注；图片预览隐藏后，批注仍保留在数据库中。
               </p>
             ) : null}
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              <div className="rounded-card-sm bg-[var(--surface-soft)] p-3">
+                <p className="text-xs font-semibold text-[var(--text-secondary)]">候选图片池</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {activeImages.length ? (
+                    activeImages.map((image) => (
+                      <span key={image.id} className={cn("ds-pill", image.isSelected ? "ds-selected-pill" : "bg-[var(--surface-card)]")}>
+                        {image.isSelected ? "正式" : parseStatusLabel(image.generationStatus)} · v{image.version}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-xs text-[var(--text-secondary)]">暂无候选图</span>
+                  )}
+                </div>
+              </div>
+              <div className="rounded-card-sm bg-[var(--surface-soft)] p-3">
+                <p className="text-xs font-semibold text-[var(--text-secondary)]">正式图片组版本</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {activeImageVersions.length ? (
+                    activeImageVersions.slice(0, 4).map((version) => (
+                      <span key={version.id} className="ds-pill bg-[var(--surface-card)]">
+                        v{version.version} · {parseStatusLabel(version.status)}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-xs text-[var(--text-secondary)]">确认正式图后生成版本快照</span>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
 
           <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -2281,7 +2357,7 @@ function StoryboardImageCanvasModule({
               </div>
             </div>
             <div className="ds-card-soft p-3">
-              <p className="text-sm font-semibold">场次审核路由</p>
+              <p className="text-sm font-semibold">兼容场次审核路由</p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <Button
                   type="button"
@@ -2295,8 +2371,108 @@ function StoryboardImageCanvasModule({
             </div>
           </div>
         </div>
+        <WorkspaceCard>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="ds-text-section-title">三批分镜图片审核</h3>
+              <p className="mt-1 text-sm leading-6 text-[var(--text-secondary)]">模块二按三批提交甲方审核；每批可分配多个场次，三批全部确认后才进入 AI 视频自由画布。</p>
+            </div>
+            <Badge variant="outline">{latestBatches.filter((batch) => batch?.status === "client_approved").length}/3 已确认</Badge>
+          </div>
+          <div className="mt-4 grid gap-3 lg:grid-cols-3">
+            {batchNumbers.map((batchNumber) => {
+              const batch = latestBatches[batchNumber - 1];
+              const sceneIds = selectedSceneIdsForBatch(batchNumber, batch);
+              const batchShots = shots.filter((shot) => sceneIds.includes(shot.sceneId));
+              const selectedCount = batchShots.filter((shot) => images.some((image) => image.shotId === shot.id && image.isSelected)).length;
+              const latestTask = batch ? batchReviewTasks.find((task) => task.targetScopeId === batch.id) : null;
+              return (
+                <div key={batchNumber} className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-semibold">第 {batchNumber} 批</p>
+                    <span className={cn("ds-pill", batch?.status === "client_approved" ? "ds-pill-teal" : batch?.status === "client_rejected" ? "ds-pill-yellow" : "bg-[var(--surface-card)]")}>
+                      {parseStatusLabel(batch?.status ?? "draft")}
+                    </span>
+                  </div>
+                  <label className="mt-3 block text-xs font-medium text-[var(--text-secondary)]">场次 ID（逗号分隔）</label>
+                  <textarea
+                    value={sceneSelectionForBatch(batchNumber, batch)}
+                    disabled={!canOperate || Boolean(batch?.clientReviewTaskId)}
+                    onChange={(event) => setBatchSceneDrafts((current) => ({ ...current, [batchNumber]: event.target.value }))}
+                    className="mt-2 min-h-16 w-full rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-2 text-xs leading-5"
+                    placeholder={scenes.map((scene) => scene.id).slice(0, 2).join(",")}
+                  />
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-[var(--text-secondary)]">
+                    <span>场次 {sceneIds.length}</span>
+                    <span>正式图 {selectedCount}/{batchShots.length}</span>
+                    <span>v{batch?.version ?? 0}</span>
+                    <span>{latestTask ? clientReviewStatusLabel(latestTask.status) : "未提交"}</span>
+                  </div>
+                  {batch?.snapshot && Object.keys(batch.snapshot).length > 0 ? (
+                    <p className="mt-2 line-clamp-3 rounded-card-sm bg-[var(--surface-card)] p-2 text-xs leading-5 text-[var(--text-secondary)]">{JSON.stringify(batch.snapshot).slice(0, 180)}</p>
+                  ) : null}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={!canOperate || busyKey === `batch-${batchNumber}` || sceneIds.length === 0}
+                      onClick={() =>
+                        void runAction(`batch-${batchNumber}`, () =>
+                          createStoryboardImageBatch(project.id, { batchNumber, sceneIds })
+                        )
+                      }
+                    >
+                      {busyKey === `batch-${batchNumber}` ? <Loader2 className="animate-spin" size={14} /> : <Plus size={14} />}
+                      保存批次
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={!canOperate || !batch || busyKey === `batch-review-${batchNumber}`}
+                      onClick={() =>
+                        batch &&
+                        void runAction(
+                          `batch-review-${batchNumber}`,
+                          () => createStoryboardImageBatchClientReview(project.id, batch.id),
+                          (data) => `${data.message} 验证码：${data.verificationCode}；链接：${data.reviewUrl}`
+                        )
+                      }
+                    >
+                      {busyKey === `batch-review-${batchNumber}` ? <Loader2 className="animate-spin" size={14} /> : <Send size={14} />}
+                      提交审核
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </WorkspaceCard>
         {message && <Feedback tone="success" text={message} />}
         {error && <Feedback tone="warning" text={error} />}
+        {latestBatchFeedback.length > 0 && (
+          <WorkspaceCard>
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="ds-text-section-title">批次甲方反馈</h3>
+              <Badge variant="outline">按批次 / 分镜</Badge>
+            </div>
+            <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">批次审核仍按分镜条目保存评分和修改意见，便于创意团队逐镜修图。</p>
+            <div className="mt-3 grid gap-2">
+              {latestBatchFeedback.slice(0, 12).map(({ task, item, batch }) => (
+                <div key={`${task.id}-${item.id}`} className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3 text-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-medium">第 {batch?.batchNumber ?? task.batchNumber ?? "-"} 批 · {item.itemLabel}</span>
+                    <span className={cn("ds-pill", item.decision === "approved" ? "ds-pill-teal" : item.decision === "rejected" ? "ds-pill-yellow" : "bg-[var(--surface-card)]")}>
+                      {item.decision === "approved" ? "OK" : item.decision === "rejected" ? "不 OK" : "待审"}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-[var(--text-secondary)]">评分：{item.score ?? "未评分"} · {clientReviewStatusLabel(task.status)}</p>
+                  {item.feedback && <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">{item.feedback}</p>}
+                </div>
+              ))}
+            </div>
+          </WorkspaceCard>
+        )}
         {latestSceneReview && (
           <WorkspaceCard>
             <div className="flex items-center justify-between gap-3">

@@ -27,6 +27,13 @@ import {
   markReviewCutClientReviewing,
 } from "@/server/repositories/review-cuts";
 import {
+  getStoryboardImageBatch,
+  listStoryboardImageBatches,
+  listStoryboardImageVersions,
+  updateStoryboardImageBatchItemDecisions,
+  updateStoryboardImageBatchStatus,
+} from "@/server/repositories/storyboard-image-batches";
+import {
   getScriptDirectionPackage,
   listScriptReferenceAssets,
   listStoryboardImages,
@@ -42,6 +49,7 @@ import {
   updateProjectProductionSetupStatus,
 } from "@/server/repositories/production-entities";
 import { recordStageProgress } from "@/server/use-cases/stage-progress";
+import { assertAllStoryboardImageBatchesApproved } from "@/server/use-cases/storyboard-image-batches";
 
 const submitItemSchema = z.object({
   itemId: z.string().uuid(),
@@ -84,6 +92,7 @@ export const createClientReviewInputSchema = z.object({
     "quote_confirmation",
     "contract_confirmation",
     "script_package",
+    "storyboard_image_batch",
     "a_copy_review",
     "b_copy_review",
   ]),
@@ -210,6 +219,16 @@ export async function createWorkflowClientReview(input: {
       reviewTaskId: review.task.id,
     });
   }
+  if (spec.targetScopeType === "storyboard_image_batch") {
+    await updateStoryboardImageBatchStatus({
+      projectId: input.projectId,
+      batchId: spec.targetScopeId,
+      status: "client_reviewing",
+      actorId: input.actorId,
+      clientReviewTaskId: review.task.id,
+      snapshot: spec.payload,
+    });
+  }
 
   return {
     ...review,
@@ -312,6 +331,33 @@ export async function createReviewForStoryboardScene(input: {
     reviewUrl: `${getLocalReviewOrigin(input.origin)}/client-review/${credentials.token}`,
     verificationCode: credentials.code,
   };
+}
+
+export async function createReviewForStoryboardImageBatch(input: {
+  projectId: string;
+  batchId: string;
+  actorId: string;
+  origin: string;
+}) {
+  const batch = await getStoryboardImageBatch({ projectId: input.projectId, batchId: input.batchId });
+  if (!batch) {
+    throw new AppError({
+      status: 404,
+      code: "storyboard_image_batch_not_found",
+      userMessage: "没有找到这个分镜图片批次。请刷新工作台后重新选择批次。",
+    });
+  }
+  return createWorkflowClientReview({
+    projectId: input.projectId,
+    actorId: input.actorId,
+    origin: input.origin,
+    reviewType: "storyboard_image_batch",
+    targetScopeId: batch.id,
+    sopKey: "sop_6",
+    reviewScene: "storyboard_image_batch",
+    batchNumber: batch.batchNumber,
+    payloadVersion: batch.version,
+  });
 }
 
 type WorkflowReviewSpec = {
@@ -562,6 +608,85 @@ async function buildWorkflowReviewSpec(input: {
     };
   }
 
+  if (input.reviewType === "storyboard_image_batch") {
+    const batchId = input.targetScopeId;
+    if (!batchId) {
+      throw new AppError({
+        status: 400,
+        code: "storyboard_image_batch_required",
+        userMessage: "请先创建分镜图片批次，再生成甲方审核链接。",
+      });
+    }
+    const [batch, scenes, shots, images, imageVersions] = await Promise.all([
+      getStoryboardImageBatch({ projectId: input.projectId, batchId }),
+      listStoryboardScenes(input.projectId),
+      listStoryboardShots(input.projectId),
+      listStoryboardImages(input.projectId),
+      listStoryboardImageVersions(input.projectId),
+    ]);
+    if (!batch) {
+      throw new AppError({
+        status: 404,
+        code: "storyboard_image_batch_not_found",
+        userMessage: "没有找到这个分镜图片批次。请刷新工作台后重新选择批次。",
+      });
+    }
+    const batchScenes = scenes.filter((scene) => batch.sceneIds.includes(scene.id));
+    const batchShots = shots.filter((shot) => batch.sceneIds.includes(shot.sceneId));
+    if (batchShots.length === 0) {
+      throw new AppError({
+        status: 422,
+        code: "storyboard_image_batch_empty",
+        userMessage: "这个批次还没有关联文字分镜，不能提交甲方审核。",
+      });
+    }
+    const selectedImages = images.filter((image) => batchShots.some((shot) => shot.id === image.shotId) && image.isSelected);
+    const missingImage = batchShots.find((shot) => !selectedImages.some((image) => image.shotId === shot.id));
+    if (missingImage) {
+      throw new AppError({
+        status: 422,
+        code: "storyboard_image_batch_incomplete",
+        userMessage: `分镜 ${missingImage.shotNumber} 还没有内部确认的正式图片。请先确认本批全部分镜图，再提交甲方审核。`,
+      });
+    }
+    const batchImageVersions = imageVersions.filter((version) => batchShots.some((shot) => shot.id === version.shotId));
+    return {
+      moduleKey: "storyboard_image_canvas",
+      reviewType: "storyboard_image_batch",
+      targetScopeType: "storyboard_image_batch",
+      targetScopeId: batch.id,
+      title: `第 ${batch.batchNumber} 批分镜图片审核`,
+      summary: "请按批次整体确认分镜图片；如需打回，请逐条分镜评分并填写修改意见。",
+      payload: {
+        batch,
+        scenes: batchScenes,
+        shots: batchShots,
+        selectedImages,
+        imageVersions: batchImageVersions,
+      },
+      items: batchShots.map((shot) => {
+        const image = selectedImages.find((item) => item.shotId === shot.id);
+        const versions = batchImageVersions.filter((version) => version.shotId === shot.id);
+        return {
+          itemType: "storyboard_shot_image" as const,
+          itemId: shot.id,
+          itemLabel: `${shot.shotNumber}｜${shot.visualDescription.slice(0, 60)}`,
+          metadata: {
+            batchId: batch.id,
+            batchNumber: batch.batchNumber,
+            shotId: shot.id,
+            shotNumber: shot.shotNumber,
+            sceneId: shot.sceneId,
+            imageId: image?.id ?? null,
+            imageUrl: image?.ossUrl ?? null,
+            imageVersionIds: versions.map((version) => version.id),
+            visualDescription: shot.visualDescription,
+          },
+        };
+      }),
+    };
+  }
+
   if (input.reviewType === "script_package" && input.reviewScene === "production_setup") {
     const [entities, referenceSets] = await Promise.all([
       listProductionEntities(input.projectId),
@@ -788,7 +913,12 @@ export function normalizeReviewItemsForSubmission(input: {
   const byItemId = new Map(input.submittedItems.map((item) => [item.itemId, item]));
   return input.existingItems.map((item) => {
     const submitted = byItemId.get(item.itemId);
-    const defaultScore = input.reviewType === "storyboard_scene_images" ? (input.decision === "approved" ? 5 : 2) : null;
+    const defaultScore =
+      input.reviewType === "storyboard_scene_images" || input.reviewType === "storyboard_image_batch"
+        ? input.decision === "approved"
+          ? 5
+          : 2
+        : null;
     return {
       itemId: item.itemId,
       decision: submitted?.decision ?? input.decision,
@@ -1072,6 +1202,61 @@ async function applyWorkflowReviewDecision(input: {
       });
     }
   }
+  if (input.reviewType === "storyboard_image_batch" && input.targetScopeType === "storyboard_image_batch") {
+    await Promise.all(
+      input.itemDecisions.map((item) =>
+        updateStoryboardShotClientDecision({
+          projectId: input.projectId,
+          shotId: item.itemId,
+          approved: item.decision === "approved",
+        })
+      )
+    );
+    await updateStoryboardImageBatchItemDecisions({
+      projectId: input.projectId,
+      batchId: input.targetScopeId,
+      decisions: input.itemDecisions.map((item) => ({
+        shotId: item.itemId,
+        approved: item.decision === "approved",
+        feedback: item.feedback ?? "",
+        feedbackPayload: { score: item.score ?? null },
+      })),
+    });
+    await updateStoryboardImageBatchStatus({
+      projectId: input.projectId,
+      batchId: input.targetScopeId,
+      status: approved ? "client_approved" : "client_rejected",
+      snapshot: {
+        reviewTaskId: input.reviewTaskId,
+        decision: input.decision,
+        itemDecisions: input.itemDecisions,
+      },
+    });
+    if (approved) {
+      const batches = await listStoryboardImageBatches(input.projectId);
+      try {
+        assertAllStoryboardImageBatchesApproved(batches);
+        await recordStageProgress({
+          projectId: input.projectId,
+          stageKey: "storyboard_image_canvas",
+          status: "approved",
+          currentStage: "ai_video_canvas",
+          projectStatus: "in_progress",
+          userMessage: "三批分镜图片均已获得甲方确认，项目已推进到 AI 视频自由画布。",
+          inputRefs: [{ type: "client_review_task", id: input.reviewTaskId }],
+          outputRefs: [{ type: "storyboard_image_batch", id: input.targetScopeId }],
+          snapshot: {
+            reviewTaskId: input.reviewTaskId,
+            decision: input.decision,
+            batchStatuses: batches.map((batch) => ({ batchNumber: batch.batchNumber, status: batch.status })),
+          },
+        });
+        return;
+      } catch (error) {
+        if (!(error instanceof AppError) || error.code !== "storyboard_image_batches_not_approved") throw error;
+      }
+    }
+  }
   if ((input.reviewType === "a_copy_review" || input.reviewType === "b_copy_review") && input.targetScopeType === "review_cut") {
     const [scenes, shots] = await Promise.all([
       listStoryboardScenes(input.projectId),
@@ -1154,6 +1339,12 @@ function reviewCreatedStage(reviewType: ClientReviewType, reviewScene?: ClientRe
       userMessage: "脚本方向、人物参考、场景参考和完整剧本已提交甲方审核。",
     };
   }
+  if (reviewType === "storyboard_image_batch") {
+    return {
+      stageKey: "storyboard_image_canvas" as const,
+      userMessage: "分镜图片批次已提交甲方审核，等待甲方按批次整体确认。",
+    };
+  }
   if (reviewType === "a_copy_review") {
     return {
       stageKey: "a_copy_revision" as const,
@@ -1219,6 +1410,17 @@ export function reviewSubmittedStage(reviewType: ClientReviewType, decision: "ap
       currentStage: "script_storyboard_confirmation" as const,
       projectStatus: approved ? ("in_progress" as const) : ("needs_revision" as const),
       userMessage: approved ? "甲方已确认脚本创意方向和人物场景设定，可以拆分文字分镜。" : "甲方已打回脚本创意方向，修改意见已回写内部端。",
+    };
+  }
+  if (reviewType === "storyboard_image_batch") {
+    return {
+      stageKey: "storyboard_image_canvas" as const,
+      status: approved ? ("waiting_review" as const) : ("needs_revision" as const),
+      currentStage: "storyboard_image_canvas" as const,
+      projectStatus: approved ? ("waiting_review" as const) : ("needs_revision" as const),
+      userMessage: approved
+        ? "本批分镜图片已获得甲方确认，系统会等待三批全部确认后再进入 AI 视频自由画布。"
+        : "本批分镜图片已被甲方打回，逐分镜评分和修改意见已保存。",
     };
   }
   if (reviewType === "a_copy_review") {

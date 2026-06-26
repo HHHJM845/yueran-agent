@@ -20,6 +20,7 @@ import { listProjectClientReviewItems, listProjectClientReviewTasks } from "@/se
 import { listProjectReviewCutAnnotations, listProjectReviewCuts } from "@/server/repositories/review-cuts";
 import { listProductionEntities, listProductionReferenceSets } from "@/server/repositories/production-entities";
 import { listStoryProduction } from "@/server/repositories/story-production";
+import { getStoryboardImageBatchWorkspace } from "@/server/use-cases/storyboard-image-batches";
 import { getProjectRiskCheck } from "@/server/repositories/risk-checks";
 import { getProjectWorkloadEstimate } from "@/server/repositories/workload-estimates";
 import { getProjectDeliveryChecklist } from "@/server/repositories/delivery-checklists";
@@ -49,6 +50,7 @@ export async function GET(request: Request, context: { params: Promise<{ project
       feishuReceivers,
       stageStates,
       storyProduction,
+      storyboardImageBatchWorkspace,
       productionEntities,
       productionReferenceSets,
       clientReviewTasks,
@@ -78,6 +80,7 @@ export async function GET(request: Request, context: { params: Promise<{ project
       user.role === "business" || user.role === "admin" ? listProjectFeishuReceivers(projectId) : Promise.resolve([]),
       listProjectStageStates(projectId),
       listStoryProduction(projectId),
+      getStoryboardImageBatchWorkspace(projectId),
       listProductionEntities(projectId),
       listProductionReferenceSets(projectId),
       listProjectClientReviewTasks(projectId),
@@ -110,6 +113,7 @@ export async function GET(request: Request, context: { params: Promise<{ project
         feishuReceivers,
         stageStates,
         ...storyProduction,
+        ...storyboardImageBatchWorkspace,
         productionEntities,
         productionReferenceSets,
         clientReviewTasks,

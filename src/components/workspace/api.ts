@@ -428,6 +428,50 @@ export type StoryboardImageView = {
   updatedAt: string;
 };
 
+export type StoryboardImageBatchItemView = {
+  id: string;
+  projectId: string;
+  batchId: string;
+  sceneId: string | null;
+  shotId: string | null;
+  status: string;
+  selectedImageIds: string[];
+  feedback: string;
+  feedbackPayload: Record<string, unknown>;
+  version: number;
+  sortOrder: number;
+  updatedAt: string;
+};
+
+export type StoryboardImageBatchView = {
+  id: string;
+  projectId: string;
+  batchNumber: 1 | 2 | 3;
+  status: string;
+  version: number;
+  sceneIds: string[];
+  clientReviewTaskId: string | null;
+  snapshot: Record<string, unknown>;
+  submittedAt: string | null;
+  approvedAt: string | null;
+  updatedAt: string;
+  items: StoryboardImageBatchItemView[];
+};
+
+export type StoryboardImageVersionView = {
+  id: string;
+  projectId: string;
+  sceneId: string | null;
+  shotId: string;
+  storyboardImageId: string | null;
+  version: number;
+  selectedImageIds: string[];
+  status: string;
+  snapshot: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type StoryboardVideoView = {
   id: string;
   projectId: string;
@@ -463,9 +507,10 @@ export type ClientReviewTaskView = {
     | "contract_confirmation"
     | "script_package"
     | "storyboard_scene_images"
+    | "storyboard_image_batch"
     | "a_copy_review"
     | "b_copy_review";
-  targetScopeType: "project" | "proposal" | "quote" | "contract" | "script_package" | "storyboard_scene" | "review_cut";
+  targetScopeType: "project" | "proposal" | "quote" | "contract" | "script_package" | "storyboard_scene" | "storyboard_image_batch" | "review_cut";
   targetScopeId: string;
   title: string;
   summary: string;
@@ -844,6 +889,8 @@ export type WorkspaceData = {
   productionEntities: ProductionEntityView[];
   productionReferenceSets: ProductionReferenceSetView[];
   storyboardImages: StoryboardImageView[];
+  storyboardImageBatches: StoryboardImageBatchView[];
+  storyboardImageVersions: StoryboardImageVersionView[];
   storyboardVideos: StoryboardVideoView[];
   reviewCuts: ReviewCutView[];
   reviewCutAnnotations: ReviewCutAnnotationView[];
@@ -1292,8 +1339,32 @@ export async function generateStoryboardImage(projectId: string, shotId: string)
 }
 
 export async function confirmStoryboardImage(projectId: string, imageId: string) {
-  return readApi<{ image: StoryboardImageView; message: string }>(
+  return readApi<{ image: StoryboardImageView; imageVersion: StoryboardImageVersionView; message: string }>(
     await fetch(`/api/projects/${projectId}/storyboard-images/${imageId}/confirm`, {
+      method: "POST",
+    })
+  );
+}
+
+export async function createStoryboardImageBatch(projectId: string, input: { batchNumber: 1 | 2 | 3; sceneIds: string[] }) {
+  return readApi<{ batch: StoryboardImageBatchView; message: string }>(
+    await fetch(`/api/projects/${projectId}/storyboard-image-batches`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    })
+  );
+}
+
+export async function createStoryboardImageBatchClientReview(projectId: string, batchId: string) {
+  return readApi<{
+    task: ClientReviewTaskView;
+    items: ClientReviewItemView[];
+    reviewUrl: string;
+    verificationCode: string;
+    message: string;
+  }>(
+    await fetch(`/api/projects/${projectId}/storyboard-image-batches/${batchId}/client-review`, {
       method: "POST",
     })
   );
