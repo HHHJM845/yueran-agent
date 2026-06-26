@@ -874,3 +874,338 @@ create index if not exists audit_logs_actor_created_idx
 
 create index if not exists audit_logs_action_created_idx
   on audit_logs (action, created_at desc);
+
+alter table client_review_tasks
+  add column if not exists sop_key text,
+  add column if not exists review_scene text,
+  add column if not exists round_number integer,
+  add column if not exists batch_number integer,
+  add column if not exists review_payload_version integer not null default 1;
+
+alter table client_review_items
+  add column if not exists target_kind text,
+  add column if not exists target_version integer,
+  add column if not exists feedback_payload_json jsonb not null default '{}'::jsonb;
+
+alter table review_cuts
+  add column if not exists round_number integer not null default 1,
+  add column if not exists snapshot_json jsonb not null default '{}'::jsonb,
+  add column if not exists change_request_hint text;
+
+create table if not exists risk_check_cards (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  status text not null default 'draft' check (status in ('draft', 'in_review', 'needs_revision', 'approved', 'archived')),
+  overall_alert text not null default 'low' check (overall_alert in ('low', 'medium', 'high', 'redline')),
+  human_decision text check (human_decision is null or human_decision in ('accept', 'reject', 'conditional_accept')),
+  decision_reason text not null default '',
+  decided_by uuid references users(id),
+  decided_at timestamptz,
+  source_artifact_id uuid references artifacts(id) on delete set null,
+  created_by uuid references users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (project_id)
+);
+
+create table if not exists risk_check_facts (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  card_id uuid not null references risk_check_cards(id) on delete cascade,
+  field_key text not null,
+  field_label text not null default '',
+  value_json jsonb not null default '{}'::jsonb,
+  evidence text not null default '',
+  confidence numeric not null default 0,
+  created_by uuid references users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (card_id, field_key)
+);
+
+create table if not exists risk_check_dimensions (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  card_id uuid not null references risk_check_cards(id) on delete cascade,
+  dimension_key text not null,
+  level text not null check (level in ('low', 'medium', 'high')),
+  evidence text not null default '',
+  anchor_text text not null default '',
+  confidence numeric not null default 0,
+  created_by uuid references users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (card_id, dimension_key)
+);
+
+create table if not exists creative_proposal_rounds (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  round_number integer not null check (round_number in (1, 2)),
+  status text not null default 'draft' check (status in ('draft', 'generating', 'internal_review', 'client_reviewing', 'client_rejected', 'client_approved', 'locked', 'archived')),
+  version integer not null default 1,
+  direction_ids jsonb not null default '[]'::jsonb,
+  retained_direction_ids jsonb not null default '[]'::jsonb,
+  client_feedback_json jsonb not null default '{}'::jsonb,
+  client_review_task_id uuid references client_review_tasks(id) on delete set null,
+  snapshot_json jsonb not null default '{}'::jsonb,
+  created_by uuid references users(id),
+  updated_by uuid references users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (project_id, round_number, version)
+);
+
+create table if not exists creative_scene_concepts (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  round_id uuid not null references creative_proposal_rounds(id) on delete cascade,
+  direction_id uuid references creative_directions(id) on delete set null,
+  scene_index integer not null,
+  title text not null,
+  description text not null default '',
+  source_text text not null default '',
+  image_prompt text not null default '',
+  required_image_count integer not null default 4,
+  selected_image_ids jsonb not null default '[]'::jsonb,
+  status text not null default 'draft' check (status in ('draft', 'generating', 'ready', 'selected', 'discarded', 'client_commented')),
+  version integer not null default 1,
+  snapshot_json jsonb not null default '{}'::jsonb,
+  created_by uuid references users(id),
+  updated_by uuid references users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists creative_scene_images (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  round_id uuid not null references creative_proposal_rounds(id) on delete cascade,
+  scene_concept_id uuid not null references creative_scene_concepts(id) on delete cascade,
+  generated_image_id uuid references generated_images(id) on delete set null,
+  asset_id uuid references assets(id) on delete set null,
+  oss_url text,
+  prompt text not null default '',
+  status text not null default 'generated' check (status in ('queued', 'generated', 'failed', 'selected', 'discarded')),
+  is_selected boolean not null default false,
+  sort_order integer not null default 0,
+  failure_reason text,
+  created_by uuid references users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists workload_estimates (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  status text not null default 'draft' check (status in ('draft', 'generated', 'confirmed', 'archived')),
+  role_count integer not null default 0,
+  scene_count integer not null default 0,
+  shot_count integer not null default 0,
+  image_count integer not null default 0,
+  video_count integer not null default 0,
+  revision_rounds integer not null default 0,
+  deliverable_versions jsonb not null default '[]'::jsonb,
+  complexity text not null default 'medium' check (complexity in ('low', 'medium', 'high')),
+  min_price_cny numeric not null default 0,
+  max_price_cny numeric not null default 0,
+  rationale text not null default '',
+  risk_notes text not null default '',
+  source_round_id uuid references creative_proposal_rounds(id) on delete set null,
+  source_job_id uuid references jobs(id) on delete set null,
+  created_by uuid references users(id),
+  updated_by uuid references users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (project_id)
+);
+
+create table if not exists delivery_checklists (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  estimate_id uuid references workload_estimates(id) on delete set null,
+  status text not null default 'draft' check (status in ('draft', 'confirmed', 'changed', 'archived')),
+  version integer not null default 1,
+  notes text not null default '',
+  confirmed_by uuid references users(id),
+  confirmed_at timestamptz,
+  created_by uuid references users(id),
+  updated_by uuid references users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (project_id)
+);
+
+create table if not exists delivery_checklist_items (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  checklist_id uuid not null references delivery_checklists(id) on delete cascade,
+  item_kind text not null,
+  title text not null,
+  description text not null default '',
+  quantity integer not null default 1,
+  status text not null default 'planned' check (status in ('planned', 'confirmed', 'changed', 'delivered', 'cancelled')),
+  change_request_id uuid,
+  sort_order integer not null default 0,
+  metadata_json jsonb not null default '{}'::jsonb,
+  created_by uuid references users(id),
+  updated_by uuid references users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists production_entities (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  entity_type text not null check (entity_type in ('character', 'scene', 'prop')),
+  name text not null,
+  description text not null default '',
+  importance text not null default 'normal' check (importance in ('normal', 'important', 'key')),
+  reference_depth text not null default 'basic' check (reference_depth in ('basic', 'full')),
+  source_shot_ids jsonb not null default '[]'::jsonb,
+  status text not null default 'draft' check (status in ('draft', 'generating', 'internal_confirmed', 'client_reviewing', 'client_rejected', 'client_approved', 'locked')),
+  version integer not null default 1,
+  locked_at timestamptz,
+  created_by uuid references users(id),
+  updated_by uuid references users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists production_reference_sets (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  entity_id uuid not null references production_entities(id) on delete cascade,
+  depth text not null default 'basic' check (depth in ('basic', 'full')),
+  status text not null default 'draft' check (status in ('draft', 'generating', 'internal_confirmed', 'client_reviewing', 'client_rejected', 'client_approved', 'locked')),
+  prompt text not null default '',
+  reference_image_ids jsonb not null default '[]'::jsonb,
+  snapshot_json jsonb not null default '{}'::jsonb,
+  version integer not null default 1,
+  created_by uuid references users(id),
+  updated_by uuid references users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists storyboard_image_batches (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  batch_number integer not null check (batch_number in (1, 2, 3)),
+  status text not null default 'draft' check (status in ('draft', 'internal_ready', 'client_reviewing', 'client_rejected', 'client_approved', 'locked')),
+  version integer not null default 1,
+  scene_ids jsonb not null default '[]'::jsonb,
+  client_review_task_id uuid references client_review_tasks(id) on delete set null,
+  snapshot_json jsonb not null default '{}'::jsonb,
+  submitted_at timestamptz,
+  approved_at timestamptz,
+  created_by uuid references users(id),
+  updated_by uuid references users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (project_id, batch_number, version)
+);
+
+create table if not exists storyboard_image_batch_items (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  batch_id uuid not null references storyboard_image_batches(id) on delete cascade,
+  scene_id uuid references storyboard_scenes(id) on delete set null,
+  shot_id uuid references storyboard_shots(id) on delete set null,
+  status text not null default 'pending' check (status in ('pending', 'approved', 'rejected', 'needs_revision', 'locked')),
+  selected_image_ids jsonb not null default '[]'::jsonb,
+  feedback text not null default '',
+  feedback_payload_json jsonb not null default '{}'::jsonb,
+  version integer not null default 1,
+  sort_order integer not null default 0,
+  created_by uuid references users(id),
+  updated_by uuid references users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists storyboard_image_versions (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  scene_id uuid references storyboard_scenes(id) on delete set null,
+  shot_id uuid not null references storyboard_shots(id) on delete cascade,
+  storyboard_image_id uuid references storyboard_images(id) on delete set null,
+  version integer not null default 1,
+  selected_image_ids jsonb not null default '[]'::jsonb,
+  status text not null default 'draft' check (status in ('draft', 'selected', 'client_reviewing', 'client_rejected', 'client_approved', 'locked')),
+  snapshot_json jsonb not null default '{}'::jsonb,
+  created_by uuid references users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (shot_id, version)
+);
+
+create table if not exists storyboard_video_generation_inputs (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  storyboard_video_id uuid references storyboard_videos(id) on delete cascade,
+  shot_id uuid references storyboard_shots(id) on delete cascade,
+  mode text not null check (mode in ('single_image', 'start_end_frame', 'multi_reference')),
+  input_image_ids jsonb not null default '[]'::jsonb,
+  prompt text not null default '',
+  metadata_json jsonb not null default '{}'::jsonb,
+  created_by uuid references users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists change_requests (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  source_sop text not null,
+  source_object_type text not null default '',
+  source_object_id uuid,
+  status text not null default 'draft' check (status in ('draft', 'submitted', 'approved', 'rejected', 'implemented', 'cancelled')),
+  original_scope text not null default '',
+  requested_scope text not null default '',
+  impact_json jsonb not null default '{}'::jsonb,
+  decision_reason text not null default '',
+  decided_by uuid references users(id),
+  decided_at timestamptz,
+  created_by uuid references users(id),
+  updated_by uuid references users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists archive_records (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  status text not null default 'draft' check (status in ('draft', 'ready', 'completed', 'blocked', 'archived')),
+  final_files_ready boolean not null default false,
+  final_technical_check_passed boolean not null default false,
+  tail_payment_confirmed boolean not null default false,
+  client_received_confirmed boolean not null default false,
+  rights_confirmed boolean not null default false,
+  case_study_permission text not null default 'pending' check (case_study_permission in ('allowed', 'not_allowed', 'pending')),
+  nas_archive_completed boolean not null default false,
+  delivery_channel text not null default '',
+  archive_location text not null default '',
+  after_sales_note text not null default '',
+  completed_by uuid references users(id),
+  completed_at timestamptz,
+  created_by uuid references users(id),
+  updated_by uuid references users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (project_id)
+);
+
+create index if not exists risk_check_facts_card_idx on risk_check_facts (card_id, field_key);
+create index if not exists risk_check_dimensions_card_idx on risk_check_dimensions (card_id, dimension_key);
+create index if not exists creative_proposal_rounds_project_idx on creative_proposal_rounds (project_id, round_number, version desc);
+create index if not exists creative_scene_concepts_round_idx on creative_scene_concepts (round_id, direction_id, scene_index);
+create index if not exists creative_scene_images_concept_idx on creative_scene_images (scene_concept_id, sort_order, updated_at desc);
+create index if not exists delivery_checklist_items_checklist_idx on delivery_checklist_items (checklist_id, sort_order, updated_at desc);
+create index if not exists production_entities_project_idx on production_entities (project_id, entity_type, status, updated_at desc);
+create index if not exists production_reference_sets_entity_idx on production_reference_sets (entity_id, depth, version desc);
+create index if not exists storyboard_image_batches_project_idx on storyboard_image_batches (project_id, batch_number, version desc);
+create index if not exists storyboard_image_batch_items_batch_idx on storyboard_image_batch_items (batch_id, sort_order, updated_at desc);
+create index if not exists storyboard_image_versions_shot_idx on storyboard_image_versions (shot_id, version desc);
+create index if not exists storyboard_video_generation_inputs_video_idx on storyboard_video_generation_inputs (storyboard_video_id, created_at desc);
+create index if not exists change_requests_project_idx on change_requests (project_id, status, updated_at desc);
