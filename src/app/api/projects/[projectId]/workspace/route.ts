@@ -20,6 +20,8 @@ import { listProjectClientReviewItems, listProjectClientReviewTasks } from "@/se
 import { listProjectReviewCutAnnotations, listProjectReviewCuts } from "@/server/repositories/review-cuts";
 import { listStoryProduction } from "@/server/repositories/story-production";
 import { getProjectRiskCheck } from "@/server/repositories/risk-checks";
+import { getProjectWorkloadEstimate } from "@/server/repositories/workload-estimates";
+import { getProjectDeliveryChecklist } from "@/server/repositories/delivery-checklists";
 
 export async function GET(request: Request, context: { params: Promise<{ projectId: string }> }) {
   try {
@@ -51,6 +53,8 @@ export async function GET(request: Request, context: { params: Promise<{ project
       reviewCuts,
       reviewCutAnnotations,
       riskCheck,
+      workloadEstimate,
+      deliveryChecklist,
     ] = await Promise.all([
       listProjectJobs(projectId),
       listProjectArtifacts(projectId),
@@ -76,6 +80,8 @@ export async function GET(request: Request, context: { params: Promise<{ project
       listProjectReviewCuts(projectId),
       listProjectReviewCutAnnotations(projectId),
       getProjectRiskCheck(projectId),
+      getProjectWorkloadEstimate(projectId),
+      getProjectDeliveryChecklist(projectId),
     ]);
     return Response.json({
       ok: true,
@@ -104,6 +110,8 @@ export async function GET(request: Request, context: { params: Promise<{ project
         reviewCuts,
         reviewCutAnnotations,
         riskCheck,
+        workloadEstimate,
+        deliveryChecklist,
       },
     });
   } catch (error) {

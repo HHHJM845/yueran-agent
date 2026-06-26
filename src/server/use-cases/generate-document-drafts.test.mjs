@@ -100,3 +100,59 @@ test("normalizeDocumentDraftBundle rejects drafts without quote items", async ()
     /模型没有返回可保存的报价明细/
   );
 });
+
+test("document draft prompt helpers include workload estimate and delivery checklist", async () => {
+  const { formatWorkloadEstimateForPrompt, formatDeliveryChecklistForPrompt } = await import("./generate-document-drafts.ts");
+
+  const workloadText = formatWorkloadEstimateForPrompt({
+    id: "estimate-1",
+    projectId: "project-1",
+    status: "draft",
+    roleCount: 3,
+    sceneCount: 8,
+    shotCount: 90,
+    imageCount: 180,
+    videoCount: 90,
+    revisionRounds: 3,
+    deliverableVersions: ["横版", "竖版", "无字幕版"],
+    complexity: "high",
+    priceRange: { minCny: 50000, maxCny: 80000 },
+    rationale: "角色多，镜头量高。",
+    riskNotes: "周期需要客户快速确认。",
+    sourceRoundId: null,
+    sourceJobId: null,
+    updatedAt: "2026-06-24T00:00:00.000Z",
+  });
+  const checklistText = formatDeliveryChecklistForPrompt({
+    id: "checklist-1",
+    projectId: "project-1",
+    estimateId: "estimate-1",
+    status: "draft",
+    version: 1,
+    notes: "签约前确认。",
+    confirmedBy: null,
+    confirmedAt: null,
+    updatedAt: "2026-06-24T00:00:00.000Z",
+    items: [
+      {
+        id: "item-1",
+        projectId: "project-1",
+        checklistId: "checklist-1",
+        itemKind: "horizontal_final",
+        title: "横版成片",
+        description: "最终确认版视频。",
+        quantity: 1,
+        status: "planned",
+        changeRequestId: null,
+        sortOrder: 0,
+        metadata: {},
+        updatedAt: "2026-06-24T00:00:00.000Z",
+      },
+    ],
+  });
+
+  assert.match(workloadText, /镜头 90/);
+  assert.match(workloadText, /CNY 50000 - CNY 80000/);
+  assert.match(checklistText, /横版成片/);
+  assert.match(checklistText, /签约前确认/);
+});

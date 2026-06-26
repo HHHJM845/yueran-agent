@@ -11,6 +11,8 @@ import { appendJobEvent, createJob, getJobInput, updateJobStatus } from "@/serve
 import { getProjectById } from "@/server/repositories/projects";
 import type { QuoteItem } from "@/server/repositories/quotes";
 import type { ContractTemplateFields } from "@/server/repositories/contracts";
+import { getProjectWorkloadEstimate } from "@/server/repositories/workload-estimates";
+import { getProjectDeliveryChecklist } from "@/server/repositories/delivery-checklists";
 import { saveProjectContract } from "@/server/use-cases/save-contract";
 import { saveProjectProposal } from "@/server/use-cases/save-proposal";
 import { saveProjectQuote } from "@/server/use-cases/save-quote";
@@ -450,13 +452,15 @@ function buildDraftTelemetryMetadata(context: DocumentDraftContext) {
 }
 
 async function collectDocumentDraftContext(projectId: string) {
-  const [project, artifacts, assetAnalyses, creativeDirections, creativeExpansions, generatedImages] = await Promise.all([
+  const [project, artifacts, assetAnalyses, creativeDirections, creativeExpansions, generatedImages, workloadEstimate, deliveryChecklist] = await Promise.all([
     getProjectById(projectId),
     listProjectArtifacts(projectId),
     listProjectAssetAnalyses(projectId),
     listProjectCreativeDirections(projectId),
     listProjectCreativeExpansions(projectId),
     listProjectGeneratedImages(projectId),
+    getProjectWorkloadEstimate(projectId),
+    getProjectDeliveryChecklist(projectId),
   ]);
 
   if (!project) {
@@ -493,11 +497,15 @@ async function collectDocumentDraftContext(projectId: string) {
     creativeDirections: directionsForDraft,
     creativeExpansions: expansionsForDraft,
     generatedImages: imagesForDraft,
+    workloadEstimate,
+    deliveryChecklist,
     hasUsableInput:
       structuredRequirements.length > 0 ||
       successfulAnalyses.length > 0 ||
       directionsForDraft.length > 0 ||
-      expansionsForDraft.length > 0,
+      expansionsForDraft.length > 0 ||
+      Boolean(workloadEstimate) ||
+      Boolean(deliveryChecklist),
   };
 }
 
@@ -598,6 +606,8 @@ function buildDocumentDraftPrompt(context: DocumentDraftContext) {
     .map((image) => `氛围图：${image.prompt.slice(0, 360)}；OSS：${image.ossUrl ? "已保存" : "未保存"}`)
     .join("\n");
   const scoreText = context.scoreResults.map((artifact) => `评分产物：${formatUnknownValue(artifact.data).slice(0, 420)}`).join("\n");
+  const workloadText = formatWorkloadEstimateForPrompt(context.workloadEstimate);
+  const deliveryChecklistText = formatDeliveryChecklistForPrompt(context.deliveryChecklist);
 
   return [
     "请基于下面项目工作台已有产物，生成内部待审核的提案、报价和合同草稿。",
@@ -613,10 +623,53 @@ function buildDocumentDraftPrompt(context: DocumentDraftContext) {
     expansionText,
     imageText,
     scoreText,
+    workloadText,
+    deliveryChecklistText,
   ]
     .filter(Boolean)
     .join("\n\n")
     .slice(0, 9000);
+}
+
+export function formatWorkloadEstimateForPrompt(estimate: DocumentDraftContext["workloadEstimate"]) {
+  if (!estimate) return "";
+  return [
+    "工作量估算：",
+    `角色 ${estimate.roleCount} 个，场景 ${estimate.sceneCount} 个，镜头 ${estimate.shotCount} 个，图片 ${estimate.imageCount} 张，视频 ${estimate.videoCount} 条，修改轮次 ${estimate.revisionRounds} 轮。`,
+    `交付版本：${estimate.deliverableVersions.length ? estimate.deliverableVersions.join("、") : "待人工确认"}。`,
+    `建议价格区间：CNY ${estimate.priceRange.minCny} - CNY ${estimate.priceRange.maxCny}；复杂度：${estimate.complexity}。`,
+    estimate.rationale ? `估算依据：${estimate.rationale}` : "",
+    estimate.riskNotes ? `估算风险：${estimate.riskNotes}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function formatDeliveryChecklistForPrompt(checklist: DocumentDraftContext["deliveryChecklist"]) {
+  if (!checklist) return "";
+  const items = checklist.items
+    .map((item) => `${item.title}（${item.quantity}，${deliveryChecklistItemKindLabel(item.itemKind)}，${item.status}）：${item.description}`)
+    .join("\n");
+  return [
+    `交付清单：状态 ${checklist.status}，版本 v${checklist.version}。`,
+    checklist.notes ? `清单备注：${checklist.notes}` : "",
+    items,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function deliveryChecklistItemKindLabel(kind: string) {
+  const labels: Record<string, string> = {
+    horizontal_final: "横版成片",
+    vertical_final: "竖版成片",
+    no_subtitle_final: "无字幕版",
+    cover: "封面图",
+    project_file: "项目文件",
+    generated_assets: "生成资产",
+    other: "其他",
+  };
+  return labels[kind] ?? kind;
 }
 
 function buildDraftInputRefs(context: DocumentDraftContext) {

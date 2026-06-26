@@ -576,6 +576,65 @@ export type RiskCheckBundleView = {
   redlineAlerts: string[];
 };
 
+export type WorkloadEstimateView = {
+  id: string;
+  projectId: string;
+  status: "draft" | "generated" | "confirmed" | "archived";
+  roleCount: number;
+  sceneCount: number;
+  shotCount: number;
+  imageCount: number;
+  videoCount: number;
+  revisionRounds: number;
+  deliverableVersions: string[];
+  complexity: "low" | "medium" | "high";
+  priceRange: { minCny: number; maxCny: number };
+  rationale: string;
+  riskNotes: string;
+  sourceRoundId: string | null;
+  sourceJobId: string | null;
+  updatedAt: string;
+};
+
+export type DeliveryChecklistItemKind =
+  | "horizontal_final"
+  | "vertical_final"
+  | "no_subtitle_final"
+  | "cover"
+  | "project_file"
+  | "generated_assets"
+  | "other";
+
+export type DeliveryChecklistItemStatus = "planned" | "confirmed" | "changed" | "delivered" | "cancelled";
+
+export type DeliveryChecklistItemView = {
+  id: string;
+  projectId: string;
+  checklistId: string;
+  itemKind: DeliveryChecklistItemKind;
+  title: string;
+  description: string;
+  quantity: number;
+  status: DeliveryChecklistItemStatus;
+  changeRequestId: string | null;
+  sortOrder: number;
+  metadata: Record<string, unknown>;
+  updatedAt: string;
+};
+
+export type DeliveryChecklistView = {
+  id: string;
+  projectId: string;
+  estimateId: string | null;
+  status: "draft" | "confirmed" | "changed" | "archived";
+  version: number;
+  notes: string;
+  confirmedBy: string | null;
+  confirmedAt: string | null;
+  updatedAt: string;
+  items: DeliveryChecklistItemView[];
+};
+
 export type ProposalView = {
   id: string;
   projectId: string;
@@ -769,6 +828,8 @@ export type WorkspaceData = {
   feishuReceivers: FeishuReceiverView[];
   stageStates: ProjectStageStateView[];
   riskCheck: RiskCheckBundleView | null;
+  workloadEstimate: WorkloadEstimateView | null;
+  deliveryChecklist: DeliveryChecklistView | null;
   artifacts: Array<{
     id: string;
     projectId: string;
@@ -1323,6 +1384,69 @@ export async function saveQuote(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
+    })
+  );
+}
+
+export async function saveWorkloadEstimate(
+  projectId: string,
+  input: {
+    roleCount: number;
+    sceneCount: number;
+    shotCount: number;
+    imageCount: number;
+    videoCount: number;
+    revisionRounds: number;
+    deliverableVersions: string[];
+    complexity: WorkloadEstimateView["complexity"];
+    minPriceCny: number;
+    maxPriceCny: number;
+    rationale: string;
+    riskNotes: string;
+    status: WorkloadEstimateView["status"];
+  }
+) {
+  return readApi<{ workloadEstimate: WorkloadEstimateView; message: string }>(
+    await fetch(`/api/projects/${projectId}/workload-estimate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    })
+  );
+}
+
+export async function createDeliveryChecklistFromEstimate(projectId: string, estimateId: string) {
+  return readApi<{ deliveryChecklist: DeliveryChecklistView; message: string }>(
+    await fetch(`/api/projects/${projectId}/delivery-checklist`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "create_from_estimate", estimateId }),
+    })
+  );
+}
+
+export async function saveDeliveryChecklist(
+  projectId: string,
+  input: {
+    estimateId?: string | null;
+    status: DeliveryChecklistView["status"];
+    notes: string;
+    items: Array<{
+      itemKind: DeliveryChecklistItemKind;
+      title: string;
+      description?: string;
+      quantity: number;
+      status?: DeliveryChecklistItemStatus;
+      sortOrder?: number;
+      metadata?: Record<string, unknown>;
+    }>;
+  }
+) {
+  return readApi<{ deliveryChecklist: DeliveryChecklistView; message: string }>(
+    await fetch(`/api/projects/${projectId}/delivery-checklist`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "save", ...input }),
     })
   );
 }

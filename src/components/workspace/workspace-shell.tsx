@@ -65,6 +65,7 @@ import {
   createCreativeProposalRound,
   createCreativeProposalRoundClientReview,
   createDocumentExportAccess,
+  createDeliveryChecklistFromEstimate,
   createProject,
   createReviewCut,
   createSystemUser,
@@ -99,10 +100,12 @@ import {
   reviewTechnicalFeasibility,
   retryFeishuDelivery,
   saveContract,
+  saveDeliveryChecklist,
   saveFeishuReceiver,
   saveProposal,
   saveQuote,
   saveRiskCheckDecision,
+  saveWorkloadEstimate,
   saveScriptPackage,
   selectCreativeSceneImages,
   structureRequirement,
@@ -118,6 +121,9 @@ import {
   type ContractExportFormat,
   type ContractExportView,
   type ContractView,
+  type DeliveryChecklistItemKind,
+  type DeliveryChecklistItemStatus,
+  type DeliveryChecklistView,
   type CommercialReviewAction,
   type DocumentSnapshotView,
   type FeishuDeliveryDocumentType,
@@ -148,6 +154,7 @@ import {
   type StoryboardVideoView,
   type TechnicalFeasibilityAction,
   type WorkspaceData,
+  type WorkloadEstimateView,
   updateProjectBasics,
   updateCreativeDirectionContent,
   updateCreativeDirectionSelection,
@@ -661,6 +668,8 @@ export function WorkspaceShell() {
           feishuReceivers={selectedWorkspaceData?.feishuReceivers ?? []}
           stageStates={selectedWorkspaceData?.stageStates ?? []}
           riskCheck={selectedWorkspaceData?.riskCheck ?? null}
+          workloadEstimate={selectedWorkspaceData?.workloadEstimate ?? null}
+          deliveryChecklist={selectedWorkspaceData?.deliveryChecklist ?? null}
           artifacts={selectedWorkspaceData?.artifacts ?? []}
           governance={governance}
           governanceError={governanceError}
@@ -1214,6 +1223,8 @@ function WorkspaceCenter({
   feishuReceivers,
   stageStates,
   riskCheck,
+  workloadEstimate,
+  deliveryChecklist,
   artifacts,
   onProjectUpdated,
   onWorkspaceRefresh,
@@ -1256,6 +1267,8 @@ function WorkspaceCenter({
   feishuReceivers: FeishuReceiverView[];
   stageStates: ProjectStageStateView[];
   riskCheck: RiskCheckBundleView | null;
+  workloadEstimate: WorkloadEstimateView | null;
+  deliveryChecklist: DeliveryChecklistView | null;
   artifacts: ArtifactView[];
   governance: GovernanceView | null;
   governanceError: ApiError | null;
@@ -1452,6 +1465,45 @@ function WorkspaceCenter({
                   className="lg:col-span-2"
                 >
                   <BusinessDocumentDraftCard project={project} user={user} onRefresh={onWorkspaceRefresh} />
+                </StageWorkCard>
+                <StageWorkCard
+                  icon={<ClipboardList size={18} />}
+                  title="工作量估算与报价建议"
+                  detail="SOP 4 在第二轮创意确认后估算角色、场景、镜头、图片、视频和修改轮次；报价仍由人工在报价编辑器里确认。"
+                  badges={[
+                    workloadEstimate ? formatMoney(workloadEstimate.priceRange.minCny, "CNY") : "待估算",
+                    workloadEstimate ? `${workloadEstimate.shotCount} 镜头` : "人工保存",
+                    "非自动接单",
+                  ]}
+                  className="lg:col-span-2"
+                >
+                  <WorkloadEstimateCard
+                    project={project}
+                    user={user}
+                    estimate={workloadEstimate}
+                    creativeDirections={creativeDirections}
+                    generatedImages={generatedImages}
+                    onRefresh={onWorkspaceRefresh}
+                  />
+                </StageWorkCard>
+                <StageWorkCard
+                  icon={<List size={18} />}
+                  title="交付清单核对"
+                  detail="根据估算生成交付物清单，签约前可确认和微调；新增交付物在后续 SOP 9 应创建变更请求。"
+                  badges={[
+                    deliveryChecklist ? `v${deliveryChecklist.version}` : "待生成",
+                    deliveryChecklist ? deliveryChecklistStatusLabel(deliveryChecklist.status) : "未保存",
+                    `${deliveryChecklist?.items.length ?? 0} 项`,
+                  ]}
+                  className="lg:col-span-2"
+                >
+                  <DeliveryChecklistCard
+                    project={project}
+                    user={user}
+                    estimate={workloadEstimate}
+                    checklist={deliveryChecklist}
+                    onRefresh={onWorkspaceRefresh}
+                  />
                 </StageWorkCard>
                 <StageWorkCard
                   icon={<BriefcaseBusiness size={18} />}
@@ -6458,6 +6510,305 @@ function clientReviewStatusLabel(status: string) {
   return labels[status] ?? status;
 }
 
+function WorkloadEstimateCard({
+  project,
+  user,
+  estimate,
+  creativeDirections,
+  generatedImages,
+  onRefresh,
+}: {
+  project: ProjectSummary;
+  user: CurrentUser;
+  estimate: WorkloadEstimateView | null;
+  creativeDirections: CreativeDirectionView[];
+  generatedImages: GeneratedImageView[];
+  onRefresh: () => Promise<void>;
+}) {
+  const canEdit = user.role === "business" || user.role === "admin";
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [estimateError, setEstimateError] = useState<string | null>(null);
+  const selectedDirections = creativeDirections.filter((direction) => direction.isSelected);
+  const suggested = estimate ?? buildDefaultWorkloadEstimate(project, selectedDirections, generatedImages);
+
+  async function handleSave(formData: FormData) {
+    setSaving(true);
+    setMessage(null);
+    setEstimateError(null);
+
+    const result = await saveWorkloadEstimate(project.id, {
+      roleCount: Number(formData.get("roleCount") ?? 0),
+      sceneCount: Number(formData.get("sceneCount") ?? 0),
+      shotCount: Number(formData.get("shotCount") ?? 0),
+      imageCount: Number(formData.get("imageCount") ?? 0),
+      videoCount: Number(formData.get("videoCount") ?? 0),
+      revisionRounds: Number(formData.get("revisionRounds") ?? 0),
+      deliverableVersions: parseCommaList(String(formData.get("deliverableVersions") ?? "")),
+      complexity: String(formData.get("complexity") ?? "medium") as WorkloadEstimateView["complexity"],
+      minPriceCny: Number(formData.get("minPriceCny") ?? 0),
+      maxPriceCny: Number(formData.get("maxPriceCny") ?? 0),
+      rationale: String(formData.get("rationale") ?? ""),
+      riskNotes: String(formData.get("riskNotes") ?? ""),
+      status: String(formData.get("status") ?? "draft") as WorkloadEstimateView["status"],
+    });
+
+    if (result.ok) {
+      setMessage(result.data.message);
+      await onRefresh();
+    } else {
+      setEstimateError(result.error.message);
+    }
+
+    setSaving(false);
+  }
+
+  return (
+    <div className="ds-card-sm p-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <ClipboardList size={18} />
+            <h3 className="ds-text-section-title">工作量估算与 AI 报价建议</h3>
+          </div>
+          <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
+            估算会保存到数据库，作为报价建议和交付清单输入。最终报价请继续在下方报价编辑器人工确认。
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs">
+          <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">{workloadComplexityLabel(suggested.complexity)}</span>
+          <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">
+            {formatMoney(suggested.priceRange.minCny, "CNY")} - {formatMoney(suggested.priceRange.maxCny, "CNY")}
+          </span>
+          {!canEdit && <span className="ds-pill ds-pill-yellow">当前角色只能查看估算</span>}
+        </div>
+      </div>
+
+      {!estimate && (
+        <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm leading-6 text-[var(--warning)]">
+          当前还没有保存工作量估算。系统已根据已选创意方向给出初始值，请人工核对后保存。
+        </div>
+      )}
+
+      <form action={handleSave} className="mt-4 grid gap-3">
+        <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+          <NumberField name="roleCount" label="角色" value={suggested.roleCount} disabled={!canEdit || saving} />
+          <NumberField name="sceneCount" label="场景" value={suggested.sceneCount} disabled={!canEdit || saving} />
+          <NumberField name="shotCount" label="镜头" value={suggested.shotCount} disabled={!canEdit || saving} />
+          <NumberField name="imageCount" label="图片" value={suggested.imageCount} disabled={!canEdit || saving} />
+          <NumberField name="videoCount" label="视频" value={suggested.videoCount} disabled={!canEdit || saving} />
+          <NumberField name="revisionRounds" label="修改轮次" value={suggested.revisionRounds} disabled={!canEdit || saving} />
+        </div>
+        <div className="grid gap-3 md:grid-cols-[140px_minmax(0,1fr)_160px_160px]">
+          <label className="grid gap-1 text-sm">
+            <span className="font-medium">复杂度</span>
+            <select
+              name="complexity"
+              defaultValue={suggested.complexity}
+              disabled={!canEdit || saving}
+              className="h-9 ds-card-sm px-3 text-sm disabled:bg-[var(--muted)]"
+            >
+              <option value="low">低</option>
+              <option value="medium">中</option>
+              <option value="high">高</option>
+            </select>
+          </label>
+          <label className="grid gap-1 text-sm">
+            <span className="font-medium">交付版本</span>
+            <input
+              name="deliverableVersions"
+              disabled={!canEdit || saving}
+              defaultValue={suggested.deliverableVersions.join("、")}
+              className="h-9 ds-card-sm px-3 text-sm disabled:bg-[var(--muted)]"
+            />
+          </label>
+          <NumberField name="minPriceCny" label="建议低价" value={suggested.priceRange.minCny} disabled={!canEdit || saving} />
+          <NumberField name="maxPriceCny" label="建议高价" value={suggested.priceRange.maxCny} disabled={!canEdit || saving} />
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <label className="grid gap-1 text-sm">
+            <span className="font-medium">估算依据</span>
+            <textarea
+              name="rationale"
+              disabled={!canEdit || saving}
+              defaultValue={suggested.rationale}
+              className="min-h-20 resize-y ds-card-sm p-3 text-sm leading-6 disabled:bg-[var(--muted)]"
+            />
+          </label>
+          <label className="grid gap-1 text-sm">
+            <span className="font-medium">风险备注</span>
+            <textarea
+              name="riskNotes"
+              disabled={!canEdit || saving}
+              defaultValue={suggested.riskNotes}
+              className="min-h-20 resize-y ds-card-sm p-3 text-sm leading-6 disabled:bg-[var(--muted)]"
+            />
+          </label>
+        </div>
+        <input type="hidden" name="status" value={estimate?.status ?? "draft"} />
+        <button
+          disabled={!canEdit || saving}
+          className="inline-flex h-9 w-fit items-center justify-center gap-2 rounded-card-sm bg-[var(--foreground)] px-3 text-sm font-medium text-[var(--text-inverse)] disabled:opacity-60"
+        >
+          {saving ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
+          保存工作量估算
+        </button>
+      </form>
+
+      {estimateError && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm text-[var(--warning)]">{estimateError}</div>}
+      {message && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-3 text-sm text-[var(--success)]">{message}</div>}
+    </div>
+  );
+}
+
+function DeliveryChecklistCard({
+  project,
+  user,
+  estimate,
+  checklist,
+  onRefresh,
+}: {
+  project: ProjectSummary;
+  user: CurrentUser;
+  estimate: WorkloadEstimateView | null;
+  checklist: DeliveryChecklistView | null;
+  onRefresh: () => Promise<void>;
+}) {
+  const canEdit = user.role === "business" || user.role === "admin";
+  const [saving, setSaving] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [checklistError, setChecklistError] = useState<string | null>(null);
+  const rows = buildChecklistRows(checklist);
+
+  async function handleCreateFromEstimate() {
+    if (!estimate) {
+      setChecklistError("请先保存工作量估算，再根据估算生成交付清单。");
+      return;
+    }
+    setGenerating(true);
+    setMessage(null);
+    setChecklistError(null);
+    const result = await createDeliveryChecklistFromEstimate(project.id, estimate.id);
+    if (result.ok) {
+      setMessage(result.data.message);
+      await onRefresh();
+    } else {
+      setChecklistError(result.error.message);
+    }
+    setGenerating(false);
+  }
+
+  async function handleSave(formData: FormData) {
+    setSaving(true);
+    setMessage(null);
+    setChecklistError(null);
+    const items = parseChecklistItems(formData);
+    if (items.length === 0) {
+      setChecklistError("请至少填写一条交付物，包括名称、类型和数量。");
+      setSaving(false);
+      return;
+    }
+
+    const result = await saveDeliveryChecklist(project.id, {
+      estimateId: estimate?.id ?? checklist?.estimateId ?? null,
+      status: String(formData.get("status") ?? "draft") as DeliveryChecklistView["status"],
+      notes: String(formData.get("notes") ?? ""),
+      items,
+    });
+    if (result.ok) {
+      setMessage(result.data.message);
+      await onRefresh();
+    } else {
+      setChecklistError(result.error.message);
+    }
+    setSaving(false);
+  }
+
+  return (
+    <div className="ds-card-sm p-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <List size={18} />
+            <h3 className="ds-text-section-title">交付清单编辑</h3>
+          </div>
+          <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
+            清单会持久化到数据库，并作为合同交付范围和 SOP 9 交付核对的依据。
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs">
+          <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">当前 v{checklist?.version ?? 0}</span>
+          <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">{deliveryChecklistStatusLabel(checklist?.status ?? "draft")}</span>
+          {!canEdit && <span className="ds-pill ds-pill-yellow">当前角色只能查看清单</span>}
+        </div>
+      </div>
+
+      {!checklist && (
+        <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm leading-6 text-[var(--warning)]">
+          当前还没有交付清单。请先保存工作量估算，再生成初始清单并人工核对。
+        </div>
+      )}
+
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          disabled={!canEdit || generating || !estimate}
+          onClick={() => void handleCreateFromEstimate()}
+          className="inline-flex h-9 items-center justify-center gap-2 ds-card-sm px-3 text-sm font-medium disabled:opacity-60"
+        >
+          {generating ? <Loader2 className="animate-spin" size={16} /> : <RefreshCcw size={16} />}
+          根据估算生成清单
+        </button>
+        {!estimate && <p className="text-sm leading-6 text-[var(--text-secondary)]">保存估算后才能生成交付清单。</p>}
+      </div>
+
+      <form action={handleSave} className="mt-4 grid gap-3">
+        <div className="grid gap-2 overflow-hidden rounded-card-sm border border-[var(--border-soft)] p-2">
+          {rows.map((item, index) => (
+            <ChecklistItemInputs key={index} index={index} item={item} disabled={!canEdit || saving} />
+          ))}
+        </div>
+        <div className="grid gap-3 md:grid-cols-[180px_minmax(0,1fr)]">
+          <label className="grid gap-1 text-sm">
+            <span className="font-medium">清单状态</span>
+            <select
+              name="status"
+              disabled={!canEdit || saving}
+              defaultValue={checklist?.status ?? "draft"}
+              className="h-9 ds-card-sm px-3 text-sm disabled:bg-[var(--muted)]"
+            >
+              <option value="draft">草稿</option>
+              <option value="confirmed">已确认</option>
+              <option value="changed">已变更</option>
+              <option value="archived">已归档</option>
+            </select>
+          </label>
+          <label className="grid gap-1 text-sm">
+            <span className="font-medium">清单备注</span>
+            <input
+              name="notes"
+              disabled={!canEdit || saving}
+              defaultValue={checklist?.notes ?? "签约前可微调交付项；签约后新增交付物应创建变更请求。"}
+              className="h-9 ds-card-sm px-3 text-sm disabled:bg-[var(--muted)]"
+            />
+          </label>
+        </div>
+        <button
+          disabled={!canEdit || saving}
+          className="inline-flex h-9 w-fit items-center justify-center gap-2 rounded-card-sm bg-[var(--foreground)] px-3 text-sm font-medium text-[var(--text-inverse)] disabled:opacity-60"
+        >
+          {saving ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
+          保存交付清单
+        </button>
+      </form>
+
+      {checklistError && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm text-[var(--warning)]">{checklistError}</div>}
+      {message && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-3 text-sm text-[var(--success)]">{message}</div>}
+    </div>
+  );
+}
+
 function QuoteItemInputs({ index, item, disabled }: { index: number; item: QuoteItemView; disabled: boolean }) {
   return (
     <>
@@ -6495,6 +6846,88 @@ function QuoteItemInputs({ index, item, disabled }: { index: number; item: Quote
   );
 }
 
+function ChecklistItemInputs({
+  index,
+  item,
+  disabled,
+}: {
+  index: number;
+  item: {
+    itemKind: DeliveryChecklistItemKind;
+    title: string;
+    description: string;
+    quantity: number;
+    status: DeliveryChecklistItemStatus;
+  };
+  disabled: boolean;
+}) {
+  return (
+    <div className="grid gap-2 rounded-card-sm bg-[var(--surface-soft)] p-2 md:grid-cols-[150px_minmax(0,1fr)_minmax(0,1.2fr)_90px_130px]">
+      <select
+        name={`checklist_${index}_kind`}
+        disabled={disabled}
+        defaultValue={item.itemKind}
+        className="h-9 min-w-0 ds-card-sm px-2 text-sm disabled:bg-[var(--muted)]"
+      >
+        {deliveryChecklistKindOptions.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <input
+        name={`checklist_${index}_title`}
+        disabled={disabled}
+        defaultValue={item.title}
+        placeholder={index === 0 ? "横版成片" : "可选交付物"}
+        className="h-9 min-w-0 ds-card-sm px-3 text-sm disabled:bg-[var(--muted)]"
+      />
+      <input
+        name={`checklist_${index}_description`}
+        disabled={disabled}
+        defaultValue={item.description}
+        placeholder="交付说明"
+        className="h-9 min-w-0 ds-card-sm px-3 text-sm disabled:bg-[var(--muted)]"
+      />
+      <input
+        name={`checklist_${index}_quantity`}
+        disabled={disabled}
+        defaultValue={item.quantity || ""}
+        inputMode="numeric"
+        placeholder="1"
+        className="h-9 min-w-0 ds-card-sm px-3 text-sm disabled:bg-[var(--muted)]"
+      />
+      <select
+        name={`checklist_${index}_status`}
+        disabled={disabled}
+        defaultValue={item.status}
+        className="h-9 min-w-0 ds-card-sm px-2 text-sm disabled:bg-[var(--muted)]"
+      >
+        <option value="planned">计划中</option>
+        <option value="confirmed">已确认</option>
+        <option value="changed">已变更</option>
+        <option value="delivered">已交付</option>
+        <option value="cancelled">已取消</option>
+      </select>
+    </div>
+  );
+}
+
+function NumberField({ name, label, value, disabled }: { name: string; label: string; value: number; disabled: boolean }) {
+  return (
+    <label className="grid gap-1 text-sm">
+      <span className="font-medium">{label}</span>
+      <input
+        name={name}
+        inputMode="numeric"
+        disabled={disabled}
+        defaultValue={value || ""}
+        className="h-9 min-w-0 ds-card-sm px-3 text-sm disabled:bg-[var(--muted)]"
+      />
+    </label>
+  );
+}
+
 function buildQuoteRows(quote: QuoteView | null): QuoteItemView[] {
   const base = quote?.items.length
     ? quote.items
@@ -6503,6 +6936,93 @@ function buildQuoteRows(quote: QuoteView | null): QuoteItemView[] {
         { name: "AIGC 视频生成", description: "主视觉视频生成与筛选", quantity: 1, unitPrice: 36000 },
       ];
   return [...base, ...Array.from({ length: 5 }, () => ({ name: "", description: "", quantity: 0, unitPrice: 0 }))].slice(0, 5);
+}
+
+function buildDefaultWorkloadEstimate(
+  project: ProjectSummary,
+  selectedDirections: CreativeDirectionView[],
+  generatedImages: GeneratedImageView[]
+): WorkloadEstimateView {
+  const highDifficulty = selectedDirections.some((direction) => direction.technicalDifficulty.includes("高"));
+  const imageCount = Math.max(12, generatedImages.filter((image) => image.status === "succeeded").length || selectedDirections.length * 6);
+  const videoCount = Math.max(6, selectedDirections.length * 6 || 6);
+  const minPrice = highDifficulty ? 60000 : 40000;
+  const maxPrice = highDifficulty ? 120000 : 80000;
+
+  return {
+    id: "draft",
+    projectId: project.id,
+    status: "draft",
+    roleCount: Math.max(1, selectedDirections.length || 1),
+    sceneCount: Math.max(2, selectedDirections.length * 2 || 2),
+    shotCount: videoCount,
+    imageCount,
+    videoCount,
+    revisionRounds: 2,
+    deliverableVersions: ["横版", "竖版", "无字幕版"],
+    complexity: highDifficulty ? "high" : "medium",
+    priceRange: { minCny: minPrice, maxCny: maxPrice },
+    rationale: "请结合第二轮创意确认结果、镜头数量、候选图数量和客户交付规格人工校准。",
+    riskNotes: "该估算不会自动决定是否接单，也不会覆盖最终报价。",
+    sourceRoundId: null,
+    sourceJobId: null,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+const deliveryChecklistKindOptions: Array<{ value: DeliveryChecklistItemKind; label: string }> = [
+  { value: "horizontal_final", label: "横版成片" },
+  { value: "vertical_final", label: "竖版成片" },
+  { value: "no_subtitle_final", label: "无字幕版" },
+  { value: "cover", label: "封面图" },
+  { value: "project_file", label: "项目文件" },
+  { value: "generated_assets", label: "生成资产" },
+  { value: "other", label: "其他" },
+];
+
+function buildChecklistRows(checklist: DeliveryChecklistView | null) {
+  const base = checklist?.items.length
+    ? checklist.items.map((item) => ({
+        itemKind: item.itemKind,
+        title: item.title,
+        description: item.description,
+        quantity: item.quantity,
+        status: item.status,
+      }))
+    : [
+        { itemKind: "horizontal_final" as const, title: "横版成片", description: "最终确认版横版视频", quantity: 1, status: "planned" as const },
+        { itemKind: "vertical_final" as const, title: "竖版成片", description: "最终确认版竖版视频", quantity: 1, status: "planned" as const },
+        { itemKind: "cover" as const, title: "封面图", description: "交付归档封面", quantity: 1, status: "planned" as const },
+      ];
+
+  return [
+    ...base,
+    ...Array.from({ length: 6 }, () => ({
+      itemKind: "other" as DeliveryChecklistItemKind,
+      title: "",
+      description: "",
+      quantity: 0,
+      status: "planned" as DeliveryChecklistItemStatus,
+    })),
+  ].slice(0, 8);
+}
+
+function parseChecklistItems(formData: FormData) {
+  return Array.from({ length: 8 }, (_, index) => {
+    const itemKind = String(formData.get(`checklist_${index}_kind`) ?? "other") as DeliveryChecklistItemKind;
+    const title = String(formData.get(`checklist_${index}_title`) ?? "").trim();
+    const description = String(formData.get(`checklist_${index}_description`) ?? "").trim();
+    const quantity = Number(formData.get(`checklist_${index}_quantity`) ?? 0);
+    const status = String(formData.get(`checklist_${index}_status`) ?? "planned") as DeliveryChecklistItemStatus;
+    return { itemKind, title, description, quantity, status, sortOrder: index };
+  }).filter((item) => item.title && item.quantity > 0);
+}
+
+function parseCommaList(value: string) {
+  return value
+    .split(/[、,，\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function parseQuoteItems(formData: FormData): QuoteItemView[] {
@@ -6524,6 +7044,25 @@ function quoteStatusLabel(status: string) {
     sent: "已发送",
     signed: "已签约",
     terminated: "已终止",
+  };
+  return labels[status] ?? status;
+}
+
+function workloadComplexityLabel(value: WorkloadEstimateView["complexity"]) {
+  const labels: Record<WorkloadEstimateView["complexity"], string> = {
+    low: "低复杂度",
+    medium: "中复杂度",
+    high: "高复杂度",
+  };
+  return labels[value];
+}
+
+function deliveryChecklistStatusLabel(status: DeliveryChecklistView["status"] | "draft") {
+  const labels: Record<string, string> = {
+    draft: "草稿",
+    confirmed: "已确认",
+    changed: "已变更",
+    archived: "已归档",
   };
   return labels[status] ?? status;
 }
