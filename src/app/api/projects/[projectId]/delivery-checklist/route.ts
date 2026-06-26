@@ -6,6 +6,7 @@ import { getProjectDeliveryChecklist } from "@/server/repositories/delivery-chec
 import { createDeliveryChecklistFromEstimate, saveProjectDeliveryChecklist } from "@/server/use-cases/workload-estimate";
 
 const checklistItemSchema = z.object({
+  id: z.string().uuid().optional(),
   itemKind: z.enum([
     "horizontal_final",
     "vertical_final",

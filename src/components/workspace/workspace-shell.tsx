@@ -6853,6 +6853,7 @@ function ChecklistItemInputs({
 }: {
   index: number;
   item: {
+    id?: string;
     itemKind: DeliveryChecklistItemKind;
     title: string;
     description: string;
@@ -6863,6 +6864,7 @@ function ChecklistItemInputs({
 }) {
   return (
     <div className="grid gap-2 rounded-card-sm bg-[var(--surface-soft)] p-2 md:grid-cols-[150px_minmax(0,1fr)_minmax(0,1.2fr)_90px_130px]">
+      <input type="hidden" name={`checklist_${index}_id`} value={item.id ?? ""} />
       <select
         name={`checklist_${index}_kind`}
         disabled={disabled}
@@ -6983,6 +6985,7 @@ const deliveryChecklistKindOptions: Array<{ value: DeliveryChecklistItemKind; la
 function buildChecklistRows(checklist: DeliveryChecklistView | null) {
   const base = checklist?.items.length
     ? checklist.items.map((item) => ({
+        id: item.id,
         itemKind: item.itemKind,
         title: item.title,
         description: item.description,
@@ -6990,14 +6993,15 @@ function buildChecklistRows(checklist: DeliveryChecklistView | null) {
         status: item.status,
       }))
     : [
-        { itemKind: "horizontal_final" as const, title: "横版成片", description: "最终确认版横版视频", quantity: 1, status: "planned" as const },
-        { itemKind: "vertical_final" as const, title: "竖版成片", description: "最终确认版竖版视频", quantity: 1, status: "planned" as const },
-        { itemKind: "cover" as const, title: "封面图", description: "交付归档封面", quantity: 1, status: "planned" as const },
+        { id: undefined, itemKind: "horizontal_final" as const, title: "横版成片", description: "最终确认版横版视频", quantity: 1, status: "planned" as const },
+        { id: undefined, itemKind: "vertical_final" as const, title: "竖版成片", description: "最终确认版竖版视频", quantity: 1, status: "planned" as const },
+        { id: undefined, itemKind: "cover" as const, title: "封面图", description: "交付归档封面", quantity: 1, status: "planned" as const },
       ];
 
   return [
     ...base,
     ...Array.from({ length: 6 }, () => ({
+      id: undefined,
       itemKind: "other" as DeliveryChecklistItemKind,
       title: "",
       description: "",
@@ -7009,12 +7013,13 @@ function buildChecklistRows(checklist: DeliveryChecklistView | null) {
 
 function parseChecklistItems(formData: FormData) {
   return Array.from({ length: 8 }, (_, index) => {
+    const idValue = String(formData.get(`checklist_${index}_id`) ?? "").trim();
     const itemKind = String(formData.get(`checklist_${index}_kind`) ?? "other") as DeliveryChecklistItemKind;
     const title = String(formData.get(`checklist_${index}_title`) ?? "").trim();
     const description = String(formData.get(`checklist_${index}_description`) ?? "").trim();
     const quantity = Number(formData.get(`checklist_${index}_quantity`) ?? 0);
     const status = String(formData.get(`checklist_${index}_status`) ?? "planned") as DeliveryChecklistItemStatus;
-    return { itemKind, title, description, quantity, status, sortOrder: index };
+    return { id: idValue || undefined, itemKind, title, description, quantity, status, sortOrder: index };
   }).filter((item) => item.title && item.quantity > 0);
 }
 

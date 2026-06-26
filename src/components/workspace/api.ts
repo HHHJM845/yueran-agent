@@ -1432,6 +1432,7 @@ export async function saveDeliveryChecklist(
     status: DeliveryChecklistView["status"];
     notes: string;
     items: Array<{
+      id?: string;
       itemKind: DeliveryChecklistItemKind;
       title: string;
       description?: string;

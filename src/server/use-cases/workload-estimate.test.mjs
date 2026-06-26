@@ -57,3 +57,93 @@ test("delivery checklist bulk save preserves existing item identity and change r
     /change_request_id/i
   );
 });
+
+test("mergeChecklistItemsWithExistingIds reuses ids by item kind to avoid duplicate generated checklist items", async () => {
+  const { mergeChecklistItemsWithExistingIds } = await import("./workload-estimate.ts");
+
+  const merged = mergeChecklistItemsWithExistingIds(
+    [
+      { itemKind: "horizontal_final", title: "横版成片", quantity: 1 },
+      { itemKind: "vertical_final", title: "竖版成片", quantity: 1 },
+      { itemKind: "cover", title: "封面图", quantity: 1 },
+    ],
+    [
+      {
+        id: "item-horizontal",
+        projectId: "project-1",
+        checklistId: "checklist-1",
+        itemKind: "horizontal_final",
+        title: "横版成片",
+        description: "",
+        quantity: 1,
+        status: "planned",
+        changeRequestId: "cr-1",
+        sortOrder: 0,
+        metadata: {},
+        updatedAt: "2026-06-26T00:00:00.000Z",
+      },
+      {
+        id: "item-cover",
+        projectId: "project-1",
+        checklistId: "checklist-1",
+        itemKind: "cover",
+        title: "封面图",
+        description: "",
+        quantity: 1,
+        status: "planned",
+        changeRequestId: null,
+        sortOrder: 1,
+        metadata: {},
+        updatedAt: "2026-06-26T00:00:00.000Z",
+      },
+    ]
+  );
+
+  assert.equal(merged[0].id, "item-horizontal");
+  assert.equal(merged[1].id, undefined);
+  assert.equal(merged[2].id, "item-cover");
+});
+
+test("mergeChecklistItemsWithExistingIds falls back by title when stable kind is shared", async () => {
+  const { mergeChecklistItemsWithExistingIds } = await import("./workload-estimate.ts");
+
+  const merged = mergeChecklistItemsWithExistingIds(
+    [
+      { itemKind: "other", title: "客户额外素材包", quantity: 1 },
+      { itemKind: "other", title: "落版文件", quantity: 1 },
+    ],
+    [
+      {
+        id: "item-materials",
+        projectId: "project-1",
+        checklistId: "checklist-1",
+        itemKind: "other",
+        title: "客户额外素材包",
+        description: "",
+        quantity: 1,
+        status: "changed",
+        changeRequestId: null,
+        sortOrder: 0,
+        metadata: {},
+        updatedAt: "2026-06-26T00:00:00.000Z",
+      },
+      {
+        id: "item-final-files",
+        projectId: "project-1",
+        checklistId: "checklist-1",
+        itemKind: "other",
+        title: "落版文件",
+        description: "",
+        quantity: 1,
+        status: "planned",
+        changeRequestId: null,
+        sortOrder: 1,
+        metadata: {},
+        updatedAt: "2026-06-26T00:00:00.000Z",
+      },
+    ]
+  );
+
+  assert.equal(merged[0].id, "item-materials");
+  assert.equal(merged[1].id, "item-final-files");
+});

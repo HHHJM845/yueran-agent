@@ -120,7 +120,11 @@ export async function createDeliveryChecklistFromEstimate(input: {
     });
   }
 
-  const items = buildChecklistItemsFromEstimate(estimate);
+  const existingChecklist = await getProjectDeliveryChecklist(input.projectId);
+  const items = mergeChecklistItemsWithExistingIds(
+    buildChecklistItemsFromEstimate(estimate),
+    existingChecklist?.items ?? []
+  );
   return createOrUpdateDeliveryChecklist({
     projectId: input.projectId,
     estimateId: estimate.id,
@@ -201,6 +205,21 @@ function buildChecklistItemsFromEstimate(estimate: WorkloadEstimateView): SaveDe
   ];
 }
 
+export function mergeChecklistItemsWithExistingIds(
+  generatedItems: SaveDeliveryChecklistItemInput[],
+  existingItems: DeliveryChecklistView["items"]
+): SaveDeliveryChecklistItemInput[] {
+  const remainingItems = [...existingItems];
+
+  return generatedItems.map((item) => {
+    const matchedIndex = findExistingChecklistItemIndex(remainingItems, item);
+    if (matchedIndex < 0) return item;
+
+    const [matchedItem] = remainingItems.splice(matchedIndex, 1);
+    return { ...item, id: matchedItem.id };
+  });
+}
+
 function normalizeChecklistItem(item: SaveDeliveryChecklistItemInput, index: number): SaveDeliveryChecklistItemInput {
   const itemKind = allowedChecklistKinds.includes(item.itemKind) ? item.itemKind : "other";
   return {
@@ -213,6 +232,31 @@ function normalizeChecklistItem(item: SaveDeliveryChecklistItemInput, index: num
     sortOrder: item.sortOrder ?? index,
     metadata: item.metadata ?? {},
   };
+}
+
+function findExistingChecklistItemIndex(
+  existingItems: DeliveryChecklistView["items"],
+  generatedItem: SaveDeliveryChecklistItemInput
+) {
+  const normalizedTitle = normalizeChecklistIdentityTitle(generatedItem.title);
+
+  if (normalizedTitle) {
+    const exactIndex = existingItems.findIndex(
+      (item) => item.itemKind === generatedItem.itemKind && normalizeChecklistIdentityTitle(item.title) === normalizedTitle
+    );
+    if (exactIndex >= 0) return exactIndex;
+
+    const titleFallbackIndex = existingItems.findIndex(
+      (item) => normalizeChecklistIdentityTitle(item.title) === normalizedTitle
+    );
+    if (titleFallbackIndex >= 0) return titleFallbackIndex;
+  }
+
+  return existingItems.findIndex((item) => item.itemKind === generatedItem.itemKind);
+}
+
+function normalizeChecklistIdentityTitle(title: string) {
+  return title.trim().toLowerCase();
 }
 
 function mapDeliverableVersionToKind(version: string): DeliveryChecklistItemKind {
