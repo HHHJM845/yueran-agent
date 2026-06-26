@@ -49,7 +49,7 @@ import {
   updateProjectProductionSetupStatus,
 } from "@/server/repositories/production-entities";
 import { recordStageProgress } from "@/server/use-cases/stage-progress";
-import { assertAllStoryboardImageBatchesApproved } from "@/server/use-cases/storyboard-image-batches";
+import { assertAllStoryboardImageBatchesApproved, latestStoryboardImageBatches } from "@/server/use-cases/storyboard-image-batches";
 
 const submitItemSchema = z.object({
   itemId: z.string().uuid(),
@@ -1234,8 +1234,9 @@ async function applyWorkflowReviewDecision(input: {
     });
     if (approved) {
       const batches = await listStoryboardImageBatches(input.projectId);
+      const latestBatches = latestStoryboardImageBatches(batches);
       try {
-        assertAllStoryboardImageBatchesApproved(batches);
+        assertAllStoryboardImageBatchesApproved(latestBatches);
         await recordStageProgress({
           projectId: input.projectId,
           stageKey: "storyboard_image_canvas",
@@ -1248,7 +1249,7 @@ async function applyWorkflowReviewDecision(input: {
           snapshot: {
             reviewTaskId: input.reviewTaskId,
             decision: input.decision,
-            batchStatuses: batches.map((batch) => ({ batchNumber: batch.batchNumber, status: batch.status })),
+            batchStatuses: latestBatches.map((batch) => ({ batchNumber: batch.batchNumber, status: batch.status, version: batch.version ?? null })),
           },
         });
         return;
