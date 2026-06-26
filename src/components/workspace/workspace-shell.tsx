@@ -104,6 +104,7 @@ import {
   saveQuote,
   saveRiskCheckDecision,
   saveScriptPackage,
+  selectCreativeSceneImages,
   structureRequirement,
   type AssetAnalysisView,
   type AssetView,
@@ -3774,8 +3775,11 @@ function CreativeDirectionsCard({
         clientReviewTasks={clientReviewTasks}
         canCreateRound={canEdit}
         canLaunchReview={user.role === "business" || user.role === "admin"}
+        projectId={project.id}
+        canSelectSceneImages={canEdit}
         creatingRound={creatingRound}
         reviewingRoundId={reviewingRoundId}
+        onRefresh={onRefresh}
         onCreateRound={handleCreateRound}
         onCreateRoundClientReview={(round) => void handleCreateRoundClientReview(round)}
       />
@@ -3791,8 +3795,11 @@ function CreativeProposalRoundsPanel({
   clientReviewTasks,
   canCreateRound,
   canLaunchReview,
+  projectId,
+  canSelectSceneImages,
   creatingRound,
   reviewingRoundId,
+  onRefresh,
   onCreateRound,
   onCreateRoundClientReview,
 }: {
@@ -3803,12 +3810,17 @@ function CreativeProposalRoundsPanel({
   clientReviewTasks: ClientReviewTaskView[];
   canCreateRound: boolean;
   canLaunchReview: boolean;
+  projectId: string;
+  canSelectSceneImages: boolean;
   creatingRound: 1 | 2 | null;
   reviewingRoundId: string | null;
+  onRefresh: () => Promise<void>;
   onCreateRound: (roundNumber: 1 | 2) => void;
   onCreateRoundClientReview: (round: CreativeProposalRoundView) => void;
 }) {
   const selectedDirectionIds = directions.filter((direction) => direction.isSelected).map((direction) => direction.id);
+  const round1ReviewTask = findCreativeRoundReviewTask(clientReviewTasks, round1, "creative_round_1");
+  const round2ReviewTask = findCreativeRoundReviewTask(clientReviewTasks, round2, "creative_round_2");
   return (
     <div className="mt-5 grid gap-3">
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border-soft)] pt-4">
@@ -3827,12 +3839,15 @@ function CreativeProposalRoundsPanel({
         round={round1}
         expectedSceneCount={2}
         directions={directions}
-        reviewTask={clientReviewTasks.find((task) => task.reviewScene === "creative_round_1") ?? null}
+        reviewTask={round1ReviewTask}
         canCreateRound={canCreateRound && directions.length === 4}
         canLaunchReview={canLaunchReview}
         disabledMessage={directions.length === 4 ? null : "需要先生成恰好 4 个创意方向，才能创建第一轮提案。"}
         creating={creatingRound === 1}
         reviewingRoundId={reviewingRoundId}
+        projectId={projectId}
+        canSelectSceneImages={canSelectSceneImages}
+        onRefresh={onRefresh}
         onCreateRound={() => onCreateRound(1)}
         onCreateRoundClientReview={onCreateRoundClientReview}
       />
@@ -3842,17 +3857,31 @@ function CreativeProposalRoundsPanel({
         round={round2}
         expectedSceneCount={4}
         directions={directions.filter((direction) => selectedDirectionIds.includes(direction.id))}
-        reviewTask={clientReviewTasks.find((task) => task.reviewScene === "creative_round_2") ?? null}
+        reviewTask={round2ReviewTask}
         canCreateRound={canCreateRound && selectedDirectionIds.length > 0}
         canLaunchReview={canLaunchReview}
         disabledMessage={selectedDirectionIds.length > 0 ? null : "需要先保留至少 1 个方向，才能创建第二轮深化提案。"}
         creating={creatingRound === 2}
         reviewingRoundId={reviewingRoundId}
+        projectId={projectId}
+        canSelectSceneImages={canSelectSceneImages}
+        onRefresh={onRefresh}
         onCreateRound={() => onCreateRound(2)}
         onCreateRoundClientReview={onCreateRoundClientReview}
       />
     </div>
   );
+}
+
+function findCreativeRoundReviewTask(
+  tasks: ClientReviewTaskView[],
+  round: CreativeProposalRoundView | null,
+  reviewScene: "creative_round_1" | "creative_round_2"
+) {
+  if (round?.clientReviewTaskId) {
+    return tasks.find((task) => task.id === round.clientReviewTaskId) ?? null;
+  }
+  return tasks.find((task) => task.reviewScene === reviewScene) ?? null;
 }
 
 function CreativeProposalRoundSection({
@@ -3867,6 +3896,9 @@ function CreativeProposalRoundSection({
   disabledMessage,
   creating,
   reviewingRoundId,
+  projectId,
+  canSelectSceneImages,
+  onRefresh,
   onCreateRound,
   onCreateRoundClientReview,
 }: {
@@ -3881,6 +3913,9 @@ function CreativeProposalRoundSection({
   disabledMessage: string | null;
   creating: boolean;
   reviewingRoundId: string | null;
+  projectId: string;
+  canSelectSceneImages: boolean;
+  onRefresh: () => Promise<void>;
   onCreateRound: () => void;
   onCreateRoundClientReview: (round: CreativeProposalRoundView) => void;
 }) {
@@ -3941,7 +3976,13 @@ function CreativeProposalRoundSection({
                 ) : (
                   <div className="mt-3 grid gap-2 md:grid-cols-2">
                     {concepts.map((concept) => (
-                      <CreativeSceneConceptMiniCard key={concept.id} concept={concept} />
+                      <CreativeSceneConceptMiniCard
+                        key={`${concept.id}:${concept.images.filter((image) => image.isSelected).map((image) => image.id).join(",")}`}
+                        projectId={projectId}
+                        concept={concept}
+                        canSelect={canSelectSceneImages}
+                        onRefresh={onRefresh}
+                      />
                     ))}
                   </div>
                 )}
@@ -3956,9 +3997,59 @@ function CreativeProposalRoundSection({
   );
 }
 
-function CreativeSceneConceptMiniCard({ concept }: { concept: CreativeSceneConceptView }) {
+function CreativeSceneConceptMiniCard({
+  projectId,
+  concept,
+  canSelect,
+  onRefresh,
+}: {
+  projectId: string;
+  concept: CreativeSceneConceptView;
+  canSelect: boolean;
+  onRefresh: () => Promise<void>;
+}) {
   const generatedCount = concept.images.filter((image) => image.status === "generated" || image.status === "selected").length;
-  const selectedCount = concept.images.filter((image) => image.isSelected).length;
+  const initialSelectedIds = useMemo(() => concept.images.filter((image) => image.isSelected).map((image) => image.id), [concept.images]);
+  const [selectedImageIds, setSelectedImageIds] = useState<string[]>(initialSelectedIds);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const selectedCount = selectedImageIds.length;
+  const eligibleCount = concept.images.filter((image) => isSelectableCreativeSceneImage(image)).length;
+  const hasChanges = selectedImageIds.join("|") !== initialSelectedIds.join("|");
+
+  function toggleImage(image: CreativeSceneImageView) {
+    if (!canSelect || !isSelectableCreativeSceneImage(image) || saving) return;
+    setMessage(null);
+    setError(null);
+    setSelectedImageIds((current) => {
+      if (current.includes(image.id)) return current.filter((id) => id !== image.id);
+      if (current.length >= 4) return current;
+      return [...current, image.id];
+    });
+  }
+
+  async function handleSaveSelection() {
+    if (selectedImageIds.length === 0) {
+      setError("请至少选择 1 张已生成候选图，再保存本场景的确认结果。");
+      return;
+    }
+
+    setSaving(true);
+    setMessage(null);
+    setError(null);
+
+    const result = await selectCreativeSceneImages(projectId, concept.id, selectedImageIds);
+    if (result.ok) {
+      setMessage(result.data.message);
+      await onRefresh();
+    } else {
+      setError(result.error.message);
+    }
+
+    setSaving(false);
+  }
+
   return (
     <div className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-2.5 text-xs">
       <div className="flex items-start justify-between gap-2">
@@ -3966,41 +4057,89 @@ function CreativeSceneConceptMiniCard({ concept }: { concept: CreativeSceneConce
         <span className={cn("ds-pill", generatedCount > 0 ? "ds-pill-teal" : "ds-pill-yellow")}>{generatedCount}/{concept.requiredImageCount} 候选</span>
       </div>
       <p className="mt-2 leading-5 text-[var(--text-secondary)]">{concept.description}</p>
-      <div className="mt-2 flex flex-wrap gap-1">
+      <div className="mt-2 grid gap-1.5">
         {concept.images.map((image) => (
-          <CreativeSceneImagePill key={image.id} image={image} />
+          <CreativeSceneImageChoice
+            key={image.id}
+            image={image}
+            checked={selectedImageIds.includes(image.id)}
+            disabled={!canSelect || saving || !isSelectableCreativeSceneImage(image) || (!selectedImageIds.includes(image.id) && selectedImageIds.length >= 4)}
+            onToggle={() => toggleImage(image)}
+          />
         ))}
       </div>
-      {selectedCount > 0 && <p className="mt-2 text-[var(--success)]">已确认 {selectedCount} 张候选图。</p>}
+      {canSelect ? (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void handleSaveSelection()}
+            disabled={saving || selectedCount === 0 || !hasChanges}
+            className="inline-flex h-8 items-center gap-2 rounded-card-sm bg-[var(--foreground)] px-3 text-xs font-medium text-[var(--text-inverse)] disabled:opacity-60"
+            title={eligibleCount > 0 ? "保存本场景候选图选择" : "当前没有可确认的已生成候选图"}
+          >
+            {saving ? <Loader2 className="animate-spin" size={13} /> : <CheckCircle2 size={13} />}
+            保存选择
+          </button>
+          <span className="text-[var(--text-secondary)]">已选 {selectedCount}/4</span>
+        </div>
+      ) : (
+        <p className="mt-2 text-[var(--text-secondary)]">候选图确认需要创意团队或管理员操作。</p>
+      )}
+      {selectedCount > 0 && <p className="mt-2 text-[var(--success)]">当前确认 {selectedCount} 张候选图。</p>}
       {generatedCount === 0 && <p className="mt-2 text-[var(--text-secondary)]">候选图还在等待真实氛围图生成记录，当前不会显示为生成成功。</p>}
+      {message && <p className="mt-2 rounded-card-sm bg-[var(--macaron-teal-bg)] p-2 leading-5 text-[var(--success)]">{message}</p>}
+      {error && <p className="mt-2 rounded-card-sm bg-[var(--macaron-yellow-bg)] p-2 leading-5 text-[var(--warning)]">{error}</p>}
     </div>
   );
 }
 
-function CreativeSceneImagePill({ image }: { image: CreativeSceneImageView }) {
+function CreativeSceneImageChoice({
+  image,
+  checked,
+  disabled,
+  onToggle,
+}: {
+  image: CreativeSceneImageView;
+  checked: boolean;
+  disabled: boolean;
+  onToggle: () => void;
+}) {
+  const selectable = isSelectableCreativeSceneImage(image);
   return (
-    <span className={cn("ds-pill", image.isSelected ? "ds-selected-pill" : image.status === "generated" ? "bg-[var(--surface-soft)] text-[var(--text-secondary)]" : "ds-pill-yellow")}>
-      图 {image.sortOrder}：{creativeSceneImageStatusLabel(image.status)}
-    </span>
+    <label
+      className={cn(
+        "flex min-h-9 items-start gap-2 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] px-2 py-1.5 leading-5",
+        checked && "border-[var(--accent)] bg-[var(--macaron-teal-bg)]",
+        disabled && "opacity-70"
+      )}
+    >
+      <input type="checkbox" className="mt-1 size-3.5" checked={checked} disabled={disabled} onChange={onToggle} />
+      <span>
+        <span className="font-medium">图 {image.sortOrder}：{creativeSceneImageStatusLabel(image.status)}</span>
+        {!selectable && <span className="block text-[var(--text-secondary)]">{creativeSceneImageDisabledReason(image)}</span>}
+        {selectable && image.ossUrl && <span className="block break-all text-[var(--text-secondary)]">已生成可确认，文件地址已保存。</span>}
+      </span>
+    </label>
   );
 }
 
 function CreativeProposalReviewFeedback({ task }: { task: ClientReviewTaskView | null }) {
   if (!task || task.status !== "submitted") return null;
-  const directionPriority = readPayloadText(task.decisionPayload, "directionPriority");
-  const visualPreferenceNotes = readPayloadText(task.decisionPayload, "visualPreferenceNotes");
+  const itemDecisionCount = readPayloadNumber(task.decisionPayload, "itemDecisionCount");
+  const decisionLabel = task.decisionPayload.decision === "approved" ? "本轮已确认" : task.decisionPayload.decision === "rejected" ? "本轮被打回" : "甲方已提交反馈";
   return (
     <div className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-3 text-xs leading-5 text-[var(--text-secondary)]">
       <p className="font-medium text-[var(--success)]">甲方反馈已回写</p>
-      <p className="mt-1">方向优先级：{directionPriority || "甲方未填写方向优先级，需商务继续追问确认。"}</p>
-      <p className="mt-1">视觉偏好：{visualPreferenceNotes || task.feedback || "甲方未填写视觉偏好备注，可在下一轮沟通中补齐。"}</p>
+      <p className="mt-1">审核结论：{decisionLabel}</p>
+      <p className="mt-1">整体反馈：{task.feedback?.trim() || "甲方未填写整体备注，可在下一轮沟通中补齐。"}</p>
+      {itemDecisionCount > 0 && <p className="mt-1">逐项反馈：已收到 {itemDecisionCount} 条方向或场景判断。</p>}
     </div>
   );
 }
 
-function readPayloadText(payload: Record<string, unknown>, key: string) {
+function readPayloadNumber(payload: Record<string, unknown>, key: string) {
   const value = payload[key];
-  return typeof value === "string" ? value.trim() : "";
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 function CreativeDirectionCard({
@@ -6408,12 +6547,25 @@ function creativeProposalRoundStatusLabel(status: string) {
 function creativeSceneImageStatusLabel(status: string) {
   const labels: Record<string, string> = {
     queued: "待真实生成",
+    processing: "生成中",
+    generating: "生成中",
     generated: "已生成",
     failed: "生成失败",
     selected: "已确认",
     discarded: "已废弃",
   };
   return labels[status] ?? status;
+}
+
+function isSelectableCreativeSceneImage(image: CreativeSceneImageView) {
+  return image.status === "generated" || image.status === "selected";
+}
+
+function creativeSceneImageDisabledReason(image: CreativeSceneImageView) {
+  if (image.status === "queued") return "这张候选图还在排队生成，暂时不能确认。";
+  if (image.status === "failed") return image.failureReason ? `生成失败：${image.failureReason}` : "这张候选图生成失败，请重新生成后再确认。";
+  if (image.status === "processing" || image.status === "generating") return "这张候选图仍在生成中，完成后才能确认。";
+  return "这张候选图还没有生成成功，暂时不能确认。";
 }
 
 function creativeDirectionStatusClass(status: string) {

@@ -1248,6 +1248,16 @@ export async function createCreativeProposalRoundClientReview(projectId: string,
   );
 }
 
+export async function selectCreativeSceneImages(projectId: string, sceneConceptId: string, imageIds: string[]) {
+  return readApi<{ concept: CreativeSceneConceptView; message: string }>(
+    await fetch(`/api/projects/${projectId}/creative-proposal-rounds/scene-concepts/${sceneConceptId}/images/select`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imageIds }),
+    })
+  );
+}
+
 export async function createReviewCut(
   projectId: string,
   input: {

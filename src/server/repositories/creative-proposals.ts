@@ -298,7 +298,7 @@ export async function selectCreativeSceneImages(input: {
       [input.projectId, input.sceneConceptId]
     );
 
-    const eligibleIds = new Set(existingResult.rows.filter((image) => image.status === "generated").map((image) => image.id));
+    const eligibleIds = new Set(existingResult.rows.filter((image) => image.status === "generated" || image.status === "selected").map((image) => image.id));
     if (input.imageIds.some((id) => !eligibleIds.has(id))) {
       throw new AppError({
         status: 422,
