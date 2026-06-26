@@ -66,6 +66,7 @@ import {
   createCreativeProposalRoundClientReview,
   createDocumentExportAccess,
   createDeliveryChecklistFromEstimate,
+  createChangeRequest,
   createProject,
   createReviewCut,
   createSystemUser,
@@ -111,6 +112,8 @@ import {
   saveWorkloadEstimate,
   saveScriptPackage,
   selectCreativeSceneImages,
+  updateChangeRequestStatus,
+  updateDeliveryChecklistItemStatus,
   submitProductionSetupClientReview,
   structureRequirement,
   type AssetAnalysisView,
@@ -138,6 +141,8 @@ import {
   type GovernanceView,
   type ClientReviewItemView,
   type ClientReviewTaskView,
+  type ChangeRequestStatus,
+  type ChangeRequestView,
   type CreateClientReviewType,
   type ProductionEntityView,
   type ProductionReferenceSetView,
@@ -696,6 +701,7 @@ export function WorkspaceShell() {
           riskCheck={selectedWorkspaceData?.riskCheck ?? null}
           workloadEstimate={selectedWorkspaceData?.workloadEstimate ?? null}
           deliveryChecklist={selectedWorkspaceData?.deliveryChecklist ?? null}
+          changeRequests={selectedWorkspaceData?.changeRequests ?? []}
           artifacts={selectedWorkspaceData?.artifacts ?? []}
           governance={governance}
           governanceError={governanceError}
@@ -1255,6 +1261,7 @@ function WorkspaceCenter({
   riskCheck,
   workloadEstimate,
   deliveryChecklist,
+  changeRequests,
   artifacts,
   onProjectUpdated,
   onWorkspaceRefresh,
@@ -1303,6 +1310,7 @@ function WorkspaceCenter({
   riskCheck: RiskCheckBundleView | null;
   workloadEstimate: WorkloadEstimateView | null;
   deliveryChecklist: DeliveryChecklistView | null;
+  changeRequests: ChangeRequestView[];
   artifacts: ArtifactView[];
   governance: GovernanceView | null;
   governanceError: ApiError | null;
@@ -1684,6 +1692,8 @@ function WorkspaceCenter({
                 reviewCuts={reviewCuts}
                 annotations={reviewCutAnnotations}
                 clientReviewTasks={clientReviewTasks}
+                deliveryChecklist={deliveryChecklist}
+                changeRequests={changeRequests}
                 onRefresh={onWorkspaceRefresh}
               />
             </StagePanel>
@@ -2909,6 +2919,8 @@ function ReviewCutStageModule({
   reviewCuts,
   annotations,
   clientReviewTasks,
+  deliveryChecklist,
+  changeRequests = [],
   onRefresh,
 }: {
   project: ProjectSummary;
@@ -2919,6 +2931,8 @@ function ReviewCutStageModule({
   reviewCuts: ReviewCutView[];
   annotations: ReviewCutAnnotationView[];
   clientReviewTasks: ClientReviewTaskView[];
+  deliveryChecklist?: DeliveryChecklistView | null;
+  changeRequests?: ChangeRequestView[];
   onRefresh: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
@@ -2970,82 +2984,112 @@ function ReviewCutStageModule({
 
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-      <WorkspaceCard>
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <Video size={18} />
-              <h3 className="ds-text-section-title">{stageName} 成片审核</h3>
+      <div className="grid gap-5">
+        <WorkspaceCard>
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <Video size={18} />
+                <h3 className="ds-text-section-title">{stageName} 成片审核</h3>
+              </div>
+              <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
+                {cutType === "a_copy"
+                  ? "导演在外部软件剪出完整初版后上传回系统；内部先审，确认没问题后再给甲方整片链接和时间戳批注。"
+                  : "基于 A copy 意见完成精剪、字幕、BGM 和声音后上传 B copy；给甲方的形式仍是完整视频加时间戳批注。"}
+              </p>
             </div>
-            <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-              {cutType === "a_copy"
-                ? "导演在外部软件剪出完整初版后上传回系统；内部先审，确认没问题后再给甲方整片链接和时间戳批注。"
-                : "基于 A copy 意见完成精剪、字幕、BGM 和声音后上传 B copy；给甲方的形式仍是完整视频加时间戳批注。"}
-            </p>
+            <div className="flex flex-wrap gap-2">
+              {latestCut && <Badge variant="outline">第 {latestCut.roundNumber} 轮</Badge>}
+              <Badge variant="outline">{reviewCutStatusLabel(latestCut?.status ?? "uploaded")}</Badge>
+            </div>
           </div>
-          <Badge variant="outline">{reviewCutStatusLabel(latestCut?.status ?? "uploaded")}</Badge>
-        </div>
-        {message && <Feedback tone="success" text={message} />}
-        {error && <Feedback tone="warning" text={error} />}
-        <form action={handleSave} className="mt-4 grid gap-4">
-          <div className="grid gap-4 lg:grid-cols-2">
+          {latestCut && (
+            <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3 text-xs leading-5 text-[var(--text-secondary)]">
+              本轮快照：{String(latestCut.snapshot.title ?? latestCut.title)} · {latestCut.snapshot.createdAt ? formatDateTime(String(latestCut.snapshot.createdAt)) : "已保存"}
+              {latestCut.changeRequestHint ? ` · ${latestCut.changeRequestHint}` : ""}
+            </div>
+          )}
+          {message && <Feedback tone="success" text={message} />}
+          {error && <Feedback tone="warning" text={error} />}
+          <form action={handleSave} className="mt-4 grid gap-4">
+            <div className="grid gap-4 lg:grid-cols-2">
+              <label className="grid gap-1 text-xs font-medium">
+                成片标题
+                <Input name="title" defaultValue={latestCut?.title ?? `${stageName} 完整成片`} disabled={!canOperate || busy === "save"} />
+              </label>
+              <label className="grid gap-1 text-xs font-medium">
+                视频时长（秒）
+                <Input name="durationSeconds" type="number" min={1} defaultValue={latestCut?.durationSeconds ?? ""} disabled={!canOperate || busy === "save"} />
+              </label>
+            </div>
             <label className="grid gap-1 text-xs font-medium">
-              成片标题
-              <Input name="title" defaultValue={latestCut?.title ?? `${stageName} 完整成片`} disabled={!canOperate || busy === "save"} />
+              选择已上传成片资产
+              <select name="assetId" defaultValue={latestCut?.assetId ?? ""} disabled={!canOperate || busy === "save"} className="h-10 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] px-3 text-sm">
+                <option value="">不绑定资产，使用下方视频链接</option>
+                {videoAssets.map((asset) => (
+                  <option key={asset.id} value={asset.id}>
+                    {asset.fileName ?? asset.id}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="grid gap-1 text-xs font-medium">
-              视频时长（秒）
-              <Input name="durationSeconds" type="number" min={1} defaultValue={latestCut?.durationSeconds ?? ""} disabled={!canOperate || busy === "save"} />
+              本地/临时视频播放链接
+              <Input name="videoUrl" defaultValue={latestCut?.videoUrl ?? ""} placeholder="例如 http://localhost:3000/api/projects/.../preview 或本地可访问链接" disabled={!canOperate || busy === "save"} />
             </label>
-          </div>
-          <label className="grid gap-1 text-xs font-medium">
-            选择已上传成片资产
-            <select name="assetId" defaultValue={latestCut?.assetId ?? ""} disabled={!canOperate || busy === "save"} className="h-10 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] px-3 text-sm">
-              <option value="">不绑定资产，使用下方视频链接</option>
-              {videoAssets.map((asset) => (
-                <option key={asset.id} value={asset.id}>
-                  {asset.fileName ?? asset.id}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="grid gap-1 text-xs font-medium">
-            本地/临时视频播放链接
-            <Input name="videoUrl" defaultValue={latestCut?.videoUrl ?? ""} placeholder="例如 http://localhost:3000/api/projects/.../preview 或本地可访问链接" disabled={!canOperate || busy === "save"} />
-          </label>
-          <label className="grid gap-1 text-xs font-medium">
-            内部说明
-            <textarea
-              name="description"
-              defaultValue={latestCut?.description ?? ""}
-              disabled={!canOperate || busy === "save"}
-              className="min-h-24 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-sm leading-6"
-              placeholder={cutType === "a_copy" ? "说明这是无调色、无后期、无字幕的完整初版。" : "说明字幕、BGM、声音等精装处理情况。"}
+            <label className="grid gap-1 text-xs font-medium">
+              内部说明
+              <textarea
+                name="description"
+                defaultValue={latestCut?.description ?? ""}
+                disabled={!canOperate || busy === "save"}
+                className="min-h-24 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-sm leading-6"
+                placeholder={cutType === "a_copy" ? "说明这是无调色、无后期、无字幕的完整初版。" : "说明字幕、BGM、声音等精装处理情况。"}
+              />
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <Button type="submit" disabled={!canOperate || busy === "save"}>
+                {busy === "save" ? <Loader2 className="animate-spin" size={15} /> : <Upload size={15} />}
+                保存成片版本
+              </Button>
+              <Button type="button" variant="outline" disabled={!canOperate || !latestCut || busy === "approve"} onClick={() => void handleApprove()}>
+                {busy === "approve" ? <Loader2 className="animate-spin" size={15} /> : <CheckCircle2 size={15} />}
+                内部审核通过
+              </Button>
+            </div>
+          </form>
+          <ClientReviewLaunchBox
+            projectId={project.id}
+            reviewType={cutType === "a_copy" ? "a_copy_review" : "b_copy_review"}
+            targetScopeId={latestCut?.id ?? null}
+            sopKey={cutType === "a_copy" ? "sop_8" : "sop_9"}
+            reviewScene={cutType === "a_copy" ? "a_copy_round" : "b_copy_final"}
+            roundNumber={latestCut?.roundNumber ?? null}
+            title={`甲方 ${stageName} 审核链接`}
+            detail="生成本地审核链接，甲方可看完整视频并在任意时间点提交批注；链接当前固定为 localhost，部署后再切服务器地址。"
+            disabled={!latestCut || latestCut.status !== "internal_approved"}
+            disabledReason={!latestCut ? "请先上传成片版本。" : "请先完成内部审核通过，再发给甲方。"}
+            tasks={clientReviewTasks}
+            onRefresh={onRefresh}
+          />
+        </WorkspaceCard>
+        {cutType === "b_copy" && (
+          <>
+            <BcopyDeliveryChecklistPanel
+              project={project}
+              user={user}
+              checklist={deliveryChecklist ?? null}
+              onRefresh={onRefresh}
             />
-          </label>
-          <div className="flex flex-wrap gap-2">
-            <Button type="submit" disabled={!canOperate || busy === "save"}>
-              {busy === "save" ? <Loader2 className="animate-spin" size={15} /> : <Upload size={15} />}
-              保存成片版本
-            </Button>
-            <Button type="button" variant="outline" disabled={!canOperate || !latestCut || busy === "approve"} onClick={() => void handleApprove()}>
-              {busy === "approve" ? <Loader2 className="animate-spin" size={15} /> : <CheckCircle2 size={15} />}
-              内部审核通过
-            </Button>
-          </div>
-        </form>
-        <ClientReviewLaunchBox
-          projectId={project.id}
-          reviewType={cutType === "a_copy" ? "a_copy_review" : "b_copy_review"}
-          targetScopeId={latestCut?.id ?? null}
-          title={`甲方 ${stageName} 审核链接`}
-          detail="生成本地审核链接，甲方可看完整视频并在任意时间点提交批注；链接当前固定为 localhost，部署后再切服务器地址。"
-          disabled={!latestCut || latestCut.status !== "internal_approved"}
-          disabledReason={!latestCut ? "请先上传成片版本。" : "请先完成内部审核通过，再发给甲方。"}
-          tasks={clientReviewTasks}
-          onRefresh={onRefresh}
-        />
-      </WorkspaceCard>
+            <ChangeRequestsPanel
+              project={project}
+              user={user}
+              changeRequests={changeRequests}
+              onRefresh={onRefresh}
+            />
+          </>
+        )}
+      </div>
       <aside className="grid gap-5">
         <WorkspaceCard>
           <h3 className="ds-text-section-title">导演素材入口</h3>
@@ -3106,6 +3150,228 @@ function Feedback({ tone, text }: { tone: "success" | "warning"; text: string })
     >
       {text}
     </div>
+  );
+}
+
+function BcopyDeliveryChecklistPanel({
+  project,
+  user,
+  checklist,
+  onRefresh,
+}: {
+  project: ProjectSummary;
+  user: CurrentUser;
+  checklist: DeliveryChecklistView | null;
+  onRefresh: () => Promise<void>;
+}) {
+  const canConfirm = user.role === "business" || user.role === "admin";
+  const [busyItemId, setBusyItemId] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleStatus(itemId: string, status: "planned" | "confirmed" | "changed") {
+    setBusyItemId(itemId);
+    setMessage(null);
+    setError(null);
+    const result = await updateDeliveryChecklistItemStatus(project.id, { itemId, status });
+    if (result.ok) {
+      setMessage(result.data.message);
+      await onRefresh();
+    } else {
+      setError(result.error.message);
+    }
+    setBusyItemId(null);
+  }
+
+  return (
+    <WorkspaceCard>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <ClipboardList size={18} />
+            <h3 className="ds-text-section-title">SOP 4 交付清单确认</h3>
+          </div>
+          <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
+            B copy 定稿只确认合同内已有交付项。客户新增交付物需要先创建需求变更，不直接写入合同清单。
+          </p>
+        </div>
+        <Badge variant="outline">{deliveryChecklistStatusLabel(checklist?.status ?? "draft")}</Badge>
+      </div>
+      {message && <Feedback tone="success" text={message} />}
+      {error && <Feedback tone="warning" text={error} />}
+      {!checklist || checklist.items.length === 0 ? (
+        <p className="mt-4 rounded-card-sm bg-[var(--surface-soft)] p-3 text-sm leading-6 text-[var(--text-secondary)]">
+          当前还没有 SOP 4 交付清单。请先在报价签约阶段生成并保存清单，再回到 B copy 做定稿核对。
+        </p>
+      ) : (
+        <div className="mt-4 grid gap-2">
+          {checklist.items.map((item) => (
+            <div key={item.id} className="grid gap-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3 md:grid-cols-[minmax(0,1fr)_220px]">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="font-medium text-[var(--text-primary)]">{item.title}</p>
+                  <span className="ds-pill bg-[var(--surface-card)] text-[var(--text-secondary)]">x{item.quantity}</span>
+                  <span className="ds-pill bg-[var(--surface-card)] text-[var(--text-secondary)]">{deliveryChecklistItemStatusLabel(item.status)}</span>
+                </div>
+                <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">{item.description || "暂无交付说明。"}</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 md:justify-end">
+                {(["planned", "confirmed", "changed"] as const).map((status) => (
+                  <Button
+                    key={status}
+                    type="button"
+                    size="sm"
+                    variant={item.status === status ? "default" : "outline"}
+                    disabled={!canConfirm || busyItemId === item.id}
+                    onClick={() => void handleStatus(item.id, status)}
+                  >
+                    {busyItemId === item.id ? <Loader2 className="animate-spin" size={14} /> : null}
+                    {deliveryChecklistItemStatusLabel(status)}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </WorkspaceCard>
+  );
+}
+
+function ChangeRequestsPanel({
+  project,
+  user,
+  changeRequests,
+  onRefresh,
+}: {
+  project: ProjectSummary;
+  user: CurrentUser;
+  changeRequests: ChangeRequestView[];
+  onRefresh: () => Promise<void>;
+}) {
+  const canCreate = user.role === "business" || user.role === "creative" || user.role === "admin";
+  const canDecide = user.role === "business" || user.role === "admin";
+  const [busy, setBusy] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const openRequests = changeRequests.filter((request) => request.status === "draft" || request.status === "submitted" || request.status === "approved");
+
+  async function handleCreate(formData: FormData) {
+    setBusy("create");
+    setMessage(null);
+    setError(null);
+    const result = await createChangeRequest(project.id, {
+      sourceSop: String(formData.get("sourceSop") ?? "sop_9").trim(),
+      originalScope: String(formData.get("originalScope") ?? "").trim(),
+      requestedScope: String(formData.get("requestedScope") ?? "").trim(),
+      impactJson: {
+        feeImpact: String(formData.get("feeImpact") ?? "").trim(),
+        scheduleImpact: String(formData.get("scheduleImpact") ?? "").trim(),
+      },
+      sourceObjectType: "delivery_checklist",
+    });
+    if (result.ok) {
+      setMessage(result.data.message);
+      await onRefresh();
+    } else {
+      setError(result.error.message);
+    }
+    setBusy(null);
+  }
+
+  async function handleStatus(changeRequestId: string, status: ChangeRequestStatus) {
+    setBusy(changeRequestId);
+    setMessage(null);
+    setError(null);
+    const result = await updateChangeRequestStatus(project.id, { changeRequestId, status });
+    if (result.ok) {
+      setMessage(result.data.message);
+      await onRefresh();
+    } else {
+      setError(result.error.message);
+    }
+    setBusy(null);
+  }
+
+  return (
+    <WorkspaceCard>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <RefreshCcw size={18} />
+            <h3 className="ds-text-section-title">需求变更</h3>
+          </div>
+          <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
+            跨 SOP 的范围、费用或排期变化在这里登记；B copy 新增交付物必须先形成变更请求。
+          </p>
+        </div>
+        <Badge variant="outline">{openRequests.length} 条开放</Badge>
+      </div>
+      {message && <Feedback tone="success" text={message} />}
+      {error && <Feedback tone="warning" text={error} />}
+      <div className="mt-4 grid gap-2">
+        {openRequests.length === 0 ? (
+          <p className="rounded-card-sm bg-[var(--surface-soft)] p-3 text-sm leading-6 text-[var(--text-secondary)]">暂无开放需求变更。</p>
+        ) : (
+          openRequests.map((request) => (
+            <div key={request.id} className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-medium">
+                  {request.sourceSop} · {changeRequestStatusLabel(request.status)}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {(["approved", "rejected", "implemented", "cancelled"] as const).map((status) => (
+                    <Button
+                      key={status}
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={!canDecide || busy === request.id}
+                      onClick={() => void handleStatus(request.id, status)}
+                    >
+                      {changeRequestStatusLabel(status)}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+              <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">原范围：{request.originalScope}</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">变更后：{request.requestedScope}</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
+                费用影响：{String(request.impactJson.feeImpact ?? "未填写")} · 排期影响：{String(request.impactJson.scheduleImpact ?? "未填写")}
+              </p>
+            </div>
+          ))
+        )}
+      </div>
+      <form action={handleCreate} className="mt-4 grid gap-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3">
+        <div className="grid gap-3 md:grid-cols-3">
+          <label className="grid gap-1 text-xs font-medium">
+            来源 SOP
+            <Input name="sourceSop" defaultValue="sop_9" disabled={!canCreate || busy === "create"} />
+          </label>
+          <label className="grid gap-1 text-xs font-medium">
+            费用影响
+            <Input name="feeImpact" placeholder="例如 +8000 元，待报价确认" disabled={!canCreate || busy === "create"} />
+          </label>
+          <label className="grid gap-1 text-xs font-medium">
+            排期影响
+            <Input name="scheduleImpact" placeholder="例如 +2 个工作日" disabled={!canCreate || busy === "create"} />
+          </label>
+        </div>
+        <label className="grid gap-1 text-xs font-medium">
+          原始范围
+          <textarea name="originalScope" disabled={!canCreate || busy === "create"} className="min-h-20 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-sm leading-6" placeholder="写清楚合同或 SOP 4 清单中原本包含的交付范围。" />
+        </label>
+        <label className="grid gap-1 text-xs font-medium">
+          变更后范围
+          <textarea name="requestedScope" disabled={!canCreate || busy === "create"} className="min-h-20 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-sm leading-6" placeholder="写清楚客户新增、替换或扩大了什么交付物。" />
+        </label>
+        <Button type="submit" disabled={!canCreate || busy === "create"} className="w-fit">
+          {busy === "create" ? <Loader2 className="animate-spin" size={15} /> : <Plus size={15} />}
+          创建需求变更
+        </Button>
+      </form>
+    </WorkspaceCard>
   );
 }
 
@@ -6948,6 +7214,9 @@ function ClientReviewLaunchBox({
   projectId,
   reviewType,
   targetScopeId,
+  sopKey,
+  reviewScene,
+  roundNumber,
   title,
   detail,
   disabled,
@@ -6958,6 +7227,9 @@ function ClientReviewLaunchBox({
   projectId: string;
   reviewType: CreateClientReviewType;
   targetScopeId?: string | null;
+  sopKey?: string | null;
+  reviewScene?: "a_copy_round" | "b_copy_final" | null;
+  roundNumber?: number | null;
   title: string;
   detail: string;
   disabled?: boolean;
@@ -6981,6 +7253,9 @@ function ClientReviewLaunchBox({
     const result = await createWorkflowClientReview(projectId, {
       reviewType,
       targetScopeId: targetScopeId ?? null,
+      sopKey: sopKey ?? null,
+      reviewScene: reviewScene ?? null,
+      roundNumber: roundNumber ?? null,
     });
 
     if (result.ok) {
@@ -7455,6 +7730,7 @@ function ChecklistItemInputs({
         className="h-9 min-w-0 ds-card-sm px-2 text-sm disabled:bg-[var(--muted)]"
       >
         <option value="planned">计划中</option>
+        <option value="confirmed">已确认</option>
         <option value="changed">已变更</option>
       </select>
     </div>
@@ -7619,6 +7895,29 @@ function deliveryChecklistStatusLabel(status: DeliveryChecklistView["status"] | 
     confirmed: "已确认",
     changed: "已变更",
     archived: "已归档",
+  };
+  return labels[status] ?? status;
+}
+
+function deliveryChecklistItemStatusLabel(status: DeliveryChecklistItemStatus) {
+  const labels: Record<DeliveryChecklistItemStatus, string> = {
+    planned: "计划中",
+    confirmed: "已确认",
+    changed: "已变更",
+    delivered: "已交付",
+    cancelled: "已取消",
+  };
+  return labels[status] ?? status;
+}
+
+function changeRequestStatusLabel(status: ChangeRequestStatus) {
+  const labels: Record<ChangeRequestStatus, string> = {
+    draft: "草稿",
+    submitted: "待确认",
+    approved: "已批准",
+    rejected: "已驳回",
+    implemented: "已执行",
+    cancelled: "已取消",
   };
   return labels[status] ?? status;
 }

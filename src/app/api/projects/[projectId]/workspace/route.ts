@@ -17,6 +17,7 @@ import { listProjectStageStates } from "@/server/repositories/project-stages";
 import { getProjectProposal, listProjectDocumentSnapshots } from "@/server/repositories/proposals";
 import { getProjectQuote } from "@/server/repositories/quotes";
 import { listProjectClientReviewItems, listProjectClientReviewTasks } from "@/server/repositories/client-reviews";
+import { listProjectChangeRequests } from "@/server/repositories/change-requests";
 import { listProjectReviewCutAnnotations, listProjectReviewCuts } from "@/server/repositories/review-cuts";
 import { listProductionEntities, listProductionReferenceSets } from "@/server/repositories/production-entities";
 import { listStoryProduction } from "@/server/repositories/story-production";
@@ -60,6 +61,7 @@ export async function GET(request: Request, context: { params: Promise<{ project
       riskCheck,
       workloadEstimate,
       deliveryChecklist,
+      changeRequests,
     ] = await Promise.all([
       listProjectJobs(projectId),
       listProjectArtifacts(projectId),
@@ -90,6 +92,7 @@ export async function GET(request: Request, context: { params: Promise<{ project
       getProjectRiskCheck(projectId),
       getProjectWorkloadEstimate(projectId),
       getProjectDeliveryChecklist(projectId),
+      listProjectChangeRequests(projectId),
     ]);
     return Response.json({
       ok: true,
@@ -123,6 +126,7 @@ export async function GET(request: Request, context: { params: Promise<{ project
         riskCheck,
         workloadEstimate,
         deliveryChecklist,
+        changeRequests,
       },
     });
   } catch (error) {

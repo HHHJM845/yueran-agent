@@ -161,7 +161,7 @@ export async function createWorkflowClientReview(input: {
     batchNumber: input.batchNumber ?? null,
     payloadVersion: input.payloadVersion ?? null,
   });
-  const metadata = buildClientReviewTaskMetadataInput({
+  let metadata = buildClientReviewTaskMetadataInput({
     reviewType: parsed.reviewType,
     sopKey: parsed.sopKey,
     reviewScene: parsed.reviewScene,
@@ -175,6 +175,15 @@ export async function createWorkflowClientReview(input: {
     targetScopeId: parsed.targetScopeId ?? null,
     reviewScene: parsed.reviewScene ?? null,
   });
+  if (spec.targetScopeType === "review_cut") {
+    const reviewCut = spec.payload.reviewCut as { cutType?: "a_copy" | "b_copy"; roundNumber?: number } | undefined;
+    metadata = {
+      ...metadata,
+      sopKey: metadata.sopKey ?? (reviewCut?.cutType === "a_copy" ? "sop_8" : "sop_9"),
+      reviewScene: metadata.reviewScene ?? (reviewCut?.cutType === "a_copy" ? "a_copy_round" : "b_copy_final"),
+      roundNumber: metadata.roundNumber ?? reviewCut?.roundNumber ?? null,
+    };
+  }
   const credentials = createReviewCredentials();
   const version = await getNextClientReviewVersion({
     projectId: input.projectId,
@@ -578,6 +587,8 @@ async function buildWorkflowReviewSpec(input: {
         userMessage: "这个成片版本还没有可播放的视频链接。请先确认上传成功后再生成审核链接。",
       });
     }
+    const reviewScene = cutType === "a_copy" ? "a_copy_round" : "b_copy_final";
+    const sopKey = cutType === "a_copy" ? "sop_8" : "sop_9";
 
     return {
       moduleKey: cutType === "a_copy" ? "a_copy_revision" : "b_copy_final_confirmation",
@@ -589,7 +600,7 @@ async function buildWorkflowReviewSpec(input: {
         cutType === "a_copy"
           ? "请观看完整初版视频，在需要修改的位置暂停并添加时间戳批注。A copy 用于确认内容、节奏和大方向。"
           : "请观看完整精剪视频，在需要修改的位置暂停并添加时间戳批注；如无问题请整体通过，系统会记录最终确认。",
-      payload: { project, reviewCut },
+      payload: { project, reviewCut, reviewScene, sopKey, roundNumber: reviewCut.roundNumber },
       items: [
         {
           itemType: "review_cut_video",
@@ -598,6 +609,7 @@ async function buildWorkflowReviewSpec(input: {
           metadata: {
             cutType: reviewCut.cutType,
             version: reviewCut.version,
+            roundNumber: reviewCut.roundNumber,
             status: reviewCut.status,
             videoUrl: reviewCut.videoUrl,
             durationSeconds: reviewCut.durationSeconds,

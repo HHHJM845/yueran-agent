@@ -44,6 +44,7 @@ export async function POST(request: Request, context: { params: Promise<{ projec
       after: {
         cutType: reviewCut.cutType,
         version: reviewCut.version,
+        roundNumber: reviewCut.roundNumber,
         assetId: reviewCut.assetId,
       },
     });
@@ -55,7 +56,7 @@ export async function POST(request: Request, context: { params: Promise<{ projec
       projectStatus: "in_progress",
       userMessage: body.cutType === "a_copy" ? "A copy 成片已上传，等待内部审核后再发给甲方。" : "B copy 精剪成片已上传，等待内部审核后再发给甲方。",
       outputRefs: [{ type: "review_cut", id: reviewCut.id }],
-      snapshot: { reviewCutId: reviewCut.id, cutType: reviewCut.cutType, version: reviewCut.version },
+      snapshot: { reviewCutId: reviewCut.id, cutType: reviewCut.cutType, version: reviewCut.version, roundNumber: reviewCut.roundNumber },
     });
 
     return Response.json({

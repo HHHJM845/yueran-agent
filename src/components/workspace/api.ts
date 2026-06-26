@@ -583,9 +583,33 @@ export type ReviewCutView = {
   durationSeconds: number | null;
   status: string;
   version: number;
+  roundNumber: number;
+  snapshot: Record<string, unknown>;
+  changeRequestHint: string | null;
   clientReviewTaskId: string | null;
   reviewedBy: string | null;
   reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ChangeRequestStatus = "draft" | "submitted" | "approved" | "rejected" | "implemented" | "cancelled";
+
+export type ChangeRequestView = {
+  id: string;
+  projectId: string;
+  sourceSop: string;
+  sourceObjectType: string;
+  sourceObjectId: string | null;
+  status: ChangeRequestStatus;
+  originalScope: string;
+  requestedScope: string;
+  impactJson: Record<string, unknown>;
+  decisionReason: string;
+  decidedBy: string | null;
+  decidedAt: string | null;
+  createdBy: string | null;
+  updatedBy: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -916,6 +940,7 @@ export type WorkspaceData = {
   riskCheck: RiskCheckBundleView | null;
   workloadEstimate: WorkloadEstimateView | null;
   deliveryChecklist: DeliveryChecklistView | null;
+  changeRequests: ChangeRequestView[];
   artifacts: Array<{
     id: string;
     projectId: string;
@@ -1600,6 +1625,59 @@ export async function saveDeliveryChecklist(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "save", ...input }),
+    })
+  );
+}
+
+export async function updateDeliveryChecklistItemStatus(
+  projectId: string,
+  input: {
+    itemId: string;
+    status: "planned" | "confirmed" | "changed";
+  }
+) {
+  return readApi<{ deliveryChecklist: DeliveryChecklistItemView; message: string }>(
+    await fetch(`/api/projects/${projectId}/delivery-checklist`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "update_item_status", ...input }),
+    })
+  );
+}
+
+export async function createChangeRequest(
+  projectId: string,
+  input: {
+    sourceSop: string;
+    originalScope: string;
+    requestedScope: string;
+    impactJson: Record<string, unknown>;
+    sourceObjectType?: string;
+    sourceObjectId?: string | null;
+  }
+) {
+  return readApi<{ changeRequest: ChangeRequestView; message: string }>(
+    await fetch(`/api/projects/${projectId}/change-requests`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    })
+  );
+}
+
+export async function updateChangeRequestStatus(
+  projectId: string,
+  input: {
+    changeRequestId: string;
+    status: ChangeRequestStatus;
+    decisionReason?: string;
+  }
+) {
+  return readApi<{ changeRequest: ChangeRequestView; message: string }>(
+    await fetch(`/api/projects/${projectId}/change-requests`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
     })
   );
 }

@@ -23,6 +23,9 @@ export type ReviewCutView = {
   durationSeconds: number | null;
   status: ReviewCutStatus;
   version: number;
+  roundNumber: number;
+  snapshot: Record<string, unknown>;
+  changeRequestHint: string | null;
   clientReviewTaskId: string | null;
   reviewedBy: string | null;
   reviewedAt: string | null;
@@ -57,6 +60,9 @@ type ReviewCutRow = {
   duration_seconds: string | null;
   status: ReviewCutStatus;
   version: number;
+  round_number: number;
+  snapshot_json: unknown;
+  change_request_hint: string | null;
   client_review_task_id: string | null;
   reviewed_by: string | null;
   reviewed_at: string | null;
@@ -83,10 +89,11 @@ type ReviewCutAnnotationRow = {
 export async function listProjectReviewCuts(projectId: string) {
   const result = await query<ReviewCutRow>(
     `select id, project_id, cut_type, title, description, asset_id, video_url, duration_seconds,
-            status, version, client_review_task_id, reviewed_by, reviewed_at, created_at, updated_at
+            status, version, round_number, snapshot_json, change_request_hint,
+            client_review_task_id, reviewed_by, reviewed_at, created_at, updated_at
      from review_cuts
      where project_id = $1 and status <> 'archived'
-     order by cut_type, version desc, updated_at desc`,
+     order by cut_type, round_number desc, version desc, updated_at desc`,
     [projectId]
   );
   return result.rows.map(mapReviewCut);
@@ -95,7 +102,8 @@ export async function listProjectReviewCuts(projectId: string) {
 export async function getReviewCut(input: { projectId: string; reviewCutId: string }) {
   const result = await query<ReviewCutRow>(
     `select id, project_id, cut_type, title, description, asset_id, video_url, duration_seconds,
-            status, version, client_review_task_id, reviewed_by, reviewed_at, created_at, updated_at
+            status, version, round_number, snapshot_json, change_request_hint,
+            client_review_task_id, reviewed_by, reviewed_at, created_at, updated_at
      from review_cuts
      where project_id = $1 and id = $2 and status <> 'archived'
      limit 1`,
@@ -107,10 +115,11 @@ export async function getReviewCut(input: { projectId: string; reviewCutId: stri
 export async function getLatestReviewCut(input: { projectId: string; cutType: ReviewCutType }) {
   const result = await query<ReviewCutRow>(
     `select id, project_id, cut_type, title, description, asset_id, video_url, duration_seconds,
-            status, version, client_review_task_id, reviewed_by, reviewed_at, created_at, updated_at
+            status, version, round_number, snapshot_json, change_request_hint,
+            client_review_task_id, reviewed_by, reviewed_at, created_at, updated_at
      from review_cuts
      where project_id = $1 and cut_type = $2 and status <> 'archived'
-     order by version desc, updated_at desc
+     order by round_number desc, version desc, updated_at desc
      limit 1`,
     [input.projectId, input.cutType]
   );
@@ -142,14 +151,24 @@ export async function createReviewCut(input: {
   createdBy: string;
 }) {
   const version = await getNextReviewCutVersion(input.projectId, input.cutType);
+  const roundNumber = await getNextReviewCutRoundNumber(input.projectId, input.cutType);
+  const snapshot = {
+    title: input.title,
+    description: input.description ?? "",
+    assetId: input.assetId ?? null,
+    videoUrl: input.videoUrl ?? null,
+    durationSeconds: input.durationSeconds ?? null,
+    createdAt: new Date().toISOString(),
+  };
   const result = await query<ReviewCutRow>(
     `insert into review_cuts (
        project_id, cut_type, title, description, asset_id, video_url, duration_seconds,
-       status, version, created_by
+       status, version, round_number, snapshot_json, created_by
      )
-     values ($1, $2, $3, $4, $5, $6, $7, 'uploaded', $8, $9)
+     values ($1, $2, $3, $4, $5, $6, $7, 'uploaded', $8, $9, $10::jsonb, $11)
      returning id, project_id, cut_type, title, description, asset_id, video_url, duration_seconds,
-               status, version, client_review_task_id, reviewed_by, reviewed_at, created_at, updated_at`,
+               status, version, round_number, snapshot_json, change_request_hint,
+               client_review_task_id, reviewed_by, reviewed_at, created_at, updated_at`,
     [
       input.projectId,
       input.cutType,
@@ -159,6 +178,8 @@ export async function createReviewCut(input: {
       input.videoUrl ?? null,
       input.durationSeconds ?? null,
       version,
+      roundNumber,
+      JSON.stringify(snapshot),
       input.createdBy,
     ]
   );
@@ -178,7 +199,8 @@ export async function markReviewCutInternalApproved(input: {
          updated_at = now()
      where project_id = $1 and id = $2
      returning id, project_id, cut_type, title, description, asset_id, video_url, duration_seconds,
-               status, version, client_review_task_id, reviewed_by, reviewed_at, created_at, updated_at`,
+               status, version, round_number, snapshot_json, change_request_hint,
+               client_review_task_id, reviewed_by, reviewed_at, created_at, updated_at`,
     [input.projectId, input.reviewCutId, input.actorId]
   );
   return result.rows[0] ? mapReviewCut(result.rows[0]) : null;
@@ -196,7 +218,8 @@ export async function markReviewCutClientReviewing(input: {
          updated_at = now()
      where project_id = $1 and id = $2
      returning id, project_id, cut_type, title, description, asset_id, video_url, duration_seconds,
-               status, version, client_review_task_id, reviewed_by, reviewed_at, created_at, updated_at`,
+               status, version, round_number, snapshot_json, change_request_hint,
+               client_review_task_id, reviewed_by, reviewed_at, created_at, updated_at`,
     [input.projectId, input.reviewCutId, input.reviewTaskId]
   );
   return result.rows[0] ? mapReviewCut(result.rows[0]) : null;
@@ -214,7 +237,8 @@ export async function applyReviewCutClientDecision(input: {
          updated_at = now()
      where project_id = $1 and id = $2
      returning id, project_id, cut_type, title, description, asset_id, video_url, duration_seconds,
-               status, version, client_review_task_id, reviewed_by, reviewed_at, created_at, updated_at`,
+               status, version, round_number, snapshot_json, change_request_hint,
+               client_review_task_id, reviewed_by, reviewed_at, created_at, updated_at`,
     [input.projectId, input.reviewCutId, status]
   );
   return result.rows[0] ? mapReviewCut(result.rows[0]) : null;
@@ -320,6 +344,16 @@ async function getNextReviewCutVersion(projectId: string, cutType: ReviewCutType
   return Number(result.rows[0]?.next_version ?? 1);
 }
 
+async function getNextReviewCutRoundNumber(projectId: string, cutType: ReviewCutType) {
+  const result = await query<{ next_round_number: number }>(
+    `select coalesce(max(round_number), 0) + 1 as next_round_number
+     from review_cuts
+     where project_id = $1 and cut_type = $2`,
+    [projectId, cutType]
+  );
+  return Number(result.rows[0]?.next_round_number ?? 1);
+}
+
 function mapReviewCut(row: ReviewCutRow): ReviewCutView {
   return {
     id: row.id,
@@ -332,12 +366,19 @@ function mapReviewCut(row: ReviewCutRow): ReviewCutView {
     durationSeconds: row.duration_seconds === null ? null : Number(row.duration_seconds),
     status: row.status,
     version: row.version,
+    roundNumber: row.round_number,
+    snapshot: normalizeRecord(row.snapshot_json),
+    changeRequestHint: row.change_request_hint,
     clientReviewTaskId: row.client_review_task_id,
     reviewedBy: row.reviewed_by,
     reviewedAt: row.reviewed_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function normalizeRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
 function mapAnnotation(row: ReviewCutAnnotationRow): ReviewCutAnnotationView {
