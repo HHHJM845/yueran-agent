@@ -47,19 +47,82 @@ test("normalizeRiskCheckModelOutput falls back to medium and defaults missing ev
   });
 });
 
-test("regenerating a draft clears prior human decision fields in conflict update sql", async () => {
-  const { RISK_CHECK_REGENERATE_DECISION_RESET_SQL } = await import("../repositories/risk-checks.ts");
+test("risk check bundle preserves multiple persisted draft redline alerts exactly", async () => {
+  const { assembleRiskCheckBundleView } = await import("../repositories/risk-checks.ts");
 
+  const bundle = assembleRiskCheckBundleView({
+    cardRow: makeCardRow({
+      overall_alert: "high",
+      redline_alerts: ["强监管领域 + 授权不明", "客户禁忌点与脚本目标冲突"],
+    }),
+    factRows: [],
+    dimensionRows: [
+      makeDimensionRow({
+        dimension_key: "compliance",
+        level: "high",
+        evidence: "医疗品牌宣传且授权未说明",
+      }),
+    ],
+  });
+
+  assert.equal(bundle.card.overallAlert, "high");
+  assert.deepEqual(bundle.redlineAlerts, ["强监管领域 + 授权不明", "客户禁忌点与脚本目标冲突"]);
+});
+
+test("risk check bundle maps regenerated upsert rows with cleared decision fields", async () => {
+  const { assembleRiskCheckBundleView, RISK_CHECK_REGENERATE_DECISION_RESET_SQL } = await import("../repositories/risk-checks.ts");
+
+  const bundle = assembleRiskCheckBundleView({
+    cardRow: makeCardRow({
+      status: "draft",
+      human_decision: null,
+      decision_reason: "",
+      decided_by: null,
+      decided_at: null,
+    }),
+    factRows: [],
+    dimensionRows: [],
+  });
+
+  assert.equal(bundle.card.humanDecision, null);
+  assert.equal(bundle.card.decisionReason, "");
+  assert.equal(bundle.card.decidedBy, null);
+  assert.equal(bundle.card.decidedAt, null);
   assert.match(RISK_CHECK_REGENERATE_DECISION_RESET_SQL, /human_decision = null/);
-  assert.match(RISK_CHECK_REGENERATE_DECISION_RESET_SQL, /decision_reason = ''/);
-  assert.match(RISK_CHECK_REGENERATE_DECISION_RESET_SQL, /decided_by = null/);
-  assert.match(RISK_CHECK_REGENERATE_DECISION_RESET_SQL, /decided_at = null/);
 });
 
-test("risk check repository persists draft redline alerts instead of deriving one alert", async () => {
-  const source = await import("node:fs/promises").then((fs) => fs.readFile(new URL("../repositories/risk-checks.ts", import.meta.url), "utf8"));
+function makeCardRow(overrides = {}) {
+  return {
+    id: "00000000-0000-4000-8000-000000000001",
+    project_id: "00000000-0000-4000-8000-000000000002",
+    status: "in_review",
+    overall_alert: "redline",
+    redline_alerts: [],
+    human_decision: "accept",
+    decision_reason: "已人工确认可推进",
+    decided_by: "00000000-0000-4000-8000-000000000003",
+    decided_at: "2026-06-26T10:00:00.000Z",
+    source_artifact_id: null,
+    created_by: null,
+    created_at: "2026-06-26T09:00:00.000Z",
+    updated_at: "2026-06-26T10:00:00.000Z",
+    ...overrides,
+  };
+}
 
-  assert.match(source, /redline_alerts/);
-  assert.match(source, /JSON\.stringify\(input\.draft\.redlineAlerts\)/);
-  assert.doesNotMatch(source, /redlineAlerts:\s*deriveRedlineAlerts/);
-});
+function makeDimensionRow(overrides = {}) {
+  return {
+    id: "00000000-0000-4000-8000-000000000004",
+    project_id: "00000000-0000-4000-8000-000000000002",
+    card_id: "00000000-0000-4000-8000-000000000001",
+    dimension_key: "schedule",
+    level: "low",
+    evidence: "交付周期 45 天",
+    anchor_text: "",
+    confidence: 0.9,
+    created_by: null,
+    created_at: "2026-06-26T09:00:00.000Z",
+    updated_at: "2026-06-26T09:00:00.000Z",
+    ...overrides,
+  };
+}

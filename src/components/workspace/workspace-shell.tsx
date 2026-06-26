@@ -1414,9 +1414,9 @@ function WorkspaceCenter({
                 </StageWorkCard>
                 <StageWorkCard
                   icon={<Sparkles size={18} />}
-                  title="Top 5 创意方向"
-                  detail="生成、选择、改写创意方向，并管理故事大纲和氛围图审核。"
-                  badges={["Top 5", "人工选择", "大纲深化", "氛围图状态"]}
+                  title="4 个创意方向"
+                  detail="生成、选择、改写 4 个创意方向，并管理故事大纲和氛围图审核。"
+                  badges={["4 个方向", "人工选择", "大纲深化", "氛围图状态"]}
                   className="lg:col-span-2"
                 >
                   <CreativeDirectionsCard

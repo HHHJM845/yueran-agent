@@ -133,13 +133,11 @@ export async function getProjectRiskCheck(projectId: string): Promise<RiskCheckB
     ),
   ]);
 
-  const card = mapCard(cardRow);
-  return {
-    card,
-    facts: factsResult.rows.map(mapFact),
-    dimensions: dimensionsResult.rows.map(mapDimension),
-    redlineAlerts: mapRedlineAlerts(cardRow),
-  };
+  return assembleRiskCheckBundleView({
+    cardRow,
+    factRows: factsResult.rows,
+    dimensionRows: dimensionsResult.rows,
+  });
 }
 
 export async function upsertRiskCheckDraft(input: {
@@ -227,15 +225,11 @@ ${RISK_CHECK_REGENERATE_DECISION_RESET_SQL}
       ),
     ]);
 
-    const card = mapCard(cardRow);
-    const dimensions = dimensionsResult.rows.map(mapDimension);
-
-    return {
-      card,
-      facts: factsResult.rows.map(mapFact),
-      dimensions,
-      redlineAlerts: mapRedlineAlerts(cardRow),
-    };
+    return assembleRiskCheckBundleView({
+      cardRow,
+      factRows: factsResult.rows,
+      dimensionRows: dimensionsResult.rows,
+    });
   });
 }
 
@@ -368,6 +362,19 @@ function mapDimension(row: RiskCheckDimensionRow): RiskCheckDimensionView {
     createdBy: row.created_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+export function assembleRiskCheckBundleView(input: {
+  cardRow: RiskCheckCardRow;
+  factRows: RiskCheckFactRow[];
+  dimensionRows: RiskCheckDimensionRow[];
+}): RiskCheckBundleView {
+  return {
+    card: mapCard(input.cardRow),
+    facts: input.factRows.map(mapFact),
+    dimensions: input.dimensionRows.map(mapDimension),
+    redlineAlerts: mapRedlineAlerts(input.cardRow),
   };
 }
 
