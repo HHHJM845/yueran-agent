@@ -496,6 +496,13 @@ export type StoryboardVideoView = {
   updatedAt: string;
 };
 
+export type StoryboardVideoInputMode = "single_image" | "start_end_frame" | "multi_reference";
+
+export type StoryboardSceneVideoBundleView = {
+  sceneId: string;
+  videos: Array<{ shotNumber: string; ossUrl: string; fileName: string }>;
+};
+
 export type ClientReviewTaskView = {
   id: string;
   projectId: string;
@@ -1482,13 +1489,22 @@ export async function approveReviewCut(projectId: string, reviewCutId: string) {
   );
 }
 
-export async function generateStoryboardVideo(projectId: string, shotId: string) {
+export async function generateStoryboardVideo(
+  projectId: string,
+  input: { shotId: string; mode: StoryboardVideoInputMode; imageIds: string[] }
+) {
   return readApi<{ jobId: string; storyboardVideoId: string; message: string }>(
     await fetch(`/api/projects/${projectId}/storyboard-videos/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ shotId }),
+      body: JSON.stringify(input),
     })
+  );
+}
+
+export async function fetchStoryboardSceneVideoBundle(projectId: string, sceneId: string) {
+  return readApi<StoryboardSceneVideoBundleView>(
+    await fetch(`/api/projects/${projectId}/storyboard-scenes/${sceneId}/video-bundle`, { cache: "no-store" })
   );
 }
 

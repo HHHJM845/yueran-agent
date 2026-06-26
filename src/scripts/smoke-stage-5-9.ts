@@ -169,6 +169,7 @@ async function main() {
       const videoResult = await generateRealStoryboardVideo({
         projectId: smokeProjectId,
         shotId: shot1.id,
+        imageId: image1.id,
         actorId: actor.id,
         enqueueStoryboardVideoGeneration,
         runStoryboardVideoGenerationJob,
@@ -284,6 +285,7 @@ async function generateRealStoryboardImage(input: {
 async function generateRealStoryboardVideo(input: {
   projectId: string;
   shotId: string;
+  imageId: string;
   actorId: string;
   enqueueStoryboardVideoGeneration: typeof import("@/server/use-cases/storyboard-media").enqueueStoryboardVideoGeneration;
   runStoryboardVideoGenerationJob: typeof import("@/server/use-cases/storyboard-media").runStoryboardVideoGenerationJob;
@@ -291,6 +293,8 @@ async function generateRealStoryboardVideo(input: {
   const enqueued = await input.enqueueStoryboardVideoGeneration({
     projectId: input.projectId,
     shotId: input.shotId,
+    mode: "single_image",
+    imageIds: [input.imageId],
     requestedBy: input.actorId,
   });
   try {

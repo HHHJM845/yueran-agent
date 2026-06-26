@@ -40,6 +40,7 @@ export type StoryboardShotStatus =
 
 export type StoryboardImageStatus = "queued" | "processing" | "succeeded" | "failed" | "retrying" | "cancelled";
 export type InternalReviewStatus = "pending" | "confirmed" | "discarded" | "needs_revision";
+export type StoryboardVideoInputMode = "single_image" | "start_end_frame" | "multi_reference";
 
 export type ScriptDirectionPackageView = {
   id: string;
@@ -155,6 +156,25 @@ export type StoryboardVideoView = {
   updatedAt: string;
 };
 
+export type StoryboardVideoGenerationInputView = {
+  id: string;
+  projectId: string;
+  storyboardVideoId: string | null;
+  shotId: string | null;
+  mode: StoryboardVideoInputMode;
+  inputImageIds: string[];
+  prompt: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type StoryboardSceneVideoBundleItem = {
+  shotNumber: string;
+  ossUrl: string;
+  fileName: string;
+};
+
 type ScriptPackageRow = {
   id: string;
   project_id: string;
@@ -267,6 +287,25 @@ type StoryboardVideoRow = {
   reviewed_by: string | null;
   reviewed_at: string | null;
   updated_at: string;
+};
+
+type StoryboardVideoGenerationInputRow = {
+  id: string;
+  project_id: string;
+  storyboard_video_id: string | null;
+  shot_id: string | null;
+  mode: StoryboardVideoInputMode;
+  input_image_ids: unknown;
+  prompt: string;
+  metadata_json: unknown;
+  created_at: string;
+  updated_at: string;
+};
+
+type StoryboardSceneVideoBundleRow = {
+  shot_number: string;
+  oss_url: string;
+  file_name: string | null;
 };
 
 export async function listStoryProduction(projectId: string) {
@@ -386,6 +425,22 @@ export async function listStoryboardImages(projectId: string) {
      order by scene_id, shot_id, updated_at desc
      limit 300`,
     [projectId]
+  );
+  return result.rows.map(mapStoryboardImage);
+}
+
+export async function listStoryboardImagesByIds(input: { projectId: string; imageIds: string[] }) {
+  if (input.imageIds.length === 0) return [];
+  const result = await query<StoryboardImageRow>(
+    `select id, project_id, scene_id, shot_id, prompt, provider, model_name, generation_status,
+            oss_key, oss_url, asset_id, is_selected, internal_review_status, failure_reason,
+            retry_count, annotations_json, reference_json, source_job_id, version, reviewed_by,
+            reviewed_at, updated_at
+     from storyboard_images
+     where project_id = $1
+       and id = any($2::uuid[])
+     order by array_position($2::uuid[], id)`,
+    [input.projectId, input.imageIds]
   );
   return result.rows.map(mapStoryboardImage);
 }
@@ -758,6 +813,52 @@ export async function createStoryboardVideoRecord(input: {
   return mapStoryboardVideo(result.rows[0]);
 }
 
+export async function createStoryboardVideoGenerationInput(input: {
+  projectId: string;
+  storyboardVideoId: string;
+  shotId: string;
+  mode: StoryboardVideoInputMode;
+  imageIds: string[];
+  prompt: string;
+  metadata?: Record<string, unknown>;
+  actorId: string;
+}) {
+  const result = await query<StoryboardVideoGenerationInputRow>(
+    `insert into storyboard_video_generation_inputs (
+       project_id, storyboard_video_id, shot_id, mode, input_image_ids, prompt, metadata_json, created_by
+     )
+     values ($1, $2, $3, $4, $5::jsonb, $6, $7::jsonb, $8)
+     returning id, project_id, storyboard_video_id, shot_id, mode, input_image_ids, prompt, metadata_json, created_at, updated_at`,
+    [
+      input.projectId,
+      input.storyboardVideoId,
+      input.shotId,
+      input.mode,
+      JSON.stringify(input.imageIds),
+      input.prompt,
+      JSON.stringify(input.metadata ?? {}),
+      input.actorId,
+    ]
+  );
+  return mapStoryboardVideoGenerationInput(result.rows[0]);
+}
+
+export async function getLatestStoryboardVideoGenerationInput(input: {
+  projectId: string;
+  storyboardVideoId: string;
+}) {
+  const result = await query<StoryboardVideoGenerationInputRow>(
+    `select id, project_id, storyboard_video_id, shot_id, mode, input_image_ids, prompt, metadata_json, created_at, updated_at
+     from storyboard_video_generation_inputs
+     where project_id = $1
+       and storyboard_video_id = $2
+     order by created_at desc
+     limit 1`,
+    [input.projectId, input.storyboardVideoId]
+  );
+  return result.rows[0] ? mapStoryboardVideoGenerationInput(result.rows[0]) : null;
+}
+
 export async function updateStoryboardVideoSourceJob(input: { id: string; sourceJobId: string }) {
   await query(`update storyboard_videos set source_job_id = $2, updated_at = now() where id = $1`, [
     input.id,
@@ -869,6 +970,29 @@ export async function getSelectedStoryboardImage(input: { projectId: string; sho
     [input.projectId, input.shotId]
   );
   return result.rows[0] ? mapStoryboardImage(result.rows[0]) : null;
+}
+
+export async function listSelectedStoryboardVideosForScene(input: { projectId: string; sceneId: string }) {
+  const result = await query<StoryboardSceneVideoBundleRow>(
+    `select s.shot_number,
+            v.oss_url,
+            regexp_replace(coalesce(v.oss_key, ''), '^.*/', '') as file_name
+     from storyboard_shots s
+     join storyboard_videos v
+       on v.project_id = s.project_id
+      and v.shot_id = s.id
+      and v.is_selected = true
+      and v.oss_url is not null
+     where s.project_id = $1
+       and s.scene_id = $2
+     order by s.sort_order asc, s.shot_number asc`,
+    [input.projectId, input.sceneId]
+  );
+  return result.rows.map((row) => ({
+    shotNumber: row.shot_number,
+    ossUrl: row.oss_url,
+    fileName: row.file_name || `${row.shot_number}.mp4`,
+  }));
 }
 
 function mapPackage(row: ScriptPackageRow): ScriptDirectionPackageView {
@@ -996,6 +1120,24 @@ function mapStoryboardVideo(row: StoryboardVideoRow): StoryboardVideoView {
     version: row.version,
     reviewedBy: row.reviewed_by,
     reviewedAt: row.reviewed_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapStoryboardVideoGenerationInput(row: StoryboardVideoGenerationInputRow): StoryboardVideoGenerationInputView {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    storyboardVideoId: row.storyboard_video_id,
+    shotId: row.shot_id,
+    mode: row.mode,
+    inputImageIds: Array.isArray(row.input_image_ids) ? row.input_image_ids.filter((item): item is string => typeof item === "string") : [],
+    prompt: row.prompt,
+    metadata:
+      row.metadata_json && typeof row.metadata_json === "object" && !Array.isArray(row.metadata_json)
+        ? (row.metadata_json as Record<string, unknown>)
+        : {},
+    createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }

@@ -6,6 +6,8 @@ import { enqueueStoryboardVideoGeneration } from "@/server/use-cases/storyboard-
 
 const generateSchema = z.object({
   shotId: z.string().uuid(),
+  mode: z.enum(["single_image", "start_end_frame", "multi_reference"]).default("single_image"),
+  imageIds: z.array(z.string().uuid()).min(1),
 });
 
 export async function POST(request: Request, context: { params: Promise<{ projectId: string }> }) {
@@ -19,6 +21,8 @@ export async function POST(request: Request, context: { params: Promise<{ projec
     const result = await enqueueStoryboardVideoGeneration({
       projectId,
       shotId: body.shotId,
+      mode: body.mode,
+      imageIds: body.imageIds,
       requestedBy: user.id,
     });
 

@@ -81,6 +81,7 @@ import {
   fetchGovernance,
   fetchProjects,
   fetchRoleDashboard,
+  fetchStoryboardSceneVideoBundle,
   fetchWorkspace,
   generateAtmosphereImage,
   generateCreativeDirections,
@@ -158,6 +159,7 @@ import {
   type StoryboardImageVersionView,
   type StoryboardSceneView,
   type StoryboardShotView,
+  type StoryboardVideoInputMode,
   type StoryboardVideoView,
   type TechnicalFeasibilityAction,
   type WorkspaceData,
@@ -206,6 +208,18 @@ const riskDecisionLabels: Record<Exclude<RiskCheckDecision, never>, string> = {
   accept: "可以接",
   conditional_accept: "条件接",
   reject: "暂不接",
+};
+
+const storyboardVideoModeLabels: Record<StoryboardVideoInputMode, string> = {
+  single_image: "单图",
+  start_end_frame: "首尾帧",
+  multi_reference: "多参考",
+};
+
+const storyboardVideoModeHints: Record<StoryboardVideoInputMode, string> = {
+  single_image: "需要 1 张已确认图片",
+  start_end_frame: "需要 2 张已确认图片",
+  multi_reference: "至少 2 张已确认图片",
 };
 
 function BrandLogo({ className, size = 30 }: { className?: string; size?: number }) {
@@ -2528,16 +2542,48 @@ function StoryboardVideoCanvasModule({
   onRefresh: () => Promise<void>;
 }) {
   const [activeShotId, setActiveShotId] = useState<string | null>(shots[0]?.id ?? null);
+  const [videoInputMode, setVideoInputMode] = useState<StoryboardVideoInputMode>("single_image");
+  const [selectedVideoInputImageIds, setSelectedVideoInputImageIds] = useState<string[]>([]);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sceneBundle, setSceneBundle] = useState<{ sceneId: string; videos: Array<{ shotNumber: string; ossUrl: string; fileName: string }> } | null>(null);
   const activeShot = shots.find((shot) => shot.id === activeShotId) ?? shots[0] ?? null;
   const activeScene = activeShot ? scenes.find((scene) => scene.id === activeShot.sceneId) ?? null : null;
   const selectedImage = activeShot ? images.find((image) => image.shotId === activeShot.id && image.isSelected) : null;
+  const confirmedImageCandidates = activeShot
+    ? images.filter(
+        (image) =>
+          image.shotId === activeShot.id &&
+          image.ossUrl &&
+          image.generationStatus === "succeeded" &&
+          image.internalReviewStatus === "confirmed"
+      )
+    : [];
+  const preferredVideoInputImage = confirmedImageCandidates.find((image) => image.isSelected) ?? confirmedImageCandidates[0] ?? null;
+  const defaultVideoInputImageIds = preferredVideoInputImage ? [preferredVideoInputImage.id] : [];
+  const effectiveVideoInputImageIds = selectedVideoInputImageIds.filter((imageId) =>
+    confirmedImageCandidates.some((image) => image.id === imageId)
+  );
+  const videoInputImageIds = effectiveVideoInputImageIds.length ? effectiveVideoInputImageIds : defaultVideoInputImageIds;
   const activeVideos = activeShot ? videos.filter((video) => video.shotId === activeShot.id) : [];
   const selectedVideo = activeVideos.find((video) => video.isSelected) ?? activeVideos[0] ?? null;
   const canOperate = user.role === "creative" || user.role === "admin";
   const downloadableVideos = videos.filter((video) => video.ossUrl);
+  const sceneSelectedVideoCount = activeScene ? videos.filter((video) => video.sceneId === activeScene.id && video.isSelected && video.ossUrl).length : 0;
+  const isVideoInputCountValid =
+    videoInputMode === "single_image"
+      ? videoInputImageIds.length === 1
+      : videoInputMode === "start_end_frame"
+        ? videoInputImageIds.length === 2
+        : videoInputImageIds.length >= 2;
+  const generateVideoDisabledReason = !activeShot
+    ? "请先选择分镜。"
+    : confirmedImageCandidates.length === 0
+      ? "请先在模块二确认当前分镜的图片。"
+      : !isVideoInputCountValid
+        ? storyboardVideoModeHints[videoInputMode]
+        : null;
 
   async function runAction<T extends { message?: string }>(key: string, action: () => Promise<ApiResult<T>>) {
     setBusyKey(key);
@@ -2551,6 +2597,28 @@ function StoryboardVideoCanvasModule({
       setError(result.error.message);
     }
     setBusyKey(null);
+  }
+
+  async function loadSceneBundle() {
+    if (!activeScene) return;
+    setBusyKey("scene-video-bundle");
+    setMessage(null);
+    setError(null);
+    const result = await fetchStoryboardSceneVideoBundle(project.id, activeScene.id);
+    if (result.ok) {
+      setSceneBundle(result.data);
+      setMessage(result.data.videos.length ? `已读取本场 ${result.data.videos.length} 条正式视频。` : "本场还没有可下载的正式视频。");
+    } else {
+      setError(result.error.message);
+    }
+    setBusyKey(null);
+  }
+
+  function toggleVideoInputImage(imageId: string) {
+    const next = videoInputImageIds.includes(imageId)
+      ? videoInputImageIds.filter((id) => id !== imageId)
+      : [...videoInputImageIds, imageId];
+    setSelectedVideoInputImageIds(next);
   }
 
   return (
@@ -2582,6 +2650,60 @@ function StoryboardVideoCanvasModule({
         </div>
 
         <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold">视频输入模式</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">{storyboardVideoModeHints[videoInputMode]}；当前 provider 会使用第一张作为主输入，完整选择会写入视频输入记录。</p>
+            </div>
+            <span className={cn("ds-pill", isVideoInputCountValid ? "ds-pill-teal" : "ds-pill-yellow")}>
+              已选 {videoInputImageIds.length}
+            </span>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="视频输入模式">
+            {(Object.keys(storyboardVideoModeLabels) as StoryboardVideoInputMode[]).map((mode) => (
+              <Button
+                key={mode}
+                type="button"
+                size="sm"
+                variant={videoInputMode === mode ? "default" : "outline"}
+                onClick={() => setVideoInputMode(mode)}
+              >
+                {storyboardVideoModeLabels[mode]}
+              </Button>
+            ))}
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {confirmedImageCandidates.length === 0 ? (
+              <p className="rounded-card-sm bg-[var(--surface-card)] p-3 text-xs leading-5 text-[var(--text-secondary)]">暂无已确认图片候选。请先回到模块二确认当前分镜图片。</p>
+            ) : (
+              confirmedImageCandidates.map((image) => {
+                const checked = videoInputImageIds.includes(image.id);
+                return (
+                  <button
+                    key={image.id}
+                    type="button"
+                    onClick={() => toggleVideoInputImage(image.id)}
+                    className={cn(
+                      "rounded-card-sm border p-3 text-left text-xs transition",
+                      checked
+                        ? "border-[var(--macaron-teal-fg)] bg-[var(--surface-card)] shadow-[0_10px_24px_-20px_rgb(30_105_96/0.5)]"
+                        : "border-[var(--border-soft)] bg-[var(--surface-card)]"
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold">v{image.version}</span>
+                      <span className={cn("ds-pill", checked ? "ds-selected-pill" : "bg-[var(--surface-soft)]")}>{checked ? "已选" : "可选"}</span>
+                    </div>
+                    <p className="mt-2 text-[var(--text-secondary)]">{image.isSelected ? "当前正式图" : "已确认候选图"} · {parseStatusLabel(image.generationStatus)}</p>
+                  </button>
+                );
+              })
+            )}
+          </div>
+          {generateVideoDisabledReason && <p className="mt-3 text-xs leading-5 text-[var(--warning)]">{generateVideoDisabledReason}</p>}
+        </div>
+
+        <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-4">
           <div className="flex items-center justify-between gap-3">
             <p className="text-sm font-semibold">Prompt 与画面内容描述</p>
             <span className="ds-pill ds-pill-purple">{activeScene ? `场次 ${activeScene.sceneNumber}` : "未选场次"}</span>
@@ -2610,8 +2732,17 @@ function StoryboardVideoCanvasModule({
         <div className="mt-3 flex flex-wrap gap-2">
           <Button
             type="button"
-            disabled={!canOperate || !activeShot || busyKey === "generate-video"}
-            onClick={() => activeShot && void runAction("generate-video", () => generateStoryboardVideo(project.id, activeShot.id))}
+            disabled={!canOperate || Boolean(generateVideoDisabledReason) || busyKey === "generate-video"}
+            onClick={() =>
+              activeShot &&
+              void runAction("generate-video", () =>
+                generateStoryboardVideo(project.id, {
+                  shotId: activeShot.id,
+                  mode: videoInputMode,
+                  imageIds: videoInputImageIds,
+                })
+              )
+            }
           >
             {busyKey === "generate-video" ? <Loader2 className="animate-spin" size={15} /> : <WandSparkles size={15} />}
             生成视频候选
@@ -2663,6 +2794,50 @@ function StoryboardVideoCanvasModule({
             )}
           </div>
         </div>
+        <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold">本场视频包</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">按分镜顺序读取当前场次已设为正式内部视频的素材。</p>
+            </div>
+            <Badge variant="outline">{sceneSelectedVideoCount} 条正式视频</Badge>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button type="button" variant="outline" disabled={!canOperate || !activeScene || busyKey === "scene-video-bundle"} onClick={() => void loadSceneBundle()}>
+              {busyKey === "scene-video-bundle" ? <Loader2 className="animate-spin" size={14} /> : <Download size={14} />}
+              读取本场视频包
+            </Button>
+            {sceneBundle?.videos.length ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => sceneBundle.videos.forEach((video) => window.open(video.ossUrl, "_blank", "noopener,noreferrer"))}
+              >
+                <Download size={14} />
+                下载本场全部
+              </Button>
+            ) : null}
+          </div>
+          {sceneBundle && (
+            <div className="mt-3 grid gap-2">
+              {sceneBundle.videos.length === 0 ? (
+                <p className="rounded-card-sm bg-[var(--surface-soft)] p-3 text-xs leading-5 text-[var(--text-secondary)]">本场还没有已确认的视频素材。</p>
+              ) : (
+                sceneBundle.videos.map((video) => (
+                  <button
+                    key={`${video.shotNumber}-${video.ossUrl}`}
+                    type="button"
+                    onClick={() => window.open(video.ossUrl, "_blank", "noopener,noreferrer")}
+                    className="flex items-center justify-between gap-3 rounded-card-sm bg-[var(--surface-soft)] p-3 text-left text-xs"
+                  >
+                    <span className="font-semibold">{video.shotNumber}</span>
+                    <span className="truncate text-[var(--text-secondary)]">{video.fileName}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+        </div>
         {message && <Feedback tone="success" text={message} />}
         {error && <Feedback tone="warning" text={error} />}
       </div>
@@ -2671,7 +2846,12 @@ function StoryboardVideoCanvasModule({
         shots={shots}
         activeShotId={activeShot?.id ?? null}
         selectedByShotId={new Map(videos.filter((video) => video.isSelected || video.ossUrl).map((video) => [video.shotId, video.ossUrl]))}
-        onSelectShot={setActiveShotId}
+        onSelectShot={(shotId) => {
+          setActiveShotId(shotId);
+          setVideoInputMode("single_image");
+          setSelectedVideoInputImageIds([]);
+          setSceneBundle(null);
+        }}
       />
     </div>
   );

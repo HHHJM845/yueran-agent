@@ -14,9 +14,12 @@ import {
 } from "@/server/repositories/storyboard-image-batches";
 import {
   createStoryboardImageRecord,
+  createStoryboardVideoGenerationInput,
   createStoryboardVideoRecord,
+  getLatestStoryboardVideoGenerationInput,
   getSelectedStoryboardImage,
   getStoryboardShot,
+  listStoryboardImagesByIds,
   markStoryboardImageFailed,
   markStoryboardImageProcessing,
   markStoryboardImageSucceeded,
@@ -42,7 +45,35 @@ const storyboardVideoJobInputSchema = z.object({
   shotId: z.string().uuid(),
   storyboardVideoId: z.string().uuid(),
   requestedBy: z.string().uuid(),
+  mode: z.enum(["single_image", "start_end_frame", "multi_reference"]).optional(),
+  imageIds: z.array(z.string().uuid()).optional(),
 });
+
+export type StoryboardVideoInputMode = "single_image" | "start_end_frame" | "multi_reference";
+
+export function validateStoryboardVideoInput(input: { mode: StoryboardVideoInputMode; imageIds: string[] }) {
+  if (input.mode === "single_image" && input.imageIds.length !== 1) {
+    throw new AppError({
+      status: 422,
+      code: "single_image_input_invalid",
+      userMessage: "单图生成需要且只需要 1 张图。",
+    });
+  }
+  if (input.mode === "start_end_frame" && input.imageIds.length !== 2) {
+    throw new AppError({
+      status: 422,
+      code: "start_end_frame_input_invalid",
+      userMessage: "首尾帧生成需要 2 张图。",
+    });
+  }
+  if (input.mode === "multi_reference" && input.imageIds.length < 2) {
+    throw new AppError({
+      status: 422,
+      code: "multi_reference_input_invalid",
+      userMessage: "多图参考生成至少需要 2 张图。",
+    });
+  }
+}
 
 export async function enqueueStoryboardImageGeneration(input: {
   projectId: string;
@@ -287,9 +318,13 @@ export async function confirmStoryboardImage(input: {
 export async function enqueueStoryboardVideoGeneration(input: {
   projectId: string;
   shotId: string;
+  mode: StoryboardVideoInputMode;
+  imageIds: string[];
   requestedBy: string;
 }) {
   const config = assertArkVideoGenerationReady();
+  const uniqueImageIds = Array.from(new Set(input.imageIds));
+  validateStoryboardVideoInput({ mode: input.mode, imageIds: uniqueImageIds });
   const shot = await getStoryboardShot({ projectId: input.projectId, shotId: input.shotId });
   if (!shot) {
     throw new AppError({
@@ -298,23 +333,54 @@ export async function enqueueStoryboardVideoGeneration(input: {
       userMessage: "没有找到这条文字分镜。请刷新后重新选择分镜。",
     });
   }
-  const selectedImage = await getSelectedStoryboardImage({ projectId: input.projectId, shotId: shot.id });
-  if (!selectedImage?.ossUrl) {
+  const inputImages = await listStoryboardImagesByIds({ projectId: input.projectId, imageIds: uniqueImageIds });
+  if (inputImages.length !== uniqueImageIds.length) {
     throw new AppError({
       status: 422,
-      code: "storyboard_image_required",
-      userMessage: "请先为这条分镜确认正式图片，再生成视频候选。",
+      code: "storyboard_video_input_image_missing",
+      userMessage: "有图片不属于当前项目或已不可用。请刷新候选图后重新选择。",
     });
   }
+  for (const image of inputImages) {
+    if (image.shotId !== shot.id || image.sceneId !== shot.sceneId) {
+      throw new AppError({
+        status: 422,
+        code: "storyboard_video_input_scope_invalid",
+        userMessage: "视频输入图片必须来自同一条分镜。请只选择当前分镜下已确认的图片。",
+      });
+    }
+    if (!image.ossUrl || image.generationStatus !== "succeeded" || image.internalReviewStatus !== "confirmed") {
+      throw new AppError({
+        status: 422,
+        code: "storyboard_video_input_image_unavailable",
+        userMessage: "视频输入图片必须是已生成且已确认的正式图片。请先在模块二确认图片。",
+      });
+    }
+  }
+  const primaryImage = inputImages[0];
 
   const video = await createStoryboardVideoRecord({
     projectId: input.projectId,
     sceneId: shot.sceneId,
     shotId: shot.id,
-    imageId: selectedImage.id,
+    imageId: primaryImage.id,
     prompt: buildStoryboardVideoPrompt(shot),
     provider: config.provider,
     modelName: config.model,
+    actorId: input.requestedBy,
+  });
+  const videoInput = await createStoryboardVideoGenerationInput({
+    projectId: input.projectId,
+    storyboardVideoId: video.id,
+    shotId: shot.id,
+    mode: input.mode,
+    imageIds: uniqueImageIds,
+    prompt: buildStoryboardVideoPrompt(shot),
+    metadata: {
+      providerSupports: "single_image",
+      primaryImageId: primaryImage.id,
+      note: "当前视频 provider 仅接收单张 imageUrl，完整输入图片列表已持久化保存。",
+    },
     actorId: input.requestedBy,
   });
   const job = await createJob({
@@ -326,6 +392,8 @@ export async function enqueueStoryboardVideoGeneration(input: {
     inputJson: {
       shotId: shot.id,
       storyboardVideoId: video.id,
+      mode: input.mode,
+      imageIds: uniqueImageIds,
       requestedBy: input.requestedBy,
     },
     createdBy: input.requestedBy,
@@ -339,9 +407,12 @@ export async function enqueueStoryboardVideoGeneration(input: {
     currentStage: "ai_video_canvas",
     projectStatus: "in_progress",
     userMessage: "视频候选生成任务已创建。若视频 provider 未配置，任务会明确阻塞并保存失败原因。",
-    inputRefs: [{ type: "storyboard_shot", id: shot.id }],
+    inputRefs: [
+      { type: "storyboard_shot", id: shot.id },
+      ...uniqueImageIds.map((imageId) => ({ type: "storyboard_image", id: imageId })),
+    ],
     outputRefs: [{ type: "storyboard_video", id: video.id }],
-    snapshot: { shotId: shot.id, storyboardVideoId: video.id },
+    snapshot: { shotId: shot.id, storyboardVideoId: video.id, videoInputId: videoInput.id, mode: input.mode, imageIds: uniqueImageIds },
   });
 
   return {
@@ -369,8 +440,25 @@ export async function runStoryboardVideoGenerationJob(jobId: string) {
       userMessage: "分镜视频对应的文字分镜不存在。请刷新后重新发起生成。",
     });
   }
-  const selectedImage = await getSelectedStoryboardImage({ projectId: job.projectId, shotId: input.shotId });
-  if (!selectedImage?.ossUrl) {
+  const persistedInput = await getLatestStoryboardVideoGenerationInput({
+    projectId: job.projectId,
+    storyboardVideoId: input.storyboardVideoId,
+  });
+  const mode = persistedInput?.mode ?? input.mode ?? "single_image";
+  const imageIds = persistedInput?.inputImageIds.length ? persistedInput.inputImageIds : input.imageIds ?? [];
+  validateStoryboardVideoInput({ mode, imageIds });
+  const inputImages = imageIds.length
+    ? await listStoryboardImagesByIds({ projectId: job.projectId, imageIds })
+    : [];
+  if (inputImages.length !== imageIds.length || inputImages.some((image) => image.shotId !== shot.id || image.sceneId !== shot.sceneId)) {
+    throw new AppError({
+      status: 422,
+      code: "storyboard_video_input_scope_invalid",
+      userMessage: "视频输入图片记录已失效。请回到视频画布重新选择当前分镜的确认图片。",
+    });
+  }
+  const selectedImage = inputImages[0] ?? (await getSelectedStoryboardImage({ projectId: job.projectId, shotId: input.shotId }));
+  if (!selectedImage?.ossUrl || selectedImage.shotId !== shot.id) {
     throw new AppError({
       status: 422,
       code: "storyboard_image_required",
@@ -405,7 +493,14 @@ export async function runStoryboardVideoGenerationJob(jobId: string) {
         jobId,
         callId: "ark_storyboard_video_generation",
         operation: "storyboard_video_generation",
-        metadata: { shotId: shot.id, storyboardVideoId: input.storyboardVideoId, selectedImageId: selectedImage.id },
+        metadata: {
+          shotId: shot.id,
+          storyboardVideoId: input.storyboardVideoId,
+          selectedImageId: selectedImage.id,
+          mode,
+          imageIds,
+          providerInputImageId: selectedImage.id,
+        },
       },
     });
     const objectKey = createStoryboardVideoObjectKey(job.projectId, input.storyboardVideoId, generatedVideo.extension);
@@ -438,6 +533,8 @@ export async function runStoryboardVideoGenerationJob(jobId: string) {
         storyboardVideoId: savedVideo.id,
         prompt: savedVideo.prompt,
         imageId: selectedImage.id,
+        inputMode: mode,
+        inputImageIds: imageIds,
         providerTaskId: generatedVideo.providerTaskId,
         ossUrl: uploaded.ossUrl,
       },
@@ -462,10 +559,10 @@ export async function runStoryboardVideoGenerationJob(jobId: string) {
       userMessage: "分镜视频生成完成，等待内部选择正式视频候选。",
       inputRefs: [
         { type: "storyboard_shot", id: shot.id },
-        { type: "storyboard_image", id: selectedImage.id },
+        ...imageIds.map((imageId) => ({ type: "storyboard_image", id: imageId })),
       ],
       outputRefs: [{ type: "storyboard_video", id: savedVideo.id }],
-      snapshot: { shotId: shot.id, storyboardVideoId: savedVideo.id },
+      snapshot: { shotId: shot.id, storyboardVideoId: savedVideo.id, mode, imageIds },
     });
     await updateJobStatus(jobId, {
       status: "succeeded",
