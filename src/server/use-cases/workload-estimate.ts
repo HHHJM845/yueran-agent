@@ -43,7 +43,7 @@ export function normalizeWorkloadEstimate(value: unknown): WorkloadEstimateDraft
   const record = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
   const minPrice = toNonnegativeInteger(record.minPriceCny);
   const maxPrice = toNonnegativeInteger(record.maxPriceCny);
-  const [normalizedMin, normalizedMax] = maxPrice > 0 && minPrice > maxPrice ? [maxPrice, minPrice] : [minPrice, maxPrice];
+  const [normalizedMin, normalizedMax] = normalizePriceRange(minPrice, maxPrice);
   const complexity = String(record.complexity ?? "medium");
 
   return {
@@ -62,6 +62,13 @@ export function normalizeWorkloadEstimate(value: unknown): WorkloadEstimateDraft
     rationale: String(record.rationale ?? "").trim(),
     riskNotes: String(record.riskNotes ?? "").trim(),
   };
+}
+
+function normalizePriceRange(minPrice: number, maxPrice: number) {
+  if (minPrice <= 0 && maxPrice <= 0) return [0, 0];
+  if (minPrice <= 0) return [maxPrice, maxPrice];
+  if (maxPrice <= 0) return [minPrice, minPrice];
+  return minPrice <= maxPrice ? [minPrice, maxPrice] : [maxPrice, minPrice];
 }
 
 export async function saveProjectWorkloadEstimate(input: {
@@ -197,6 +204,7 @@ function buildChecklistItemsFromEstimate(estimate: WorkloadEstimateView): SaveDe
 function normalizeChecklistItem(item: SaveDeliveryChecklistItemInput, index: number): SaveDeliveryChecklistItemInput {
   const itemKind = allowedChecklistKinds.includes(item.itemKind) ? item.itemKind : "other";
   return {
+    id: item.id,
     itemKind,
     title: String(item.title ?? "").trim(),
     description: String(item.description ?? "").trim(),

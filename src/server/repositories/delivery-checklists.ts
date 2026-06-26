@@ -100,6 +100,21 @@ type DeliveryChecklistItemRow = {
   updated_at: string;
 };
 
+export const DELIVERY_CHECKLIST_ITEM_SAVE_UPDATE_SQL = `
+      update delivery_checklist_items
+        set item_kind = $4,
+            title = $5,
+            description = $6,
+            quantity = $7,
+            status = $8,
+            sort_order = $9,
+            metadata_json = $10::jsonb,
+            updated_by = case when exists (select 1 from users where id = $11::uuid) then $11::uuid else updated_by end,
+            updated_at = now()
+      where project_id = $1
+        and checklist_id = $2
+        and id = $3`;
+
 export async function getProjectDeliveryChecklist(projectId: string): Promise<DeliveryChecklistView | null> {
   const checklistResult = await query<DeliveryChecklistRow>(
     `select id, project_id, estimate_id, status, version, notes, confirmed_by, confirmed_at, updated_at
@@ -144,21 +159,60 @@ export async function createOrUpdateDeliveryChecklist(input: SaveDeliveryCheckli
     );
     const checklist = checklistResult.rows[0];
 
-    await tx(`delete from delivery_checklist_items where checklist_id = $1`, [checklist.id]);
-
     for (const [index, item] of input.items.entries()) {
-      await insertChecklistItem(tx, {
-        projectId: input.projectId,
-        checklistId: checklist.id,
-        item,
-        actorId: input.actorId ?? null,
-        sortOrder: item.sortOrder ?? index,
-      });
+      const saved = item.id
+        ? await updateChecklistItemForSave(tx, {
+            projectId: input.projectId,
+            checklistId: checklist.id,
+            item,
+            actorId: input.actorId ?? null,
+            sortOrder: item.sortOrder ?? index,
+          })
+        : null;
+
+      if (!saved) {
+        await insertChecklistItem(tx, {
+          projectId: input.projectId,
+          checklistId: checklist.id,
+          item,
+          actorId: input.actorId ?? null,
+          sortOrder: item.sortOrder ?? index,
+        });
+      }
     }
 
     const items = await listChecklistItems(checklist.id, tx);
     return mapChecklist(checklist, items);
   });
+}
+
+async function updateChecklistItemForSave(
+  tx: TransactionQuery,
+  input: {
+    projectId: string;
+    checklistId: string;
+    item: SaveDeliveryChecklistItemInput;
+    actorId: string | null;
+    sortOrder: number;
+  }
+) {
+  const result = await tx(
+    DELIVERY_CHECKLIST_ITEM_SAVE_UPDATE_SQL,
+    [
+      input.projectId,
+      input.checklistId,
+      input.item.id,
+      input.item.itemKind,
+      input.item.title,
+      input.item.description ?? "",
+      input.item.quantity,
+      input.item.status ?? "planned",
+      input.sortOrder,
+      JSON.stringify(input.item.metadata ?? {}),
+      input.actorId,
+    ]
+  );
+  return (result.rowCount ?? 0) > 0;
 }
 
 export async function updateDeliveryChecklistItem(input: UpdateDeliveryChecklistItemInput): Promise<DeliveryChecklistItemView> {
