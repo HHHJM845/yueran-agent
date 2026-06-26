@@ -133,6 +133,13 @@ export const DELIVERY_CHECKLIST_ITEM_LIST_SQL = `
        and status <> 'cancelled'
      order by sort_order asc, updated_at asc`;
 
+export const DELIVERY_CHECKLIST_ITEM_LIST_WITH_CANCELLED_SQL = `
+    select id, project_id, checklist_id, item_kind, title, description, quantity,
+           status, change_request_id, sort_order, metadata_json, updated_at
+      from delivery_checklist_items
+     where checklist_id = $1
+     order by sort_order asc, updated_at asc`;
+
 export async function getProjectDeliveryChecklist(projectId: string): Promise<DeliveryChecklistView | null> {
   const checklistResult = await query<DeliveryChecklistRow>(
     `select id, project_id, estimate_id, status, version, notes, confirmed_by, confirmed_at, updated_at
@@ -145,6 +152,21 @@ export async function getProjectDeliveryChecklist(projectId: string): Promise<De
   if (!checklist) return null;
 
   const items = await listChecklistItems(checklist.id);
+  return mapChecklist(checklist, items);
+}
+
+export async function getProjectDeliveryChecklistWithCancelled(projectId: string): Promise<DeliveryChecklistView | null> {
+  const checklistResult = await query<DeliveryChecklistRow>(
+    `select id, project_id, estimate_id, status, version, notes, confirmed_by, confirmed_at, updated_at
+       from delivery_checklists
+      where project_id = $1
+      limit 1`,
+    [projectId]
+  );
+  const checklist = checklistResult.rows[0];
+  if (!checklist) return null;
+
+  const items = await listChecklistItemsWithCancelled(checklist.id);
   return mapChecklist(checklist, items);
 }
 
@@ -320,6 +342,14 @@ async function insertChecklistItem(
 async function listChecklistItems(checklistId: string, tx: TransactionQuery = query) {
   const result = await tx<DeliveryChecklistItemRow>(
     DELIVERY_CHECKLIST_ITEM_LIST_SQL,
+    [checklistId]
+  );
+  return result.rows.map(mapChecklistItem);
+}
+
+async function listChecklistItemsWithCancelled(checklistId: string, tx: TransactionQuery = query) {
+  const result = await tx<DeliveryChecklistItemRow>(
+    DELIVERY_CHECKLIST_ITEM_LIST_WITH_CANCELLED_SQL,
     [checklistId]
   );
   return result.rows.map(mapChecklistItem);

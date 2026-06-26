@@ -1,5 +1,9 @@
 import { AppError } from "@/lib/errors";
-import { getProjectDeliveryChecklist, createOrUpdateDeliveryChecklist } from "@/server/repositories/delivery-checklists";
+import {
+  getProjectDeliveryChecklist,
+  getProjectDeliveryChecklistWithCancelled,
+  createOrUpdateDeliveryChecklist,
+} from "@/server/repositories/delivery-checklists";
 import type {
   DeliveryChecklistItemKind,
   DeliveryChecklistView,
@@ -123,7 +127,7 @@ export async function createDeliveryChecklistFromEstimate(input: {
     });
   }
 
-  const existingChecklist = await getProjectDeliveryChecklist(input.projectId);
+  const existingChecklist = await getProjectDeliveryChecklistWithCancelled(input.projectId);
   const items = mergeChecklistItemsWithExistingIds(
     buildChecklistItemsFromEstimate(estimate),
     existingChecklist?.items ?? []
@@ -230,14 +234,22 @@ export function mergeChecklistItemsWithExistingIds(
   existingItems: DeliveryChecklistView["items"]
 ): SaveDeliveryChecklistItemInput[] {
   const remainingItems = [...existingItems];
+  const mergedItems: SaveDeliveryChecklistItemInput[] = [];
 
-  return generatedItems.map((item) => {
+  for (const item of generatedItems) {
     const matchedIndex = findExistingChecklistItemIndex(remainingItems, item);
-    if (matchedIndex < 0) return item;
+    if (matchedIndex < 0) {
+      mergedItems.push(item);
+      continue;
+    }
 
     const [matchedItem] = remainingItems.splice(matchedIndex, 1);
-    return { ...item, id: matchedItem.id };
-  });
+    if (matchedItem.status === "cancelled") continue;
+
+    mergedItems.push({ ...item, id: matchedItem.id });
+  }
+
+  return mergedItems;
 }
 
 function normalizeChecklistItem(item: SaveDeliveryChecklistItemInput, index: number): SaveDeliveryChecklistItemInput {
