@@ -5,8 +5,9 @@ import { createAuditLog } from "@/server/repositories/audit-logs";
 import { requireCanEditProjectBasics, requireProjectAccess } from "@/server/auth/rbac";
 import { requireUser } from "@/server/auth/session";
 import {
-  archiveProject,
+  archiveProjectWithTransaction,
   getProjectDeletionSnapshot,
+  getProjectDeletionSnapshotWithTransaction,
   permanentlyDeleteProjectWithTransaction,
   updateProjectBasics,
 } from "@/server/repositories/projects";
@@ -75,13 +76,43 @@ export async function DELETE(request: Request, context: { params: Promise<{ proj
       });
     }
 
-    const body = deleteProjectSchema.parse(rawBody);
-    const mode: ProjectDeleteMode = body.mode;
+    const parsedBody = deleteProjectSchema.safeParse(rawBody);
+    if (!parsedBody.success) {
+      throw new AppError({
+        status: 400,
+        code: "invalid_request",
+        userMessage: "删除方式不正确，请刷新页面后重试。",
+      });
+    }
+
+    const mode: ProjectDeleteMode = parsedBody.data.mode;
     const project = await getProjectDeletionSnapshot(projectId);
     const allowedProject = assertCanDeleteProject({ user, project, mode });
 
     if (mode === "archive") {
-      const archivedProject = await archiveProject(projectId);
+      const archivedProject = await withTransaction(async (transactionQuery) => {
+        const projectSnapshot = await getProjectDeletionSnapshotWithTransaction(transactionQuery, projectId);
+        const allowedSnapshot = assertCanDeleteProject({ user, project: projectSnapshot, mode });
+        const archivedSnapshot = await archiveProjectWithTransaction(transactionQuery, projectId);
+
+        if (!archivedSnapshot) {
+          return null;
+        }
+
+        await createAuditLog({
+          actorId: user.id,
+          projectId,
+          action: "project.archived",
+          objectType: "project",
+          objectId: projectId,
+          before: allowedSnapshot,
+          after: archivedSnapshot,
+          transactionQuery,
+        });
+
+        return archivedSnapshot;
+      });
+
       if (!archivedProject) {
         throw new AppError({
           status: 404,
@@ -89,16 +120,6 @@ export async function DELETE(request: Request, context: { params: Promise<{ proj
           userMessage: "项目已经不存在，列表将自动刷新。",
         });
       }
-
-      await createAuditLog({
-        actorId: user.id,
-        projectId,
-        action: "project.archived",
-        objectType: "project",
-        objectId: projectId,
-        before: allowedProject,
-        after: archivedProject,
-      });
 
       return Response.json({
         ok: true,

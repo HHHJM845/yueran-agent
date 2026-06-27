@@ -157,7 +157,11 @@ export async function getProjectDeletionSnapshotWithTransaction(transactionQuery
 }
 
 export async function archiveProject(projectId: string) {
-  const result = await query<ProjectRow>(
+  return withTransaction(async (transactionQuery) => archiveProjectWithTransaction(transactionQuery, projectId));
+}
+
+export async function archiveProjectWithTransaction(transactionQuery: TransactionQuery, projectId: string) {
+  const result = await transactionQuery<ProjectRow>(
     `update projects
      set archived_at = now(),
          status = 'archived',

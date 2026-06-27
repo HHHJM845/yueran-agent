@@ -47,3 +47,16 @@ Validation:
 
 - `npm run typecheck` — pass
 - `npx eslint 'src/app/api/projects/[projectId]/route.ts' src/components/workspace/api.ts src/server/repositories/projects.ts src/server/use-cases/project-delete.ts src/server/repositories/audit-logs.ts` — pass
+
+## Fix follow-up
+
+Changed files:
+
+- `src/app/api/projects/[projectId]/route.ts`
+- `src/server/repositories/projects.ts`
+- `src/server/repositories/audit-logs.ts`
+
+Validation:
+
+- `npm run typecheck` — pending
+- `npx eslint 'src/app/api/projects/[projectId]/route.ts' src/components/workspace/api.ts src/server/repositories/projects.ts src/server/use-cases/project-delete.ts src/server/repositories/audit-logs.ts` — pending
