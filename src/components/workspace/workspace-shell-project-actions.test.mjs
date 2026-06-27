@@ -28,3 +28,9 @@ test("delete action calls real deleteProject api and refreshes stale permissions
   assert.match(source, /fetchCurrentUser\(\)/);
   assert.match(source, /setUser\(permissionResult\.data\.user\)/);
 });
+
+test("project creation closes sheet only after successful create and shows success copy", () => {
+  assert.match(source, /setCreateSheetOpen\(false\)/);
+  assert.match(source, /项目已创建，可以开始录入 Brief。/);
+  assert.match(source, /Promise<boolean>/);
+});

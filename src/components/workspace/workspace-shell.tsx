@@ -564,7 +564,7 @@ export function WorkspaceShell() {
     }
   }, []);
 
-  async function handleCreateProject(formData: FormData) {
+  async function handleCreateProject(formData: FormData): Promise<boolean> {
     setCreating(true);
     setCreateProjectMessage(null);
     setDeleteProjectMessage(null);
@@ -577,14 +577,17 @@ export function WorkspaceShell() {
     });
 
     if (result.ok) {
-      setProjects((current) => [result.data, ...current]);
+      setProjects((current) => [result.data, ...current.filter((item) => item.id !== result.data.id)]);
       setSelectedProjectId(result.data.id);
-      setCreateProjectMessage(`已创建项目“${result.data.projectName}”。`);
-      await refreshDashboard();
+      setCreateProjectMessage("项目已创建，可以开始录入 Brief。");
+      await Promise.all([refreshWorkspace(result.data.id), refreshDashboard(), refreshGovernance()]);
+      setCreating(false);
+      return true;
     } else {
       setError(result.error);
+      setCreating(false);
+      return false;
     }
-    setCreating(false);
   }
 
   async function handleDeleteProject(project: ProjectSummary, mode: ProjectDeleteMode) {
@@ -915,7 +918,7 @@ function ProjectSidebar({
   loading: boolean;
   error: ApiError | null;
   onRetry: () => void;
-  onCreate: (formData: FormData) => void;
+  onCreate: (formData: FormData) => Promise<boolean>;
   creating: boolean;
   user: CurrentUser;
   onLogout: () => void;
@@ -924,6 +927,7 @@ function ProjectSidebar({
   deletingProjectId: string | null;
 }) {
   const canCreateProject = user.role === "business" || user.role === "admin";
+  const [createSheetOpen, setCreateSheetOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ project: ProjectSummary; x: number; y: number } | null>(null);
   const [deleteDialog, setDeleteDialog] = useState<{
     project: ProjectSummary;
@@ -1115,7 +1119,7 @@ function ProjectSidebar({
       )}
       <div className="border-t border-[var(--border-soft)] p-3">
         {canCreateProject ? (
-          <Sheet>
+          <Sheet open={createSheetOpen} onOpenChange={setCreateSheetOpen}>
             <SheetTrigger render={<Button variant="outline" size="sm" className="mb-2 w-full justify-start rounded-[0.95rem] bg-transparent shadow-none" />}>
               <Plus size={14} />
               新建项目
@@ -1125,7 +1129,13 @@ function ProjectSidebar({
                 <SheetTitle>创建真实项目</SheetTitle>
                 <SheetDescription>项目创建后会进入数据库，并出现在左侧项目列表中。</SheetDescription>
               </SheetHeader>
-              <form action={onCreate} className="grid gap-3 px-4">
+              <form
+                action={async (formData) => {
+                  const created = await onCreate(formData);
+                  if (created) setCreateSheetOpen(false);
+                }}
+                className="grid gap-3 px-4"
+              >
                 <Input name="brandName" required placeholder="品牌名" />
                 <Input name="projectName" required placeholder="项目名" />
                 <Input name="ownerName" required placeholder="负责人" />
