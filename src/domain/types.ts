@@ -128,6 +128,7 @@ export type ProjectSummary = {
   brandName: string;
   projectName: string;
   currentStage: ProjectStage;
+  ownerId: string | null;
   ownerName: string;
   dueDate: string | null;
   status: StageStatus;

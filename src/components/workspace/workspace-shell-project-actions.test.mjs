@@ -20,6 +20,11 @@ test("permanent delete uses two confirmation states", () => {
   assert.match(source, /canPermanentlyDeleteProject = user\.role === "admin"/);
 });
 
+test("archive visibility uses stable owner identity for business users", () => {
+  assert.match(source, /canArchiveProject = \(project: ProjectSummary\) => user\.role === "admin" \|\| \(user\.role === "business" && project\.ownerId === user\.id\)/);
+  assert.doesNotMatch(source, /project\.ownerName === user\.name/);
+});
+
 test("delete action calls real deleteProject api and refreshes stale permissions", () => {
   assert.match(source, /deleteProject\(/);
   assert.match(source, /mode: "archive"/);

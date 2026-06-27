@@ -934,7 +934,7 @@ function ProjectSidebar({
     mode: ProjectDeleteMode;
     step: "archive" | "permanent_first" | "permanent_second";
   } | null>(null);
-  const canArchiveProject = (project: ProjectSummary) => user.role === "admin" || (user.role === "business" && project.ownerName === user.name);
+  const canArchiveProject = (project: ProjectSummary) => user.role === "admin" || (user.role === "business" && project.ownerId === user.id);
   const canPermanentlyDeleteProject = user.role === "admin";
 
   return (

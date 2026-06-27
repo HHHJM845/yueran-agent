@@ -17,9 +17,7 @@ type ProjectRow = {
   updated_at: string;
 };
 
-export type ProjectRecord = ProjectSummary & {
-  ownerId: string | null;
-};
+export type ProjectRecord = ProjectSummary;
 
 export type ProjectBasicsInput = {
   brandName: string;
