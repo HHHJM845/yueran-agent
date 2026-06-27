@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   BriefcaseBusiness,
@@ -14,7 +14,6 @@ import {
   Download,
   ExternalLink,
   FileText,
-  FileUp,
   Heading2,
   Image as ImageIcon,
   List,
@@ -96,9 +95,7 @@ import {
   registerExternalAsset,
   registerUploadedAsset,
   approveReviewCut,
-  confirmStoryboardImage,
   confirmStoryboardVideo,
-  createStoryboardSceneClientReview,
   reviewGeneratedImage,
   reviewCreativeDirection,
   reviewContract,
@@ -165,10 +162,8 @@ import {
   type ScriptReferenceAssetView,
   type StoryboardImageView,
   type StoryboardImageBatchView,
-  type StoryboardImageVersionView,
   type StoryboardSceneView,
   type StoryboardShotView,
-  type StoryboardVideoInputMode,
   type StoryboardVideoView,
   type ProjectDeleteMode,
   type TechnicalFeasibilityAction,
@@ -218,18 +213,6 @@ const riskDecisionLabels: Record<Exclude<RiskCheckDecision, never>, string> = {
   accept: "可以接",
   conditional_accept: "条件接",
   reject: "暂不接",
-};
-
-const storyboardVideoModeLabels: Record<StoryboardVideoInputMode, string> = {
-  single_image: "单图",
-  start_end_frame: "首尾帧",
-  multi_reference: "多参考",
-};
-
-const storyboardVideoModeHints: Record<StoryboardVideoInputMode, string> = {
-  single_image: "需要 1 张已确认图片",
-  start_end_frame: "需要 2 张已确认图片",
-  multi_reference: "至少 2 张已确认图片",
 };
 
 function BrandLogo({ className, size = 30 }: { className?: string; size?: number }) {
@@ -366,6 +349,14 @@ function AccountSidebarCard({
   );
 }
 
+function buildClientLoadError(): ApiError {
+  return {
+    code: "workspace_client_load_failed",
+    message: "工作台数据没有完整加载。请刷新页面重试，或检查当前网络和登录状态。",
+    recoverable: true,
+  };
+}
+
 export function WorkspaceShell() {
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -386,6 +377,8 @@ export function WorkspaceShell() {
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
   const [workspaceData, setWorkspaceData] = useState<WorkspaceData | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarRailY, setSidebarRailY] = useState<number | null>(null);
+  const [sidebarRailActive, setSidebarRailActive] = useState(false);
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
@@ -415,30 +408,34 @@ export function WorkspaceShell() {
     setLoading(true);
     setError(null);
     setDashboardError(null);
-    const [configResult, projectResult, dashboardResult] = await Promise.all([fetchConfig(), fetchProjects(), fetchRoleDashboard()]);
+    try {
+      const [configResult, projectResult, dashboardResult] = await Promise.all([fetchConfig(), fetchProjects(), fetchRoleDashboard()]);
 
-    if (configResult.ok) {
-      setConfig(configResult.data);
+      if (configResult.ok) {
+        setConfig(configResult.data);
+      }
+
+      if (dashboardResult.ok) {
+        setDashboard(dashboardResult.data);
+      } else {
+        setDashboardError(dashboardResult.error);
+      }
+
+      if (projectResult.ok) {
+        setProjects(projectResult.data);
+        setSelectedProjectId((current) => current ?? projectResult.data[0]?.id ?? null);
+      } else {
+        setError(projectResult.error);
+      }
+
+      if (user.role === "admin") {
+        void refreshGovernance();
+      }
+    } catch {
+      setError(buildClientLoadError());
+    } finally {
+      setLoading(false);
     }
-
-    if (dashboardResult.ok) {
-      setDashboard(dashboardResult.data);
-    } else {
-      setDashboardError(dashboardResult.error);
-    }
-
-    if (projectResult.ok) {
-      setProjects(projectResult.data);
-      setSelectedProjectId((current) => current ?? projectResult.data[0]?.id ?? null);
-    } else {
-      setError(projectResult.error);
-    }
-
-    if (user.role === "admin") {
-      void refreshGovernance();
-    }
-
-    setLoading(false);
   }
 
   useEffect(() => {
@@ -480,34 +477,46 @@ export function WorkspaceShell() {
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
+    const activeUser = user;
 
-    Promise.all([fetchConfig(), fetchProjects(), fetchRoleDashboard()]).then(([configResult, projectResult, dashboardResult]) => {
-      if (cancelled) return;
+    async function initializeWorkspace() {
+      setLoading(true);
+      setError(null);
+      setDashboardError(null);
 
-      if (configResult.ok) {
-        setConfig(configResult.data);
+      try {
+        const [configResult, projectResult, dashboardResult] = await Promise.all([fetchConfig(), fetchProjects(), fetchRoleDashboard()]);
+        if (cancelled) return;
+
+        if (configResult.ok) {
+          setConfig(configResult.data);
+        }
+
+        if (dashboardResult.ok) {
+          setDashboard(dashboardResult.data);
+          setDashboardError(null);
+        } else {
+          setDashboardError(dashboardResult.error);
+        }
+
+        if (projectResult.ok) {
+          setProjects(projectResult.data);
+          setSelectedProjectId(projectResult.data[0]?.id ?? null);
+        } else {
+          setError(projectResult.error);
+        }
+
+        if (activeUser.role === "admin") {
+          void refreshGovernance();
+        }
+      } catch {
+        if (!cancelled) setError(buildClientLoadError());
+      } finally {
+        if (!cancelled) setLoading(false);
       }
+    }
 
-      if (dashboardResult.ok) {
-        setDashboard(dashboardResult.data);
-        setDashboardError(null);
-      } else {
-        setDashboardError(dashboardResult.error);
-      }
-
-      if (projectResult.ok) {
-        setProjects(projectResult.data);
-        setSelectedProjectId(projectResult.data[0]?.id ?? null);
-      } else {
-        setError(projectResult.error);
-      }
-
-      if (user.role === "admin") {
-        void refreshGovernance();
-      }
-
-      setLoading(false);
-    });
+    void initializeWorkspace();
 
     return () => {
       cancelled = true;
@@ -597,7 +606,7 @@ export function WorkspaceShell() {
       await Promise.all([refreshDashboard(), refreshGovernance()]);
     } else {
       setError(result.error);
-      if (result.error.code === "project_not_found" || result.error.code === "project_access_denied") {
+      if (result.error.code === "project_not_found" || result.error.code === "project_delete_forbidden") {
         await load();
       }
     }
@@ -657,6 +666,12 @@ export function WorkspaceShell() {
     setAuthError(null);
   }
 
+  const revealSidebarRailAt = useCallback((clientY: number) => {
+    const viewportHeight = window.innerHeight || 720;
+    setSidebarRailY(Math.min(viewportHeight - 40, Math.max(40, clientY)));
+    setSidebarRailActive(true);
+  }, []);
+
   if (authLoading) {
     return <CenterState icon={<Loader2 className="animate-spin" size={22} />} title="正在检查登录状态" detail="系统正在恢复你的内部工作台会话。" />;
   }
@@ -680,23 +695,56 @@ export function WorkspaceShell() {
         onLogout={() => void handleLogout()}
         onDeleteProject={(project, mode) => void handleDeleteProject(project, mode)}
         deletingProjectId={deletingProjectId}
-        onToggleSidebar={() => setSidebarCollapsed(true)}
+        onToggleSidebar={() => {
+          setSidebarRailY(null);
+          setSidebarRailActive(false);
+          setSidebarCollapsed(true);
+        }}
       />
 
       {sidebarCollapsed && (
-        <Button
-          type="button"
-          size="icon-sm"
-          variant="secondary"
-          onClick={() => setSidebarCollapsed(false)}
-          aria-label="展开左侧项目菜单"
-          className="fixed left-3 top-4 z-50 border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] text-[var(--macaron-yellow-fg)] shadow-[0_12px_28px_-18px_rgb(70_52_34/0.45)] hover:bg-[var(--macaron-yellow-bg)]"
+        <div
+          className={cn("workspace-sidebar-rail-zone", sidebarRailActive && "is-active")}
+          style={sidebarRailY === null ? undefined : ({ "--sidebar-rail-y": `${sidebarRailY}px` } as CSSProperties)}
+          onPointerEnter={(event) => {
+            revealSidebarRailAt(event.clientY);
+          }}
+          onPointerMove={(event) => {
+            revealSidebarRailAt(event.clientY);
+          }}
+          onMouseEnter={(event) => {
+            revealSidebarRailAt(event.clientY);
+          }}
+          onMouseMove={(event) => {
+            revealSidebarRailAt(event.clientY);
+          }}
+          onPointerLeave={() => {
+            setSidebarRailActive(false);
+          }}
+          onMouseLeave={() => {
+            setSidebarRailActive(false);
+          }}
+          onClick={() => {
+            setSidebarRailActive(false);
+            setSidebarCollapsed(false);
+          }}
         >
-          <PanelLeftOpen size={16} />
-        </Button>
+          <button
+            type="button"
+            onClick={() => {
+              setSidebarRailActive(false);
+              setSidebarCollapsed(false);
+            }}
+            aria-label="展开左侧项目菜单"
+            title="展开左侧项目菜单"
+            className="workspace-sidebar-rail"
+          >
+            <PanelLeftOpen size={16} />
+          </button>
+        </div>
       )}
 
-      <section className="workspace-workbench min-w-0 border-x border-[var(--border-soft)] bg-[var(--surface-soft)] min-[821px]:h-screen min-[821px]:overflow-y-auto">
+      <section className="workspace-workbench min-w-0 border-x border-[var(--border-soft)] bg-[var(--workspace-background)] min-[821px]:h-screen min-[821px]:overflow-y-auto">
         {deleteProjectMessage && <Feedback tone="success" text={deleteProjectMessage} />}
         {createProjectMessage && <Feedback tone="success" text={createProjectMessage} />}
         <WorkspaceCenter
@@ -724,7 +772,6 @@ export function WorkspaceShell() {
           productionReferenceSets={selectedWorkspaceData?.productionReferenceSets ?? []}
           storyboardImages={selectedWorkspaceData?.storyboardImages ?? []}
           storyboardImageBatches={selectedWorkspaceData?.storyboardImageBatches ?? []}
-          storyboardImageVersions={selectedWorkspaceData?.storyboardImageVersions ?? []}
           storyboardVideos={selectedWorkspaceData?.storyboardVideos ?? []}
           reviewCuts={selectedWorkspaceData?.reviewCuts ?? []}
           reviewCutAnnotations={selectedWorkspaceData?.reviewCutAnnotations ?? []}
@@ -862,7 +909,7 @@ function ProjectSidebar({
   const canPermanentlyDeleteProject = user.role === "admin";
 
   return (
-    <aside className="workspace-sidebar flex min-h-screen flex-col bg-[var(--sidebar)] min-[821px]:sticky min-[821px]:top-0 min-[821px]:h-screen min-[821px]:min-h-0">
+    <aside className="workspace-sidebar flex min-h-screen flex-col bg-[var(--sidebar)] min-[821px]:sticky min-[821px]:top-[0.85rem] min-[821px]:min-h-0">
       <div className="border-b border-[var(--border-soft)] px-4 py-4">
         <div className="flex h-14 items-center justify-between gap-3 overflow-visible">
           <div className="flex min-w-0 items-center gap-1.5">
@@ -878,7 +925,7 @@ function ProjectSidebar({
             onClick={onToggleSidebar}
             aria-label="隐藏左侧项目菜单"
             title="隐藏左侧项目菜单"
-            className="shrink-0 border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] text-[var(--macaron-yellow-fg)] shadow-none hover:bg-[var(--macaron-yellow-bg)]"
+            className="shrink-0 border border-[var(--border-soft)] bg-[var(--accent-subtle)] text-[var(--accent)] shadow-none hover:bg-[var(--accent-soft)]"
           >
             <PanelLeftClose size={16} />
           </Button>
@@ -916,23 +963,29 @@ function ProjectSidebar({
                 }}
                 title={`${project.brandName} / ${project.projectName} · ${stageLabels[project.currentStage]} · ${project.ownerName} · ${project.dueDate ?? "未设截止"}`}
                 className={cn(
-                  "group rounded-[0.95rem] border text-left transition-all",
+                  "group w-full max-w-full min-w-0 overflow-hidden rounded-[0.95rem] border text-left transition-all",
                   selectedProjectId === project.id
                     ? "border-transparent bg-[linear-gradient(115deg,var(--nav-selected-start),var(--nav-selected-end))] px-3 py-2 shadow-[0_12px_24px_-22px_rgb(105_72_124/0.5)]"
                     : "border-transparent bg-transparent px-3 py-2 hover:bg-[var(--surface-card)]/65"
                 )}
               >
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center justify-between gap-2">
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-[0.86rem] font-semibold leading-5 text-[var(--text-primary)]">{project.projectName}</p>
-                    <p className="mt-0.5 truncate text-[0.72rem] leading-4 text-[var(--text-secondary)]">
+                    <p className={cn(
+                      "truncate text-[0.86rem] font-semibold leading-5",
+                      selectedProjectId === project.id ? "text-[var(--text-inverse)]" : "text-[var(--text-primary)]"
+                    )}>{project.projectName}</p>
+                    <p className={cn(
+                      "mt-0.5 truncate text-[0.72rem] leading-4",
+                      selectedProjectId === project.id ? "text-[color-mix(in_oklch,var(--text-inverse)_74%,transparent)]" : "text-[var(--text-secondary)]"
+                    )}>
                       {selectedProjectId === project.id
                         ? `${project.brandName} · ${stageLabels[project.currentStage]} · ${project.ownerName}`
                         : project.brandName}
                     </p>
                   </div>
                   <span className={cn(
-                    "shrink-0 rounded-full px-2 py-0.5 text-[0.68rem] font-medium leading-4",
+                    "max-w-[3.4rem] shrink-0 truncate whitespace-nowrap rounded-full px-2 py-0.5 text-[0.68rem] font-medium leading-4",
                     selectedProjectId === project.id ? "bg-[var(--surface-card)]/62 text-[var(--text-primary)]" : "bg-transparent px-0 text-[var(--text-tertiary)]"
                   )}>
                     {statusLabels[project.status]}
@@ -1393,7 +1446,6 @@ function WorkspaceCenter({
   productionReferenceSets,
   storyboardImages,
   storyboardImageBatches,
-  storyboardImageVersions,
   storyboardVideos,
   reviewCuts,
   reviewCutAnnotations,
@@ -1443,7 +1495,6 @@ function WorkspaceCenter({
   productionReferenceSets: ProductionReferenceSetView[];
   storyboardImages: StoryboardImageView[];
   storyboardImageBatches: StoryboardImageBatchView[];
-  storyboardImageVersions: StoryboardImageVersionView[];
   storyboardVideos: StoryboardVideoView[];
   reviewCuts: ReviewCutView[];
   reviewCutAnnotations: ReviewCutAnnotationView[];
@@ -1502,7 +1553,7 @@ function WorkspaceCenter({
     },
     [projectCurrentStage, projectCurrentStageIndex, projectId]
   );
-  if (loading) {
+  if (loading && !project && !dashboard) {
     return <CenterState icon={<Loader2 className="animate-spin" size={22} />} title="正在恢复工作台" detail="系统正在从后端读取项目、阶段和产物状态。" />;
   }
 
@@ -1556,60 +1607,22 @@ function WorkspaceCenter({
       </div>
 
       <div className="workspace-main-area">
-            <div className="mb-5">
-              <ChangeRequestsPanel
-                project={project}
-                user={user}
-                selectedStage={selectedStage}
-                changeRequests={changeRequests}
-                onRefresh={onWorkspaceRefresh}
-              />
-            </div>
             <StagePanel stage="brand_requirement_intake" selectedStage={selectedStage}>
-              <div className="grid gap-5 lg:grid-cols-2">
-                <StageWorkCard
-                  icon={<BriefcaseBusiness size={18} />}
-                  title="项目基础信息"
-                  detail="维护品牌、项目名、负责人和截止时间，保存后同步左侧项目列表。"
-                  badges={["真实入库", "项目列表同步"]}
-                  className="lg:col-span-2"
-                >
-                  <ProjectBasicsCard project={project} user={user} clientReviewTasks={clientReviewTasks} onProjectUpdated={onProjectUpdated} onRefresh={onWorkspaceRefresh} />
-                </StageWorkCard>
-                <StageWorkCard
-                  icon={<FileUp size={18} />}
-                  title="项目资料中心"
-                  detail="上传客户资料或登记飞书链接，资料会进入资产表并触发后续解析。"
-                  badges={["OSS 上传", "资产入库", "受控打开"]}
-                  className="lg:col-span-2"
-                >
-                  <AssetCenter project={project} assets={assets} assetAnalyses={assetAnalyses} onRefresh={onWorkspaceRefresh} />
-                </StageWorkCard>
-                <StageWorkCard
-                  icon={<FileText size={18} />}
-                  title="需求整理工作区"
-                  detail="支持文本、PDF、Word、图片、视频和飞书链接。真实上传与解析会通过 OSS、数据库和 AI 任务记录完成。"
-                  badges={["标准需求模板", "样片标签", "待确认问题"]}
-                >
-                  <WorkCard
-                    icon={<FileText size={18} />}
-                    title="需求整理工作区"
-                    detail="支持文本、PDF、Word、图片、视频和飞书链接。真实上传与解析会通过 OSS、数据库和 AI 任务记录完成。"
-                    items={["标准需求模板", "样片标签", "待确认问题"]}
-                  />
-                </StageWorkCard>
-                <StageWorkCard
-                  icon={<WandSparkles size={18} />}
-                  title="需求结构化"
-                  detail="粘贴客户原始需求，创建后台任务并生成统一需求模板。"
-                  badges={["豆包 Seed", "产物快照", "可刷新恢复"]}
-                >
-                  <RequirementStructuringCard project={project} artifacts={artifacts} onRefresh={onWorkspaceRefresh} />
-                </StageWorkCard>
+              <div className="grid gap-5">
+                <BriefIntakeWorkflowCard
+                  project={project}
+                  user={user}
+                  assets={assets}
+                  assetAnalyses={assetAnalyses}
+                  artifacts={artifacts}
+                  clientReviewTasks={clientReviewTasks}
+                  onProjectUpdated={onProjectUpdated}
+                  onRefresh={onWorkspaceRefresh}
+                />
               </div>
             </StagePanel>
             <StagePanel stage="technical_feasibility" selectedStage={selectedStage}>
-              <div className="grid gap-5 lg:grid-cols-2">
+              <div className="grid gap-5">
                 <StageWorkCard
                   icon={<AlertCircle size={18} />}
                   title="风险体检卡 / 人工接单决策"
@@ -1628,7 +1641,7 @@ function WorkspaceCenter({
               </div>
             </StagePanel>
             <StagePanel stage="creative_direction_proposal" selectedStage={selectedStage}>
-              <div className="grid gap-5 lg:grid-cols-2">
+              <div className="grid gap-5">
                 <StageWorkCard
                   icon={<ClipboardList size={18} />}
                   title="资料解析与标签评分结果"
@@ -1640,9 +1653,9 @@ function WorkspaceCenter({
                 </StageWorkCard>
                 <StageWorkCard
                   icon={<Sparkles size={18} />}
-                  title="4 个创意方向"
-                  detail="生成、选择、改写 4 个创意方向，并管理故事大纲和氛围图审核。"
-                  badges={["4 个方向", "人工选择", "大纲深化", "氛围图状态"]}
+                  title="四个创意方向与两轮视觉提案"
+                  detail="生成 4 个创意方向，完成方向初选、故事大纲、氛围图和两轮甲方反馈。"
+                  badges={["四个方向", "两轮提案", "甲方反馈"]}
                   className="lg:col-span-2"
                 >
                   <CreativeDirectionsCard
@@ -1657,19 +1670,19 @@ function WorkspaceCenter({
                     onRefresh={onWorkspaceRefresh}
                   />
                 </StageWorkCard>
+                <StageWorkCard
+                  icon={<BriefcaseBusiness size={18} />}
+                  title="完整提案编辑与甲方审核"
+                  detail="把确认后的创意方向、脚本方向和视觉风格整理成完整提案，保存快照后提交甲方确认。"
+                  badges={["富文本", `v${proposal?.version ?? 0}`, proposalStatusLabel(proposal?.status ?? "draft")]}
+                  className="lg:col-span-2"
+                >
+                  <ProposalEditorCard project={project} user={user} proposal={proposal} snapshots={proposalSnapshots} clientReviewTasks={clientReviewTasks} onRefresh={onWorkspaceRefresh} />
+                </StageWorkCard>
               </div>
             </StagePanel>
             <StagePanel stage="selection_quote_contract" selectedStage={selectedStage}>
-              <div className="grid gap-5 lg:grid-cols-2">
-                <StageWorkCard
-                  icon={<WandSparkles size={18} />}
-                  title="Agent 商务文档草稿"
-                  detail="基于已选方向和阶段产物生成提案、报价与合同草稿。"
-                  badges={["提案", "报价", "合同"]}
-                  className="lg:col-span-2"
-                >
-                  <BusinessDocumentDraftCard project={project} user={user} onRefresh={onWorkspaceRefresh} />
-                </StageWorkCard>
+              <div className="grid gap-5">
                 <StageWorkCard
                   icon={<ClipboardList size={18} />}
                   title="工作量估算与报价建议"
@@ -1691,37 +1704,18 @@ function WorkspaceCenter({
                   />
                 </StageWorkCard>
                 <StageWorkCard
-                  icon={<List size={18} />}
-                  title="交付清单核对"
-                  detail="根据估算生成交付物清单，签约前可核对和草拟；最终确认与交付处理会在后续 SOP 9 / SOP 10 完成。"
-                  badges={[
-                    deliveryChecklist ? `v${deliveryChecklist.version}` : "待生成",
-                    deliveryChecklist ? deliveryChecklistStatusLabel(deliveryChecklist.status) : "未保存",
-                    `${deliveryChecklist?.items.length ?? 0} 项`,
-                  ]}
+                  icon={<WandSparkles size={18} />}
+                  title="商务文档草稿生成"
+                  detail="基于已选方向、工作量估算和阶段产物生成报价与合同草稿；提案已在 SOP 3 管理。"
+                  badges={["报价草稿", "合同草稿", "版本快照"]}
                   className="lg:col-span-2"
                 >
-                  <DeliveryChecklistCard
-                    project={project}
-                    user={user}
-                    estimate={workloadEstimate}
-                    checklist={deliveryChecklist}
-                    onRefresh={onWorkspaceRefresh}
-                  />
+                  <BusinessDocumentDraftCard project={project} user={user} onRefresh={onWorkspaceRefresh} />
                 </StageWorkCard>
                 <StageWorkCard
                   icon={<BriefcaseBusiness size={18} />}
-                  title="提案编辑与版本快照"
-                  detail="编辑提案正文和状态，每次保存都会生成历史快照。"
-                  badges={["富文本", `v${proposal?.version ?? 0}`, proposalStatusLabel(proposal?.status ?? "draft")]}
-                  className="lg:col-span-2"
-                >
-                  <ProposalEditorCard project={project} user={user} proposal={proposal} snapshots={proposalSnapshots} clientReviewTasks={clientReviewTasks} onRefresh={onWorkspaceRefresh} />
-                </StageWorkCard>
-                <StageWorkCard
-                  icon={<BriefcaseBusiness size={18} />}
-                  title="报价编辑与版本快照"
-                  detail="维护报价明细、合计金额、审核状态和快照记录。"
+                  title="报价编辑与甲方确认"
+                  detail="维护报价明细、合计金额、审核状态和快照记录；确认后进入合同处理。"
                   badges={[`v${quote?.version ?? 0}`, quoteStatusLabel(quote?.status ?? "draft"), quote ? formatMoney(quote.totalAmount, quote.currency) : "待保存"]}
                   className="lg:col-span-2"
                 >
@@ -1729,8 +1723,8 @@ function WorkspaceCenter({
                 </StageWorkCard>
                 <StageWorkCard
                   icon={<FileText size={18} />}
-                  title="合同模板填充与版本快照"
-                  detail="填写合同字段、绑定甲方资产、保存快照并导出正式文件。"
+                  title="合同模板填充与签约确认"
+                  detail="填写合同字段、绑定甲方资产、保存快照并导出正式文件；签约状态会写入项目阶段。"
                   badges={[`v${contract?.version ?? 0}`, quoteStatusLabel(contract?.status ?? "draft"), "PDF / Word"]}
                   className="lg:col-span-2"
                 >
@@ -1748,9 +1742,28 @@ function WorkspaceCenter({
                   />
                 </StageWorkCard>
                 <StageWorkCard
+                  icon={<List size={18} />}
+                  title="交付清单核对"
+                  detail="根据估算生成交付物清单，签约前核对和草拟；最终交付确认在 SOP 9 / SOP 10 完成。"
+                  badges={[
+                    deliveryChecklist ? `v${deliveryChecklist.version}` : "待生成",
+                    deliveryChecklist ? deliveryChecklistStatusLabel(deliveryChecklist.status) : "未保存",
+                    `${deliveryChecklist?.items.length ?? 0} 项`,
+                  ]}
+                  className="lg:col-span-2"
+                >
+                  <DeliveryChecklistCard
+                    project={project}
+                    user={user}
+                    estimate={workloadEstimate}
+                    checklist={deliveryChecklist}
+                    onRefresh={onWorkspaceRefresh}
+                  />
+                </StageWorkCard>
+                <StageWorkCard
                   icon={<Send size={18} />}
-                  title="飞书交付闭环"
-                  detail="选择文档版本和收件人，发送后回写链接、对象、时间与状态。"
+                  title="飞书发送与回写闭环"
+                  detail="选择报价、合同或提案版本和收件人，发送后回写链接、对象、时间与状态。"
                   badges={["飞书文档", "发送记录", "失败可重试"]}
                   className="lg:col-span-2"
                 >
@@ -1773,9 +1786,9 @@ function WorkspaceCenter({
             <StagePanel stage="script_storyboard_confirmation" selectedStage={selectedStage}>
               <StageWorkCard
                 icon={<ListOrdered size={18} />}
-                title="脚本、人物场景参考与文字分镜"
-                detail="确认脚本方向、参考资料、完整剧本和文字分镜。"
-                badges={["脚本包", "分镜拆分", "参考资产"]}
+                title="脚本确认、人物/场景设定与文字分镜"
+                detail="确认最终脚本，拆分场次和文字分镜，并生成所有人物、场景参考设定后提交甲方审核。"
+                badges={["最终脚本", "人物场景设定", "文字分镜"]}
               >
                 <ScriptStoryboardModule
                   project={project}
@@ -1795,9 +1808,9 @@ function WorkspaceCenter({
             <StagePanel stage="storyboard_image_canvas" selectedStage={selectedStage}>
               <StageWorkCard
                 icon={<ImageIcon size={18} />}
-                title="分镜图片自由画布"
-                detail="按分镜生成图片、确认正式图并提交场次审核；图片预览已收起为状态文本。"
-                badges={["图片任务", "批注层", "场次审核"]}
+                title="分镜图片生产与三批审核"
+                detail="按分镜生成多张候选图片，内部确认正式图后按场次和三批提交甲方，反馈逐镜保存并保留版本快照。"
+                badges={["多图候选", "逐镜反馈", "三批提报"]}
               >
                 <StoryboardImageCanvasModule
                   project={project}
@@ -1806,7 +1819,6 @@ function WorkspaceCenter({
                   shots={storyboardShots}
                   images={storyboardImages}
                   batches={storyboardImageBatches}
-                  imageVersions={storyboardImageVersions}
                   clientReviewTasks={clientReviewTasks}
                   clientReviewItems={clientReviewItems}
                   onRefresh={onWorkspaceRefresh}
@@ -1816,9 +1828,9 @@ function WorkspaceCenter({
             <StagePanel stage="ai_video_canvas" selectedStage={selectedStage}>
               <StageWorkCard
                 icon={<Video size={18} />}
-                title="AI 视频自由画布"
-                detail="基于已确认分镜生成视频候选并确认内部正式资产。"
-                badges={["视频候选", "内部确认", "状态入库"]}
+                title="AI 视频生成与导演下发"
+                detail="按已确认分镜图顺序生成视频候选，点击右侧缩略图切换分镜，点击版本卡切换不同生成结果。"
+                badges={["分镜缩略导航", "视频版本候选", "场次下载"]}
               >
                 <StoryboardVideoCanvasModule
                   project={project}
@@ -1827,36 +1839,51 @@ function WorkspaceCenter({
                   shots={storyboardShots}
                   images={storyboardImages}
                   videos={storyboardVideos}
+                  videoModel={config?.models.videoGeneration ?? "doubao-seedance-1-5-pro-251215"}
                   onRefresh={onWorkspaceRefresh}
                 />
               </StageWorkCard>
             </StagePanel>
             <StagePanel stage="a_copy_revision" selectedStage={selectedStage}>
-              <ReviewCutStageModule
-                project={project}
-                user={user}
-                cutType="a_copy"
-                assets={assets}
-                videos={storyboardVideos}
-                reviewCuts={reviewCuts}
-                annotations={reviewCutAnnotations}
-                clientReviewTasks={clientReviewTasks}
-                onRefresh={onWorkspaceRefresh}
-              />
+              <StageWorkCard
+                icon={<Video size={18} />}
+                title="A-copy 成片上传与多轮修改"
+                detail="导演外部剪辑后上传完整初版，内部审核通过再发甲方；甲方按时间戳批注，系统保存版本和反馈记录。"
+                badges={["2-3 轮修改", "时间戳批注", "版本快照"]}
+              >
+                <ReviewCutStageModule
+                  project={project}
+                  user={user}
+                  cutType="a_copy"
+                  assets={assets}
+                  videos={storyboardVideos}
+                  reviewCuts={reviewCuts}
+                  annotations={reviewCutAnnotations}
+                  clientReviewTasks={clientReviewTasks}
+                  onRefresh={onWorkspaceRefresh}
+                />
+              </StageWorkCard>
             </StagePanel>
             <StagePanel stage="b_copy_final_confirmation" selectedStage={selectedStage}>
-              <ReviewCutStageModule
-                project={project}
-                user={user}
-                cutType="b_copy"
-                assets={assets}
-                videos={storyboardVideos}
-                reviewCuts={reviewCuts}
-                annotations={reviewCutAnnotations}
-                clientReviewTasks={clientReviewTasks}
-                deliveryChecklist={deliveryChecklist}
-                onRefresh={onWorkspaceRefresh}
-              />
+              <StageWorkCard
+                icon={<CheckCircle2 size={18} />}
+                title="B-copy 定稿确认与交付清单核对"
+                detail="确认最接近最终版的视频、字幕/BGM/声音等精装处理，并核对合同内交付清单。"
+                badges={["最终确认", "交付清单", "版本快照"]}
+              >
+                <ReviewCutStageModule
+                  project={project}
+                  user={user}
+                  cutType="b_copy"
+                  assets={assets}
+                  videos={storyboardVideos}
+                  reviewCuts={reviewCuts}
+                  annotations={reviewCutAnnotations}
+                  clientReviewTasks={clientReviewTasks}
+                  deliveryChecklist={deliveryChecklist}
+                  onRefresh={onWorkspaceRefresh}
+                />
+              </StageWorkCard>
             </StagePanel>
             <StagePanel stage="settlement_delivery_archive" selectedStage={selectedStage}>
               <StageWorkCard
@@ -1878,6 +1905,15 @@ function WorkspaceCenter({
                 />
               </StageWorkCard>
             </StagePanel>
+            <div className="mt-5">
+              <ChangeRequestsPanel
+                project={project}
+                user={user}
+                selectedStage={selectedStage}
+                changeRequests={changeRequests}
+                onRefresh={onWorkspaceRefresh}
+              />
+            </div>
       </div>
     </div>
   );
@@ -1948,40 +1984,33 @@ function StageWorkCard({
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <Card size="sm" className={cn("ds-card", className)}>
-        <CardContent>
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div className="flex min-w-0 items-start gap-3">
-              <div className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full bg-[var(--surface-soft)] text-[var(--text-secondary)]">
-                {icon}
-              </div>
-              <div className="min-w-0">
-                <h3 className="truncate ds-text-section-title">{title}</h3>
-                <p className="mt-1 line-clamp-2 text-sm leading-6 text-[var(--text-secondary)]">{detail}</p>
-                {badges.length > 0 && (
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {badges.map((badge, index) => (
-                      <span key={`${badge}-${index}`} className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)] shadow-none">
-                        {badge}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
+      <TaskCard
+        icon={icon}
+        title={title}
+        description={detail}
+        className={className}
+        status={
+          badges.length > 0 ? (
+            <div className="flex flex-wrap justify-end gap-2">
+              {badges.map((badge, index) => (
+                <TaskStatusPill key={`${badge}-${index}`}>{badge}</TaskStatusPill>
+              ))}
             </div>
-            <CollapsibleTrigger render={<Button type="button" variant={open ? "default" : "outline"} size="sm" className="shrink-0" />}>
+          ) : undefined
+        }
+        action={
+          <CollapsibleTrigger render={<Button type="button" variant={open ? "default" : "outline"} size="sm" className="shrink-0" />}>
               {open ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
               {open ? "收起" : "展开"}
-            </CollapsibleTrigger>
+          </CollapsibleTrigger>
+        }
+      >
+        <CollapsibleContent>
+          <div className="border-t border-[var(--border-soft)] pt-5">
+            {children}
           </div>
-
-          <CollapsibleContent>
-            <div className="mt-5 border-t border-[var(--border-soft)] pt-5">
-              {children}
-            </div>
-          </CollapsibleContent>
-        </CardContent>
-      </Card>
+        </CollapsibleContent>
+      </TaskCard>
     </Collapsible>
   );
 }
@@ -2382,19 +2411,19 @@ function ScriptStoryboardModule({
     clientReviewTasks.find((task) => task.reviewType === "script_package" && task.reviewScene === "production_setup") ?? null;
 
   return (
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)]">
+    <div className="grid gap-5">
       <WorkspaceCard>
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
               <FileText size={18} />
-              <h3 className="ds-text-section-title">脚本创意与文字分镜确认</h3>
+              <h3 className="ds-text-section-title">最终脚本与文字分镜拆解</h3>
             </div>
             <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-              模块一把脚本创意方向、人物参考、场景参考、完整剧本和文字分镜放在一个大流程里。人物参考图与场景参考图是并行关系，并共同挂在对应脚本创意方向下。
+              SOP 5 先锁定完整脚本，再生成文字分镜；人物参考图与场景参考图并行准备，并共同挂在对应脚本方向下。
             </p>
           </div>
-          <Badge variant="outline">模块一</Badge>
+          <Badge variant="outline">SOP 5</Badge>
         </div>
         {message && <Feedback tone="success" text={message} />}
         {error && <Feedback tone="warning" text={error} />}
@@ -2647,6 +2676,24 @@ function ReferenceDraftGroup({
   );
 }
 
+function referencePreviewUrl(value: unknown): string | null {
+  if (typeof value === "string") {
+    return /^https?:\/\//.test(value) ? value : null;
+  }
+  if (!value || typeof value !== "object") return null;
+
+  const record = value as Record<string, unknown>;
+  const directUrl = record.ossUrl ?? record.imageUrl ?? record.previewUrl ?? record.url;
+  if (typeof directUrl === "string" && directUrl.trim()) return directUrl;
+
+  for (const nested of Object.values(record)) {
+    const url = referencePreviewUrl(nested);
+    if (url) return url;
+  }
+
+  return null;
+}
+
 function StoryboardImageCanvasModule({
   project,
   user,
@@ -2654,7 +2701,6 @@ function StoryboardImageCanvasModule({
   shots,
   images,
   batches,
-  imageVersions,
   clientReviewTasks,
   clientReviewItems,
   onRefresh,
@@ -2665,12 +2711,12 @@ function StoryboardImageCanvasModule({
   shots: StoryboardShotView[];
   images: StoryboardImageView[];
   batches: StoryboardImageBatchView[];
-  imageVersions: StoryboardImageVersionView[];
   clientReviewTasks: ClientReviewTaskView[];
   clientReviewItems: ClientReviewItemView[];
   onRefresh: () => Promise<void>;
 }) {
   const [activeShotId, setActiveShotId] = useState<string | null>(shots[0]?.id ?? null);
+  const [activeImageId, setActiveImageId] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [batchSceneDrafts, setBatchSceneDrafts] = useState<Record<number, string>>({});
   const [message, setMessage] = useState<string | null>(null);
@@ -2678,8 +2724,10 @@ function StoryboardImageCanvasModule({
   const activeShot = shots.find((shot) => shot.id === activeShotId) ?? shots[0] ?? null;
   const activeScene = activeShot ? scenes.find((scene) => scene.id === activeShot.sceneId) ?? null : scenes[0] ?? null;
   const activeImages = activeShot ? images.filter((image) => image.shotId === activeShot.id) : [];
-  const selectedImage = activeImages.find((image) => image.isSelected) ?? activeImages[0] ?? null;
+  const selectedImage = activeImages.find((image) => image.id === activeImageId) ?? activeImages.find((image) => image.isSelected) ?? activeImages[0] ?? null;
   const canOperate = user.role === "creative" || user.role === "admin";
+  const characterRefs = Array.isArray(activeShot?.characterRefs) ? activeShot.characterRefs : [];
+  const sceneRefs = Array.isArray(activeShot?.sceneRefs) ? activeShot.sceneRefs : [];
   const batchNumbers = [1, 2, 3] as const;
   const latestBatches = batchNumbers.map((batchNumber) => batches.find((batch) => batch.batchNumber === batchNumber) ?? null);
   const latestBatchById = new Map(batches.map((batch) => [batch.id, batch]));
@@ -2695,7 +2743,6 @@ function StoryboardImageCanvasModule({
         }))
     )
     .sort((a, b) => b.item.updatedAt.localeCompare(a.item.updatedAt));
-  const activeImageVersions = activeShot ? imageVersions.filter((version) => version.shotId === activeShot.id) : [];
   const latestSceneReview = activeScene
     ? clientReviewTasks.find((task) => task.reviewType === "storyboard_scene_images" && task.targetScopeId === activeScene.id)
     : null;
@@ -2730,113 +2777,150 @@ function StoryboardImageCanvasModule({
       .filter(Boolean);
   }
 
+  function handleSelectShot(shotId: string) {
+    const nextImages = images.filter((image) => image.shotId === shotId);
+    const nextImage = nextImages.find((image) => image.isSelected) ?? nextImages[0] ?? null;
+    setActiveShotId(shotId);
+    setActiveImageId(nextImage?.id ?? null);
+    setMessage(null);
+    setError(null);
+  }
+
   return (
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_330px]">
-      <div className="grid gap-4">
-        <div className="ds-card-sm p-4">
-          <div className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-4">
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-sm font-semibold">分镜内容与图片 Prompt</p>
-              <span className="ds-pill ds-pill-purple">{activeScene ? `场次 ${activeScene.sceneNumber}` : "未选择场次"}</span>
-            </div>
-            <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">{activeShot?.visualDescription ?? "请先在模块一拆分文字分镜。"}</p>
-            {activeShot?.imagePrompt && <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">{activeShot.imagePrompt}</p>}
-          </div>
+    <div className="grid gap-5">
+      <div className="storyboard-image-layout">
+        <div className="storyboard-image-shell ds-card-sm min-w-0 p-3">
+          <div className="storyboard-image-workbench">
+            <section className="storyboard-shot-brief" aria-label="分镜文字描述和内容描述">
+              <div className="storyboard-brief-compact">
+                <span className="storyboard-shot-index">
+                  {activeScene && activeShot ? `场次 ${activeScene.sceneNumber} · 镜号 ${activeShot.shotNumber}` : "等待选择分镜"}
+                </span>
+                <p className="storyboard-shot-description">{activeShot?.visualDescription ?? "请先在 SOP 5 拆分文字分镜。"}</p>
+              </div>
+            </section>
 
-          <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-sm font-semibold">正式分镜图片状态</p>
-                <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
-                  {selectedImage?.ossUrl ? "当前分镜已有图片资产；预览已隐藏，可继续确认或提交审核。" : "当前分镜还没有可确认的图片资产。"}
-                </p>
+            <section className="storyboard-image-stage" aria-label="生成好的图片候选展示区">
+              <div className="storyboard-main-preview">
+                {selectedImage?.ossUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={selectedImage.ossUrl} alt={`${activeShot?.shotNumber ?? "分镜"} 当前主图`} className="h-full w-full object-contain" />
+                ) : (
+                  <div className="flex h-full min-h-[18rem] flex-col items-center justify-center gap-3 p-6 text-center text-[var(--text-secondary)]">
+                    <ImageIcon size={38} />
+                    <div>
+                      <p className="text-sm font-semibold text-[var(--text-primary)]">当前分镜还没有主图</p>
+                    </div>
+                  </div>
+                )}
               </div>
-              <div className="flex flex-wrap gap-2">
-                <span className={cn("ds-pill", selectedImage ? "ds-pill-teal" : "ds-pill-yellow")}>{selectedImage ? "已有候选图" : "待生成"}</span>
-                {selectedImage?.isSelected && <span className="ds-pill ds-selected-pill">正式图</span>}
-                {selectedImage?.generationStatus && <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">{parseStatusLabel(selectedImage.generationStatus)}</span>}
-              </div>
-            </div>
-            {selectedImage?.annotations.length ? (
-              <p className="mt-3 rounded-card-sm bg-[var(--surface-soft)] p-3 text-xs leading-5 text-[var(--text-secondary)]">
-                已保存 {selectedImage.annotations.length} 条批注；图片预览隐藏后，批注仍保留在数据库中。
-              </p>
-            ) : null}
-            <div className="mt-3 grid gap-2 md:grid-cols-2">
-              <div className="rounded-card-sm bg-[var(--surface-soft)] p-3">
-                <p className="text-xs font-semibold text-[var(--text-secondary)]">候选图片池</p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {activeImages.length ? (
-                    activeImages.map((image) => (
-                      <span key={image.id} className={cn("ds-pill", image.isSelected ? "ds-selected-pill" : "bg-[var(--surface-card)]")}>
-                        {image.isSelected ? "正式" : parseStatusLabel(image.generationStatus)} · v{image.version}
-                      </span>
-                    ))
+              <div className="storyboard-candidate-strip" aria-label="同一分镜的候选图">
+                <div className="storyboard-candidate-list">
+                  {activeImages.length === 0 ? (
+                    <div className="storyboard-candidate-empty" aria-label="暂无候选图">
+                      <ImageIcon size={18} />
+                    </div>
                   ) : (
-                    <span className="text-xs text-[var(--text-secondary)]">暂无候选图</span>
+                    activeImages.map((image, index) => (
+                      <button
+                        key={image.id}
+                        type="button"
+                        onClick={() => setActiveImageId(image.id)}
+                        className={cn("storyboard-candidate-thumb", selectedImage?.id === image.id && "is-active")}
+                        aria-label={`切换到候选图 ${index + 1}`}
+                      >
+                        {image.ossUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={image.ossUrl} alt={`候选图 ${index + 1}`} className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center bg-[var(--surface-soft)] text-[var(--text-tertiary)]">
+                            <Loader2 className={cn(image.generationStatus === "processing" && "animate-spin")} size={16} />
+                          </div>
+                        )}
+                        <span className="storyboard-candidate-label">图 {index + 1}</span>
+                        {image.isSelected && <span className="storyboard-candidate-badge">正式</span>}
+                      </button>
+                    ))
                   )}
                 </div>
               </div>
-              <div className="rounded-card-sm bg-[var(--surface-soft)] p-3">
-                <p className="text-xs font-semibold text-[var(--text-secondary)]">正式图片组版本</p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {activeImageVersions.length ? (
-                    activeImageVersions.slice(0, 4).map((version) => (
-                      <span key={version.id} className="ds-pill bg-[var(--surface-card)]">
-                        v{version.version} · {parseStatusLabel(version.status)}
-                      </span>
-                    ))
-                  ) : (
-                    <span className="text-xs text-[var(--text-secondary)]">确认正式图后生成版本快照</span>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
+            </section>
 
-          <div className="mt-4 grid gap-3 md:grid-cols-2">
-            <div className="ds-card-soft p-3">
-              <p className="text-sm font-semibold">确认与修改</p>
-              <div className="mt-3 flex flex-wrap gap-2">
+            <section className="storyboard-image-controls" aria-label="参考图添加与参数选择">
+              <div className="storyboard-controls-inner">
+                <div className="storyboard-control-cluster">
+                  <div className="storyboard-control-row">
+                    <div className="storyboard-reference-list" aria-label="参考图">
+                      {[...characterRefs, ...sceneRefs].slice(0, 3).map((ref, index) => {
+                        const previewUrl = referencePreviewUrl(ref);
+                        return (
+                          <div key={`${index}-${JSON.stringify(ref).slice(0, 30)}`} className="storyboard-reference-tile" title={`参考图 ${index + 1}`}>
+                            {previewUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={previewUrl} alt="" className="h-full w-full object-cover" />
+                            ) : (
+                              <ImageIcon size={15} />
+                            )}
+                          </div>
+                        );
+                      })}
+                      <button type="button" className="storyboard-reference-add" disabled={!canOperate} aria-label="添加参考图">
+                        <Plus size={15} />
+                      </button>
+                    </div>
+                    <div className="storyboard-select-row">
+                      <select aria-label="生图模型" className="storyboard-select-control storyboard-model-select">
+                        <option>{selectedImage?.modelName || "gpt-image-2-all"}</option>
+                      </select>
+                      <select aria-label="图片比例" className="storyboard-select-control">
+                        <option>16:9</option>
+                        <option>9:16</option>
+                        <option>1:1</option>
+                      </select>
+                      <select aria-label="生图数量" className="storyboard-select-control">
+                        <option>1 张</option>
+                        <option>2 张</option>
+                        <option>4 张</option>
+                      </select>
+                    </div>
+                  </div>
+                  <textarea
+                    value={selectedImage?.prompt || activeShot?.imagePrompt || activeShot?.visualDescription || ""}
+                    readOnly
+                    className="storyboard-prompt-field w-full rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-sm leading-6 text-[var(--text-secondary)] outline-none"
+                    aria-label="Prompt 提示词输入框"
+                  />
+                </div>
                 <Button
                   type="button"
+                  className="storyboard-generate-button"
                   disabled={!canOperate || !activeShot || busyKey === "generate-image"}
                   onClick={() => activeShot && void runAction("generate-image", () => generateStoryboardImage(project.id, activeShot.id))}
                 >
-                  {busyKey === "generate-image" ? <Loader2 className="animate-spin" size={15} /> : <WandSparkles size={15} />}
+                  {busyKey === "generate-image" ? <Loader2 className="animate-spin" size={16} /> : <WandSparkles size={16} />}
                   生成图片
                 </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={!canOperate || !selectedImage || busyKey === "confirm-image"}
-                  onClick={() => selectedImage && void runAction("confirm-image", () => confirmStoryboardImage(project.id, selectedImage.id))}
-                >
-                  <CheckCircle2 size={15} />
-                  确认为正式图
-                </Button>
               </div>
-            </div>
-            <div className="ds-card-soft p-3">
-              <p className="text-sm font-semibold">兼容场次审核路由</p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  disabled={!canOperate || !activeScene || busyKey === "scene-review"}
-                  onClick={() => activeScene && void runAction("scene-review", () => createStoryboardSceneClientReview(project.id, activeScene.id), (data) => `${data.message} 验证码：${data.verificationCode}；链接：${data.reviewUrl}`)}
-                >
-                  {busyKey === "scene-review" ? <Loader2 className="animate-spin" size={15} /> : <Send size={15} />}
-                  提交本场甲方审核
-                </Button>
-              </div>
-            </div>
+            </section>
           </div>
         </div>
+        <StoryboardAssetRail
+          title="全部分镜导航"
+          shots={shots}
+          activeShotId={activeShot?.id ?? null}
+          selectedByShotId={new Map(images.filter((image) => image.isSelected || image.ossUrl).map((image) => [image.shotId, image.ossUrl]))}
+          onSelectShot={handleSelectShot}
+          className="storyboard-image-nav-rail"
+          showThumbnails
+          compact
+        />
+      </div>
+      <div className="grid gap-4">
         <WorkspaceCard>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="ds-text-section-title">三批分镜图片审核</h3>
-              <p className="mt-1 text-sm leading-6 text-[var(--text-secondary)]">模块二按三批提交甲方审核；每批可分配多个场次，三批全部确认后才进入 AI 视频自由画布。</p>
+              <p className="mt-1 text-sm leading-6 text-[var(--text-secondary)]">SOP 6 按三批提交甲方审核；每批可分配多个场次，三批全部确认后才进入 AI 视频生成。</p>
             </div>
             <Badge variant="outline">{latestBatches.filter((batch) => batch?.status === "client_approved").length}/3 已确认</Badge>
           </div>
@@ -2941,7 +3025,7 @@ function StoryboardImageCanvasModule({
               <Badge variant="outline">{clientReviewStatusLabel(latestSceneReview.status)}</Badge>
             </div>
             <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-              模块二按场次整体通过或打回；打回时这里保留场内每条分镜的评分、OK/不 OK 和修改意见。
+              SOP 6 按场次整体通过或打回；打回时这里保留场内每条分镜的评分、OK/不 OK 和修改意见。
             </p>
             <div className="mt-3 grid gap-2">
               {latestReviewItems.map((item) => (
@@ -2960,13 +3044,6 @@ function StoryboardImageCanvasModule({
           </WorkspaceCard>
         )}
       </div>
-      <StoryboardAssetRail
-        title="成果资产状态"
-        shots={shots}
-        activeShotId={activeShot?.id ?? null}
-        selectedByShotId={new Map(images.filter((image) => image.isSelected || image.ossUrl).map((image) => [image.shotId, image.ossUrl]))}
-        onSelectShot={setActiveShotId}
-      />
     </div>
   );
 }
@@ -2978,6 +3055,7 @@ function StoryboardVideoCanvasModule({
   shots,
   images,
   videos,
+  videoModel,
   onRefresh,
 }: {
   project: ProjectSummary;
@@ -2986,18 +3064,19 @@ function StoryboardVideoCanvasModule({
   shots: StoryboardShotView[];
   images: StoryboardImageView[];
   videos: StoryboardVideoView[];
+  videoModel: string;
   onRefresh: () => Promise<void>;
 }) {
   const [activeShotId, setActiveShotId] = useState<string | null>(shots[0]?.id ?? null);
-  const [videoInputMode, setVideoInputMode] = useState<StoryboardVideoInputMode>("single_image");
-  const [selectedVideoInputImageIds, setSelectedVideoInputImageIds] = useState<string[]>([]);
+  const [activeVideoId, setActiveVideoId] = useState<string | null>(null);
+  const [promptDrafts, setPromptDrafts] = useState<Record<string, string>>({});
+  const [generateCount, setGenerateCount] = useState(1);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sceneBundle, setSceneBundle] = useState<{ sceneId: string; videos: Array<{ shotNumber: string; ossUrl: string; fileName: string }> } | null>(null);
   const activeShot = shots.find((shot) => shot.id === activeShotId) ?? shots[0] ?? null;
   const activeScene = activeShot ? scenes.find((scene) => scene.id === activeShot.sceneId) ?? null : null;
-  const selectedImage = activeShot ? images.find((image) => image.shotId === activeShot.id && image.isSelected) : null;
   const confirmedImageCandidates = activeShot
     ? images.filter(
         (image) =>
@@ -3007,29 +3086,19 @@ function StoryboardVideoCanvasModule({
           image.internalReviewStatus === "confirmed"
       )
     : [];
-  const preferredVideoInputImage = confirmedImageCandidates.find((image) => image.isSelected) ?? confirmedImageCandidates[0] ?? null;
-  const defaultVideoInputImageIds = preferredVideoInputImage ? [preferredVideoInputImage.id] : [];
-  const effectiveVideoInputImageIds = selectedVideoInputImageIds.filter((imageId) =>
-    confirmedImageCandidates.some((image) => image.id === imageId)
-  );
-  const videoInputImageIds = effectiveVideoInputImageIds.length ? effectiveVideoInputImageIds : defaultVideoInputImageIds;
+  const selectedStoryboardImage = confirmedImageCandidates.find((image) => image.isSelected) ?? confirmedImageCandidates[0] ?? null;
   const activeVideos = activeShot ? videos.filter((video) => video.shotId === activeShot.id) : [];
-  const selectedVideo = activeVideos.find((video) => video.isSelected) ?? activeVideos[0] ?? null;
+  const selectedVideo = activeVideos.find((video) => video.id === activeVideoId) ?? activeVideos.find((video) => video.isSelected) ?? activeVideos[0] ?? null;
   const canOperate = user.role === "creative" || user.role === "admin";
   const downloadableVideos = videos.filter((video) => video.ossUrl);
   const sceneSelectedVideoCount = activeScene ? videos.filter((video) => video.sceneId === activeScene.id && video.isSelected && video.ossUrl).length : 0;
-  const isVideoInputCountValid =
-    videoInputMode === "single_image"
-      ? videoInputImageIds.length === 1
-      : videoInputMode === "start_end_frame"
-        ? videoInputImageIds.length === 2
-        : videoInputImageIds.length >= 2;
+  const activePrompt = activeShot ? promptDrafts[activeShot.id] ?? buildDefaultStoryboardVideoPrompt(activeShot) : "";
   const generateVideoDisabledReason = !activeShot
     ? "请先选择分镜。"
-    : confirmedImageCandidates.length === 0
-      ? "请先在模块二确认当前分镜的图片。"
-      : !isVideoInputCountValid
-        ? storyboardVideoModeHints[videoInputMode]
+    : !selectedStoryboardImage?.ossUrl
+      ? "请先在 SOP 6 确认当前分镜图片。"
+      : !activePrompt.trim()
+        ? "请先填写视频 Prompt。"
         : null;
 
   async function runAction<T extends { message?: string }>(key: string, action: () => Promise<ApiResult<T>>) {
@@ -3043,6 +3112,31 @@ function StoryboardVideoCanvasModule({
     } else {
       setError(result.error.message);
     }
+    setBusyKey(null);
+  }
+
+  async function handleGenerateVideos() {
+    if (!activeShot || !selectedStoryboardImage) return;
+    setBusyKey("generate-video");
+    setMessage(null);
+    setError(null);
+
+    for (let index = 0; index < generateCount; index += 1) {
+      const result = await generateStoryboardVideo(project.id, {
+        shotId: activeShot.id,
+        mode: "single_image",
+        imageIds: [selectedStoryboardImage.id],
+        prompt: activePrompt,
+      });
+      if (!result.ok) {
+        setError(result.error.message);
+        setBusyKey(null);
+        return;
+      }
+    }
+
+    setMessage(generateCount > 1 ? `已创建 ${generateCount} 个视频生成任务。` : "视频生成任务已创建。");
+    await onRefresh();
     setBusyKey(null);
   }
 
@@ -3061,139 +3155,139 @@ function StoryboardVideoCanvasModule({
     setBusyKey(null);
   }
 
-  function toggleVideoInputImage(imageId: string) {
-    const next = videoInputImageIds.includes(imageId)
-      ? videoInputImageIds.filter((id) => id !== imageId)
-      : [...videoInputImageIds, imageId];
-    setSelectedVideoInputImageIds(next);
+  function handleSelectShot(shotId: string) {
+    const nextVideos = videos.filter((video) => video.shotId === shotId);
+    setActiveShotId(shotId);
+    setActiveVideoId(nextVideos.find((video) => video.isSelected)?.id ?? nextVideos[0]?.id ?? null);
+    setSceneBundle(null);
+    setMessage(null);
+    setError(null);
   }
 
   return (
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_330px]">
-      <div className="ds-card-sm p-4">
-        <div className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-sm font-semibold">视频候选状态</p>
-              <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
-                视频/参考图预览已隐藏，这里只展示候选状态与操作入口。
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <span className={cn("ds-pill", selectedVideo?.ossUrl ? "ds-pill-teal" : "ds-pill-yellow")}>{selectedVideo?.ossUrl ? "已有视频候选" : "待生成"}</span>
-              {selectedVideo?.isSelected && <span className="ds-pill ds-selected-pill">正式内部视频</span>}
-              {selectedImage?.ossUrl && !selectedVideo?.ossUrl && <span className="ds-pill ds-pill-purple">已有分镜参考</span>}
-            </div>
-          </div>
-          <div className="mt-3 ds-card-soft p-3 text-sm leading-6 text-[var(--text-secondary)]">
-            {selectedVideo?.ossUrl ? (
-              <p>当前分镜已有视频资产，可在候选列表中确认内部正式视频。</p>
-            ) : selectedImage?.ossUrl ? (
-              <p>当前还没有正式视频候选；系统会使用已确认分镜图作为生成参考。</p>
-            ) : (
-              <p>模块三只做内部确认，不生成甲方外链。需要先在模块二确认分镜图片。</p>
-            )}
-          </div>
-        </div>
+    <div className="grid gap-5">
+      <div className="storyboard-video-layout">
+        <div className="storyboard-video-shell ds-card-sm min-w-0 p-3">
+          <div className="storyboard-video-workbench">
+            <section className="storyboard-shot-brief" aria-label="分镜文字描述和内容描述">
+              <div className="storyboard-brief-compact">
+                <span className="storyboard-shot-index">
+                  {activeScene && activeShot ? `场次 ${activeScene.sceneNumber} · 镜号 ${activeShot.shotNumber}` : "等待选择分镜"}
+                </span>
+                <p className="storyboard-shot-description">{activeShot?.visualDescription ?? "请先在 SOP 5 拆分文字分镜。"}</p>
+              </div>
+            </section>
 
-        <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold">视频输入模式</p>
-              <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">{storyboardVideoModeHints[videoInputMode]}；当前 provider 会使用第一张作为主输入，完整选择会写入视频输入记录。</p>
-            </div>
-            <span className={cn("ds-pill", isVideoInputCountValid ? "ds-pill-teal" : "ds-pill-yellow")}>
-              已选 {videoInputImageIds.length}
-            </span>
-          </div>
-          <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="视频输入模式">
-            {(Object.keys(storyboardVideoModeLabels) as StoryboardVideoInputMode[]).map((mode) => (
-              <Button
-                key={mode}
-                type="button"
-                size="sm"
-                variant={videoInputMode === mode ? "default" : "outline"}
-                onClick={() => setVideoInputMode(mode)}
-              >
-                {storyboardVideoModeLabels[mode]}
-              </Button>
-            ))}
-          </div>
-          <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {confirmedImageCandidates.length === 0 ? (
-              <p className="rounded-card-sm bg-[var(--surface-card)] p-3 text-xs leading-5 text-[var(--text-secondary)]">暂无已确认图片候选。请先回到模块二确认当前分镜图片。</p>
-            ) : (
-              confirmedImageCandidates.map((image) => {
-                const checked = videoInputImageIds.includes(image.id);
-                return (
-                  <button
-                    key={image.id}
-                    type="button"
-                    onClick={() => toggleVideoInputImage(image.id)}
-                    className={cn(
-                      "rounded-card-sm border p-3 text-left text-xs transition",
-                      checked
-                        ? "border-[var(--macaron-teal-fg)] bg-[var(--surface-card)] shadow-[0_10px_24px_-20px_rgb(30_105_96/0.5)]"
-                        : "border-[var(--border-soft)] bg-[var(--surface-card)]"
-                    )}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-semibold">v{image.version}</span>
-                      <span className={cn("ds-pill", checked ? "ds-selected-pill" : "bg-[var(--surface-soft)]")}>{checked ? "已选" : "可选"}</span>
+            <section className="storyboard-video-stage" aria-label="生成好的视频候选展示区">
+              <div className="storyboard-video-player">
+                {selectedVideo?.ossUrl ? (
+                  <video key={selectedVideo.id} src={selectedVideo.ossUrl} controls className="h-full w-full rounded-[inherit] bg-black object-contain" />
+                ) : selectedStoryboardImage?.ossUrl ? (
+                  <div className="storyboard-video-poster">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={selectedStoryboardImage.ossUrl} alt="当前分镜已确认图片" className="h-full w-full object-contain" />
+                    <div className="storyboard-video-empty-copy">
+                      <Video size={18} />
+                      <span>当前分镜待生成视频</span>
                     </div>
-                    <p className="mt-2 text-[var(--text-secondary)]">{image.isSelected ? "当前正式图" : "已确认候选图"} · {parseStatusLabel(image.generationStatus)}</p>
-                  </button>
-                );
-              })
-            )}
-          </div>
-          {generateVideoDisabledReason && <p className="mt-3 text-xs leading-5 text-[var(--warning)]">{generateVideoDisabledReason}</p>}
-        </div>
+                  </div>
+                ) : (
+                  <div className="flex h-full min-h-[18rem] flex-col items-center justify-center gap-3 p-6 text-center text-[var(--text-secondary)]">
+                    <Video size={38} />
+                    <div>
+                      <p className="text-sm font-semibold text-[var(--text-primary)]">当前分镜还没有可用图片</p>
+                      <p className="mt-1 text-xs leading-5">请先回到 SOP 6 确认分镜图片。</p>
+                    </div>
+                  </div>
+                )}
+              </div>
 
-        <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-4">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-sm font-semibold">Prompt 与画面内容描述</p>
-            <span className="ds-pill ds-pill-purple">{activeScene ? `场次 ${activeScene.sceneNumber}` : "未选场次"}</span>
-          </div>
-          <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">{activeShot?.visualDescription ?? "请先在模块二准备分镜图片。"}</p>
-          {activeShot?.videoPrompt && <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">{activeShot.videoPrompt}</p>}
-        </div>
+              <div className="storyboard-video-version-strip" aria-label="同一分镜的视频版本候选">
+                <div className="storyboard-video-version-list">
+                  {activeVideos.length === 0 ? (
+                    <div className="storyboard-video-version-empty">
+                      <Video size={18} />
+                      <span>暂无版本</span>
+                    </div>
+                  ) : (
+                    activeVideos.map((video, index) => (
+                      <button
+                        key={video.id}
+                        type="button"
+                        onClick={() => setActiveVideoId(video.id)}
+                        className={cn("storyboard-video-version-card", selectedVideo?.id === video.id && "is-active")}
+                        aria-label={`切换到视频版本 ${index + 1}`}
+                      >
+                        <span className="storyboard-video-version-title">版本 {index + 1}</span>
+                        <span className={cn("storyboard-video-version-state", video.generationStatus === "succeeded" && "is-ready")}>{parseStatusLabel(video.generationStatus)}</span>
+                        {video.isSelected && <span className="storyboard-video-version-badge">正式</span>}
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            </section>
 
-        <div className="mt-4 flex gap-4 overflow-x-auto pb-2">
-          {activeVideos.length === 0 ? (
-            <div className="ds-card-soft p-4 text-sm text-[var(--text-secondary)]">生成第 1、2、3 个视频后，会在这里以状态卡形式显示。</div>
-          ) : (
-            activeVideos.map((video, index) => (
-              <button
-                key={video.id}
-                type="button"
-                className={cn("min-h-28 min-w-40 ds-card-soft p-3 text-left text-xs", video.isSelected ? "ds-selected-surface" : "")}
-              >
-                <p className="font-semibold">候选 {index + 1}</p>
-                <p className="mt-2 text-[var(--text-secondary)]">{parseStatusLabel(video.generationStatus)}</p>
-                {video.failureReason && <p className="mt-2 line-clamp-3 text-[var(--warning)]">{video.failureReason}</p>}
-              </button>
-            ))
-          )}
+            <section className="storyboard-video-controls" aria-label="Prompt 与视频生成参数">
+              <div className="storyboard-video-controls-inner">
+                <textarea
+                  value={activePrompt}
+                  onChange={(event) => activeShot && setPromptDrafts((current) => ({ ...current, [activeShot.id]: event.target.value }))}
+                  disabled={!canOperate || !activeShot}
+                  className="storyboard-video-prompt-field rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-sm leading-6 text-[var(--text-secondary)] outline-none disabled:opacity-60"
+                  aria-label="Prompt 提示词输入框"
+                />
+                <div className="storyboard-video-control-row">
+                  <select aria-label="视频生成模型" className="storyboard-select-control storyboard-video-model-select" value={videoModel} disabled>
+                    <option value={videoModel}>{videoModel}</option>
+                  </select>
+                  <select
+                    aria-label="生成数量"
+                    value={generateCount}
+                    onChange={(event) => setGenerateCount(Number(event.target.value))}
+                    className="storyboard-select-control"
+                    disabled={!canOperate}
+                  >
+                    <option value={1}>1x</option>
+                    <option value={2}>2x</option>
+                    <option value={3}>3x</option>
+                  </select>
+                  <Button
+                    type="button"
+                    className="storyboard-video-generate-button"
+                    disabled={!canOperate || Boolean(generateVideoDisabledReason) || busyKey === "generate-video"}
+                    onClick={() => void handleGenerateVideos()}
+                  >
+                    {busyKey === "generate-video" ? <Loader2 className="animate-spin" size={16} /> : <WandSparkles size={16} />}
+                    生成视频
+                  </Button>
+                </div>
+              </div>
+              {generateVideoDisabledReason && <p className="mt-2 text-xs leading-5 text-[var(--warning)]">{generateVideoDisabledReason}</p>}
+            </section>
+          </div>
+        </div>
+        <StoryboardAssetRail
+          title="全部分镜导航"
+          shots={shots}
+          activeShotId={activeShot?.id ?? null}
+          selectedByShotId={buildConfirmedStoryboardImageMap(images)}
+          onSelectShot={handleSelectShot}
+          className="storyboard-video-nav-rail"
+          showThumbnails
+          compact
+        />
+      </div>
+
+      <WorkspaceCard>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="ds-text-section-title">导演素材下发</h3>
+            <p className="mt-1 text-sm leading-6 text-[var(--text-secondary)]">视频生成阶段不发甲方；正式内部视频按场次打包给导演外部剪辑。</p>
+          </div>
+          <Badge variant="outline">{downloadableVideos.length} 条可下载</Badge>
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
-          <Button
-            type="button"
-            disabled={!canOperate || Boolean(generateVideoDisabledReason) || busyKey === "generate-video"}
-            onClick={() =>
-              activeShot &&
-              void runAction("generate-video", () =>
-                generateStoryboardVideo(project.id, {
-                  shotId: activeShot.id,
-                  mode: videoInputMode,
-                  imageIds: videoInputImageIds,
-                })
-              )
-            }
-          >
-            {busyKey === "generate-video" ? <Loader2 className="animate-spin" size={15} /> : <WandSparkles size={15} />}
-            生成视频候选
-          </Button>
           <Button
             type="button"
             variant="outline"
@@ -3209,99 +3303,70 @@ function StoryboardVideoCanvasModule({
               下载当前视频
             </Button>
           )}
-          {downloadableVideos.length > 1 && (
+          <Button type="button" variant="outline" disabled={!canOperate || !activeScene || busyKey === "scene-video-bundle"} onClick={() => void loadSceneBundle()}>
+            {busyKey === "scene-video-bundle" ? <Loader2 className="animate-spin" size={14} /> : <Download size={14} />}
+            读取本场视频包
+          </Button>
+          {sceneBundle?.videos.length ? (
             <Button
               type="button"
               variant="outline"
-              onClick={() => downloadableVideos.forEach((video) => video.ossUrl && window.open(video.ossUrl, "_blank", "noopener,noreferrer"))}
+              onClick={() => sceneBundle.videos.forEach((video) => window.open(video.ossUrl, "_blank", "noopener,noreferrer"))}
             >
-              <Download size={15} />
-              一键下载全部
+              <Download size={14} />
+              下载本场全部
             </Button>
-          )}
+          ) : null}
         </div>
-        <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold">导演素材下发</p>
-              <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">视频生成阶段不发甲方；这里按条或批量把已生成素材交给导演外部剪辑。</p>
-            </div>
-            <Badge variant="outline">{downloadableVideos.length} 条可下载</Badge>
-          </div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {downloadableVideos.length === 0 ? (
-              <p className="text-xs leading-5 text-[var(--text-secondary)]">生成并保存视频后会出现下载入口。</p>
+        <p className="mt-3 text-xs leading-5 text-[var(--text-secondary)]">本场已确认正式视频：{sceneSelectedVideoCount} 条。</p>
+        {sceneBundle && (
+          <div className="mt-3 grid gap-2">
+            {sceneBundle.videos.length === 0 ? (
+              <p className="rounded-card-sm bg-[var(--surface-soft)] p-3 text-xs leading-5 text-[var(--text-secondary)]">本场还没有已确认的视频素材。</p>
             ) : (
-              downloadableVideos.map((video, index) => (
-                <Button key={video.id} type="button" variant="outline" size="sm" onClick={() => window.open(video.ossUrl ?? "", "_blank", "noopener,noreferrer")}>
-                  <Download size={14} />
-                  素材 {index + 1}
-                </Button>
+              sceneBundle.videos.map((video) => (
+                <button
+                  key={`${video.shotNumber}-${video.ossUrl}`}
+                  type="button"
+                  onClick={() => window.open(video.ossUrl, "_blank", "noopener,noreferrer")}
+                  className="flex items-center justify-between gap-3 rounded-card-sm bg-[var(--surface-soft)] p-3 text-left text-xs"
+                >
+                  <span className="font-semibold">{video.shotNumber}</span>
+                  <span className="truncate text-[var(--text-secondary)]">{video.fileName}</span>
+                </button>
               ))
             )}
           </div>
-        </div>
-        <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold">本场视频包</p>
-              <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">按分镜顺序读取当前场次已设为正式内部视频的素材。</p>
-            </div>
-            <Badge variant="outline">{sceneSelectedVideoCount} 条正式视频</Badge>
-          </div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Button type="button" variant="outline" disabled={!canOperate || !activeScene || busyKey === "scene-video-bundle"} onClick={() => void loadSceneBundle()}>
-              {busyKey === "scene-video-bundle" ? <Loader2 className="animate-spin" size={14} /> : <Download size={14} />}
-              读取本场视频包
-            </Button>
-            {sceneBundle?.videos.length ? (
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => sceneBundle.videos.forEach((video) => window.open(video.ossUrl, "_blank", "noopener,noreferrer"))}
-              >
-                <Download size={14} />
-                下载本场全部
-              </Button>
-            ) : null}
-          </div>
-          {sceneBundle && (
-            <div className="mt-3 grid gap-2">
-              {sceneBundle.videos.length === 0 ? (
-                <p className="rounded-card-sm bg-[var(--surface-soft)] p-3 text-xs leading-5 text-[var(--text-secondary)]">本场还没有已确认的视频素材。</p>
-              ) : (
-                sceneBundle.videos.map((video) => (
-                  <button
-                    key={`${video.shotNumber}-${video.ossUrl}`}
-                    type="button"
-                    onClick={() => window.open(video.ossUrl, "_blank", "noopener,noreferrer")}
-                    className="flex items-center justify-between gap-3 rounded-card-sm bg-[var(--surface-soft)] p-3 text-left text-xs"
-                  >
-                    <span className="font-semibold">{video.shotNumber}</span>
-                    <span className="truncate text-[var(--text-secondary)]">{video.fileName}</span>
-                  </button>
-                ))
-              )}
-            </div>
-          )}
-        </div>
-        {message && <Feedback tone="success" text={message} />}
-        {error && <Feedback tone="warning" text={error} />}
-      </div>
-      <StoryboardAssetRail
-        title="最终视频资产状态"
-        shots={shots}
-        activeShotId={activeShot?.id ?? null}
-        selectedByShotId={new Map(videos.filter((video) => video.isSelected || video.ossUrl).map((video) => [video.shotId, video.ossUrl]))}
-        onSelectShot={(shotId) => {
-          setActiveShotId(shotId);
-          setVideoInputMode("single_image");
-          setSelectedVideoInputImageIds([]);
-          setSceneBundle(null);
-        }}
-      />
+        )}
+      </WorkspaceCard>
+      {message && <Feedback tone="success" text={message} />}
+      {error && <Feedback tone="warning" text={error} />}
     </div>
   );
+}
+
+function buildDefaultStoryboardVideoPrompt(shot: StoryboardShotView) {
+  return [
+    "根据已确认的分镜图片生成一段短视频。保持人物、场景、构图和广告质感一致。",
+    `画面内容：${shot.visualDescription}`,
+    shot.actionExpression ? `动作与表情：${shot.actionExpression}` : "",
+    shot.cameraMovement ? `机位与运镜：${shot.cameraMovement}` : "",
+    shot.videoPrompt ? `视频 Prompt：${shot.videoPrompt}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildConfirmedStoryboardImageMap(images: StoryboardImageView[]) {
+  const selectedByShotId = new Map<string, string | null>();
+  for (const image of images) {
+    if (!image.ossUrl || image.generationStatus !== "succeeded" || image.internalReviewStatus !== "confirmed") continue;
+    const existingUrl = selectedByShotId.get(image.shotId);
+    if (image.isSelected || !existingUrl) {
+      selectedByShotId.set(image.shotId, image.ossUrl);
+    }
+  }
+  return selectedByShotId;
 }
 
 function StoryboardAssetRail({
@@ -3310,19 +3375,25 @@ function StoryboardAssetRail({
   activeShotId,
   selectedByShotId,
   onSelectShot,
+  className,
+  showThumbnails = false,
+  compact = false,
 }: {
   title: string;
   shots: StoryboardShotView[];
   activeShotId: string | null;
   selectedByShotId: Map<string, string | null>;
   onSelectShot: (shotId: string) => void;
+  className?: string;
+  showThumbnails?: boolean;
+  compact?: boolean;
 }) {
   return (
-    <aside className="ds-card-sm p-4">
+    <aside className={cn("ds-card-sm p-4", compact && "is-compact", className)}>
       <p className="text-sm font-semibold">{title}</p>
-      <div className="mt-4 space-y-4">
+      <div className="storyboard-asset-rail-list mt-4 space-y-4">
         {shots.length === 0 ? (
-          <p className="rounded-card-sm bg-[var(--surface-soft)] p-4 text-sm text-[var(--text-secondary)]">模块一拆出分镜后会按顺序显示资产状态。</p>
+          <p className="rounded-card-sm bg-[var(--surface-soft)] p-4 text-sm text-[var(--text-secondary)]">SOP 5 拆出分镜后会按顺序显示资产状态。</p>
         ) : (
           shots.map((shot) => {
             const url = selectedByShotId.get(shot.id);
@@ -3331,13 +3402,29 @@ function StoryboardAssetRail({
                 key={shot.id}
                 type="button"
                 onClick={() => onSelectShot(shot.id)}
-                className={cn("block w-full ds-card-soft p-3 text-left", activeShotId === shot.id ? "ds-selected-surface" : "")}
+                className={cn(
+                  "storyboard-asset-rail-item w-full ds-card-soft text-left",
+                  compact ? "is-compact-item" : "block p-3",
+                  activeShotId === shot.id ? "ds-selected-surface" : ""
+                )}
               >
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <p className="text-xs font-bold">{shot.shotNumber}</p>
-                  <span className={cn("ds-pill", url ? "ds-pill-teal" : "bg-[var(--surface-soft)] text-[var(--text-secondary)]")}>{url ? "有资产" : "待生成"}</span>
+                {showThumbnails && (
+                  <div className="storyboard-rail-thumb" aria-hidden="true">
+                    {url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={url} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <ImageIcon size={18} />
+                    )}
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <div className={cn("flex items-center justify-between gap-2", compact ? "mb-0" : "mb-2")}>
+                    <p className="text-xs font-bold">{shot.shotNumber}</p>
+                    {!compact && <span className={cn("ds-pill", url ? "ds-pill-teal" : "bg-[var(--surface-soft)] text-[var(--text-secondary)]")}>{url ? "有资产" : "待生成"}</span>}
+                  </div>
+                  {!compact && <p className="line-clamp-3 text-xs leading-5 text-[var(--text-secondary)]">{shot.visualDescription}</p>}
                 </div>
-                <p className="line-clamp-3 text-xs leading-5 text-[var(--text-secondary)]">{shot.visualDescription}</p>
               </button>
             );
           })
@@ -3418,7 +3505,7 @@ function ReviewCutStageModule({
   }
 
   return (
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+    <div className="grid gap-5">
       <div className="grid gap-5">
         <WorkspaceCard>
           <div className="flex flex-wrap items-start justify-between gap-4">
@@ -3683,6 +3770,7 @@ function ChangeRequestsPanel({
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
   const openRequests = changeRequests.filter((request) => request.status === "draft" || request.status === "submitted" || request.status === "approved");
   const defaultSourceSop = sourceSopForStage(selectedStage);
 
@@ -3724,84 +3812,97 @@ function ChangeRequestsPanel({
   }
 
   return (
-    <WorkspaceCard>
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <RefreshCcw size={18} />
-            <h3 className="ds-text-section-title">需求变更</h3>
-          </div>
-          <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-            跨 SOP 的范围、费用或排期变化在这里登记；B copy 新增交付物必须先形成变更请求。
-          </p>
-        </div>
-        <Badge variant="outline">{openRequests.length} 条开放</Badge>
-      </div>
-      {message && <Feedback tone="success" text={message} />}
-      {error && <Feedback tone="warning" text={error} />}
-      <div className="mt-4 grid gap-2">
-        {openRequests.length === 0 ? (
-          <p className="rounded-card-sm bg-[var(--surface-soft)] p-3 text-sm leading-6 text-[var(--text-secondary)]">暂无开放需求变更。</p>
-        ) : (
-          openRequests.map((request) => (
-            <div key={request.id} className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-sm font-medium">
-                  {request.sourceSop} · {changeRequestStatusLabel(request.status)}
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {(["approved", "rejected", "implemented", "cancelled"] as const).map((status) => (
-                    <Button
-                      key={status}
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={!canDecide || busy === request.id}
-                      onClick={() => void handleStatus(request.id, status)}
-                    >
-                      {changeRequestStatusLabel(status)}
-                    </Button>
-                  ))}
-                </div>
-              </div>
-              <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">原范围：{request.originalScope}</p>
-              <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">变更后：{request.requestedScope}</p>
-              <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
-                费用影响：{String(request.impactJson.feeImpact ?? "未填写")} · 排期影响：{String(request.impactJson.scheduleImpact ?? "未填写")}
-              </p>
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <WorkspaceCard>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <RefreshCcw size={18} />
+              <h3 className="ds-text-section-title">需求变更</h3>
             </div>
-          ))
-        )}
-      </div>
-      <form action={handleCreate} className="mt-4 grid gap-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3">
-        <div className="grid gap-3 md:grid-cols-3">
-          <label className="grid gap-1 text-xs font-medium">
-            来源 SOP
-            <Input name="sourceSop" defaultValue={defaultSourceSop} disabled={!canCreate || busy === "create"} />
-          </label>
-          <label className="grid gap-1 text-xs font-medium">
-            费用影响
-            <Input name="feeImpact" placeholder="例如 +8000 元，待报价确认" disabled={!canCreate || busy === "create"} />
-          </label>
-          <label className="grid gap-1 text-xs font-medium">
-            排期影响
-            <Input name="scheduleImpact" placeholder="例如 +2 个工作日" disabled={!canCreate || busy === "create"} />
-          </label>
+            <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
+              跨 SOP 的范围、费用或排期变化在这里登记；默认收起，不影响当前主流程。
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Badge variant="outline">{openRequests.length} 条开放</Badge>
+            <CollapsibleTrigger render={<Button type="button" variant={open ? "default" : "outline"} size="sm" className="shrink-0" />}>
+              {open ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+              {open ? "收起" : "展开"}
+            </CollapsibleTrigger>
+          </div>
         </div>
-        <label className="grid gap-1 text-xs font-medium">
-          原始范围
-          <textarea name="originalScope" disabled={!canCreate || busy === "create"} className="min-h-20 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-sm leading-6" placeholder="写清楚合同或 SOP 4 清单中原本包含的交付范围。" />
-        </label>
-        <label className="grid gap-1 text-xs font-medium">
-          变更后范围
-          <textarea name="requestedScope" disabled={!canCreate || busy === "create"} className="min-h-20 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-sm leading-6" placeholder="写清楚客户新增、替换或扩大了什么交付物。" />
-        </label>
-        <Button type="submit" disabled={!canCreate || busy === "create"} className="w-fit">
-          {busy === "create" ? <Loader2 className="animate-spin" size={15} /> : <Plus size={15} />}
-          创建需求变更
-        </Button>
-      </form>
-    </WorkspaceCard>
+
+        <CollapsibleContent>
+          <div className="mt-4 border-t border-[var(--border-soft)] pt-4">
+            {message && <Feedback tone="success" text={message} />}
+            {error && <Feedback tone="warning" text={error} />}
+            <div className="grid gap-2">
+              {openRequests.length === 0 ? (
+                <p className="rounded-card-sm bg-[var(--surface-soft)] p-3 text-sm leading-6 text-[var(--text-secondary)]">暂无开放需求变更。</p>
+              ) : (
+                openRequests.map((request) => (
+                  <div key={request.id} className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-sm font-medium">
+                        {request.sourceSop} · {changeRequestStatusLabel(request.status)}
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {(["approved", "rejected", "implemented", "cancelled"] as const).map((status) => (
+                          <Button
+                            key={status}
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={!canDecide || busy === request.id}
+                            onClick={() => void handleStatus(request.id, status)}
+                          >
+                            {changeRequestStatusLabel(status)}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                    <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">原范围：{request.originalScope}</p>
+                    <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">变更后：{request.requestedScope}</p>
+                    <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
+                      费用影响：{String(request.impactJson.feeImpact ?? "未填写")} · 排期影响：{String(request.impactJson.scheduleImpact ?? "未填写")}
+                    </p>
+                  </div>
+                ))
+              )}
+            </div>
+            <form action={handleCreate} className="mt-4 grid gap-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3">
+              <div className="grid gap-3 md:grid-cols-3">
+                <label className="grid gap-1 text-xs font-medium">
+                  来源 SOP
+                  <Input name="sourceSop" defaultValue={defaultSourceSop} disabled={!canCreate || busy === "create"} />
+                </label>
+                <label className="grid gap-1 text-xs font-medium">
+                  费用影响
+                  <Input name="feeImpact" placeholder="例如 +8000 元，待报价确认" disabled={!canCreate || busy === "create"} />
+                </label>
+                <label className="grid gap-1 text-xs font-medium">
+                  排期影响
+                  <Input name="scheduleImpact" placeholder="例如 +2 个工作日" disabled={!canCreate || busy === "create"} />
+                </label>
+              </div>
+              <label className="grid gap-1 text-xs font-medium">
+                原始范围
+                <textarea name="originalScope" disabled={!canCreate || busy === "create"} className="min-h-20 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-sm leading-6" placeholder="写清楚合同或 SOP 4 清单中原本包含的交付范围。" />
+              </label>
+              <label className="grid gap-1 text-xs font-medium">
+                变更后范围
+                <textarea name="requestedScope" disabled={!canCreate || busy === "create"} className="min-h-20 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-sm leading-6" placeholder="写清楚客户新增、替换或扩大了什么交付物。" />
+              </label>
+              <Button type="submit" disabled={!canCreate || busy === "create"} className="w-fit">
+                {busy === "create" ? <Loader2 className="animate-spin" size={15} /> : <Plus size={15} />}
+                创建需求变更
+              </Button>
+            </form>
+          </div>
+        </CollapsibleContent>
+      </WorkspaceCard>
+    </Collapsible>
   );
 }
 
@@ -3891,34 +3992,351 @@ function WorkspaceCard({
   );
 }
 
-function RequirementStructuringCard({
+type TaskTone = "neutral" | "info" | "success" | "warning" | "danger";
+
+function TaskCard({
+  icon,
+  title,
+  description,
+  status,
+  action,
+  children,
+  className,
+  contentClassName,
+}: {
+  icon: ReactNode;
+  title: string;
+  description?: string;
+  status?: ReactNode;
+  action?: ReactNode;
+  children?: ReactNode;
+  className?: string;
+  contentClassName?: string;
+}) {
+  return (
+    <WorkspaceCard className={cn("task-card", className)} contentClassName={contentClassName}>
+      <div className="task-card-header">
+        <div className="task-card-heading">
+          <div className="task-card-icon">{icon}</div>
+          <div className="min-w-0">
+            <h3 className="task-card-title">{title}</h3>
+            {description && <p className="task-card-description">{description}</p>}
+          </div>
+        </div>
+        {(status || action) && (
+          <div className="task-card-actions">
+            {status}
+            {action}
+          </div>
+        )}
+      </div>
+      {children && <div className="task-card-body">{children}</div>}
+    </WorkspaceCard>
+  );
+}
+
+function TaskStatusPill({
+  children,
+  tone = "neutral",
+  className,
+}: {
+  children: ReactNode;
+  tone?: TaskTone;
+  className?: string;
+}) {
+  return <span className={cn("task-status-pill", `task-status-${tone}`, className)}>{children}</span>;
+}
+
+function BriefIntakeWorkflowCard({
   project,
+  user,
+  assets,
+  assetAnalyses,
   artifacts,
+  clientReviewTasks,
+  onProjectUpdated,
   onRefresh,
 }: {
   project: ProjectSummary;
+  user: CurrentUser;
+  assets: AssetView[];
+  assetAnalyses: AssetAnalysisView[];
   artifacts: ArtifactView[];
+  clientReviewTasks: ClientReviewTaskView[];
+  onProjectUpdated: (project: ProjectSummary) => Promise<void>;
+  onRefresh: () => Promise<void>;
+}) {
+  const structuredRequirements = artifacts.filter((artifact) => artifact.kind === "structured_requirement");
+  const latest = structuredRequirements[0] ?? null;
+  const openQuestions = latest ? extractArtifactStringArray((latest.data as Partial<Record<string, unknown>>).openQuestions) : [];
+  const latestBriefReview = clientReviewTasks.find((task) => task.reviewType === "brief_confirmation" && task.targetScopeId === project.id) ?? null;
+
+  return (
+    <StageWorkCard
+      icon={<BriefcaseBusiness size={18} />}
+      title="SOP 1 · Brief 收集、补齐与甲方确认"
+      detail="把微信聊天、截图、飞书链接和项目文件统一投放进资料池；AI 整理标准 Brief，缺失信息回填后生成新版本，再交甲方确认。"
+      badges={[
+        assets.length > 0 ? `${assets.length} 份资料` : "待录入资料",
+        latest ? `Brief v${latest.version}` : "待生成 Brief",
+        openQuestions.length > 0 ? `${openQuestions.length} 项待补` : latest ? "待确认" : "待检索",
+      ]}
+      defaultOpen
+      className="lg:col-span-2"
+    >
+      <div className="grid gap-4">
+        <BriefWorkflowSteps latest={latest} assets={assets} openQuestions={openQuestions} latestReview={latestBriefReview} />
+        <ProjectBasicsInlineSection project={project} user={user} onProjectUpdated={onProjectUpdated} />
+        <BriefRawInputPool
+          project={project}
+          assets={assets}
+          assetAnalyses={assetAnalyses}
+          latest={latest}
+          openQuestions={openQuestions}
+          onRefresh={onRefresh}
+        />
+        <section className="ds-card-soft p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium">标准化 Brief 表格</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
+                每次整理或回填都会保存为新的 Brief 版本；确认无误后再发给甲方。
+              </p>
+            </div>
+            {latest && <span className="ds-pill bg-[var(--surface-card)] text-[var(--text-secondary)]">v{latest.version} · {formatDateTime(latest.updatedAt)}</span>}
+          </div>
+          {latest ? (
+            <StructuredRequirementPreview artifact={latest} />
+          ) : (
+            <div className="mt-3 rounded-card-sm border border-dashed border-[var(--border-soft)] bg-[var(--surface-card)] p-4 text-sm leading-6 text-[var(--text-secondary)]">
+              还没有标准化 Brief。先在上方投放客户原始信息，再让 AI 整理成标准 Brief。
+            </div>
+          )}
+        </section>
+        <section className="ds-card-soft p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium">甲方 Brief 确认</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
+                只有标准 Brief 完整后才进入甲方确认；甲方通过后，项目再流转到风险体检卡。
+              </p>
+            </div>
+            {latestBriefReview && (
+              <span className="ds-pill bg-[var(--surface-card)] text-[var(--text-secondary)]">
+                最近 v{latestBriefReview.version} · {clientReviewStatusLabel(latestBriefReview.status)}
+              </span>
+            )}
+          </div>
+          <ClientReviewLaunchBox
+            projectId={project.id}
+            reviewType="brief_confirmation"
+            targetScopeId={project.id}
+            title="生成甲方 Brief 审核链接"
+            detail="链接会带上当前项目和最新标准化 Brief；甲方确认或打回后会回写阶段状态。"
+            disabled={!latest || openQuestions.length > 0}
+            disabledReason={
+              !latest
+                ? "请先生成标准化 Brief。"
+                : openQuestions.length > 0
+                  ? "当前 Brief 仍有待确认问题，请先把客户回复回填并更新 Brief。"
+                  : undefined
+            }
+            tasks={clientReviewTasks}
+            onRefresh={onRefresh}
+          />
+        </section>
+      </div>
+    </StageWorkCard>
+  );
+}
+
+function BriefWorkflowSteps({
+  latest,
+  assets,
+  openQuestions,
+  latestReview,
+}: {
+  latest: ArtifactView | null;
+  assets: AssetView[];
+  openQuestions: string[];
+  latestReview: ClientReviewTaskView | null;
+}) {
+  const steps = [
+    { label: "原始信息", value: assets.length > 0 ? `${assets.length} 份已入库` : "待投放", tone: assets.length > 0 ? "success" : "neutral" },
+    { label: "AI Brief", value: latest ? `v${latest.version}` : "待整理", tone: latest ? "success" : "neutral" },
+    { label: "缺失补齐", value: latest ? (openQuestions.length > 0 ? `${openQuestions.length} 项待问` : "无待补项") : "待检索", tone: latest && openQuestions.length === 0 ? "success" : openQuestions.length > 0 ? "warning" : "neutral" },
+    { label: "甲方确认", value: latestReview ? clientReviewStatusLabel(latestReview.status) : "未发起", tone: latestReview?.status === "approved" ? "success" : latestReview ? "info" : "neutral" },
+  ] satisfies Array<{ label: string; value: string; tone: TaskTone }>;
+
+  return (
+    <div className="grid gap-2 md:grid-cols-4">
+      {steps.map((step, index) => (
+        <div key={step.label} className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-medium text-[var(--text-secondary)]">{String(index + 1).padStart(2, "0")}</span>
+            <TaskStatusPill tone={step.tone}>{step.value}</TaskStatusPill>
+          </div>
+          <p className="mt-3 text-sm font-medium">{step.label}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ProjectBasicsInlineSection({
+  project,
+  user,
+  onProjectUpdated,
+}: {
+  project: ProjectSummary;
+  user: CurrentUser;
+  onProjectUpdated: (project: ProjectSummary) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [projectError, setProjectError] = useState<string | null>(null);
+  const canEdit = user.role === "business" || user.role === "admin";
+
+  async function handleSubmit(formData: FormData) {
+    setSaving(true);
+    setMessage(null);
+    setProjectError(null);
+
+    const result = await updateProjectBasics(project.id, {
+      brandName: String(formData.get("brandName") ?? ""),
+      projectName: String(formData.get("projectName") ?? ""),
+      ownerName: String(formData.get("ownerName") ?? ""),
+      dueDate: String(formData.get("dueDate") ?? "") || null,
+    });
+
+    if (result.ok) {
+      await onProjectUpdated(result.data.project);
+      setMessage(result.data.message);
+      setEditing(false);
+    } else {
+      setProjectError(result.error.message);
+    }
+
+    setSaving(false);
+  }
+
+  return (
+    <section className="ds-card-soft p-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="text-sm font-medium">项目基础信息</p>
+          <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">这些信息会同步到左侧项目列表和阶段状态。</p>
+        </div>
+        {canEdit ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setEditing((value) => !value);
+              setMessage(null);
+              setProjectError(null);
+            }}
+          >
+            {editing ? <XCircle size={14} /> : <BriefcaseBusiness size={14} />}
+            {editing ? "收起" : "编辑"}
+          </Button>
+        ) : (
+          <span className="ds-pill bg-[var(--surface-card)] text-[var(--text-secondary)]">只读</span>
+        )}
+      </div>
+
+      <div className="mt-3 grid gap-3 md:grid-cols-4">
+        <MiniMetric label="品牌" value={project.brandName} />
+        <MiniMetric label="项目" value={project.projectName} />
+        <MiniMetric label="负责人" value={project.ownerName} />
+        <MiniMetric label="截止时间" value={project.dueDate ?? "未设截止"} />
+      </div>
+
+      {editing && (
+        <form action={handleSubmit} className="mt-4 grid gap-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3 md:grid-cols-2">
+          <label className="grid gap-1 text-sm">
+            <span className="font-medium">品牌名</span>
+            <Input name="brandName" required defaultValue={project.brandName} disabled={saving} className="bg-[var(--surface-card)]" />
+          </label>
+          <label className="grid gap-1 text-sm">
+            <span className="font-medium">项目名</span>
+            <Input name="projectName" required defaultValue={project.projectName} disabled={saving} className="bg-[var(--surface-card)]" />
+          </label>
+          <label className="grid gap-1 text-sm">
+            <span className="font-medium">负责人显示名</span>
+            <Input name="ownerName" required defaultValue={project.ownerName} disabled={saving} className="bg-[var(--surface-card)]" />
+          </label>
+          <label className="grid gap-1 text-sm">
+            <span className="font-medium">截止时间</span>
+            <Input name="dueDate" type="date" defaultValue={project.dueDate ?? ""} disabled={saving} className="bg-[var(--surface-card)]" />
+          </label>
+          <div className="md:col-span-2">
+            <Button disabled={saving}>
+              {saving ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
+              保存项目基础信息
+            </Button>
+          </div>
+        </form>
+      )}
+
+      {projectError && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm text-[var(--warning)]">{projectError}</div>}
+      {message && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-3 text-sm text-[var(--success)]">{message}</div>}
+    </section>
+  );
+}
+
+function BriefRawInputPool({
+  project,
+  assets,
+  assetAnalyses,
+  latest,
+  openQuestions,
+  onRefresh,
+}: {
+  project: ProjectSummary;
+  assets: AssetView[];
+  assetAnalyses: AssetAnalysisView[];
+  latest: ArtifactView | null;
+  openQuestions: string[];
   onRefresh: () => Promise<void>;
 }) {
   const [requirementText, setRequirementText] = useState("");
+  const [externalUrl, setExternalUrl] = useState("");
+  const [externalTitle, setExternalTitle] = useState("");
+  const [uploadState, setUploadState] = useState<"idle" | "signing" | "uploading" | "saving">("idle");
+  const [linkSaving, setLinkSaving] = useState(false);
+  const [analyzingAssetId, setAnalyzingAssetId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [copyingQuestions, setCopyingQuestions] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const structuredRequirements = artifacts.filter((artifact) => artifact.kind === "structured_requirement");
-  const latest = structuredRequirements[0];
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const succeededAnalyses = assetAnalyses.filter((analysis) => analysis.status === "succeeded");
+  const unparsedAssets = assets.filter((asset) => asset.parseStatus === "queued" || asset.parseStatus === "failed");
+  const missingQuestionText = openQuestions.length > 0 ? openQuestions.map((question, index) => `${index + 1}. ${question}`).join("\n") : "";
 
   async function handleSubmit() {
     setMessage(null);
     setError(null);
 
-    if (!requirementText.trim()) {
-      setError("请先粘贴客户需求文本，再发起结构化整理。");
+    const structuringInput = buildRequirementStructuringInput({
+      project,
+      latest,
+      rawText: requirementText,
+      assets,
+      assetAnalyses: succeededAnalyses,
+    });
+
+    if (!structuringInput.trim()) {
+      setError("请先粘贴客户聊天记录、客户补充回复，或先解析已上传资料后再更新 Brief。");
       return;
     }
 
     setSubmitting(true);
-    const result = await structureRequirement(project.id, requirementText);
+    await registerFeishuLinksFromText(project.id, requirementText);
+    const result = await structureRequirement(project.id, structuringInput);
 
     if (result.ok) {
       setMessage(result.data.message);
@@ -3931,38 +4349,365 @@ function RequirementStructuringCard({
     setSubmitting(false);
   }
 
+  async function handleFiles(files: FileList | File[], forcedAssetType?: string) {
+    const selectedFiles = Array.from(files).filter((file) => file.size > 0);
+    setMessage(null);
+    setError(null);
+
+    if (selectedFiles.length === 0) {
+      setError("没有读到可上传的文件。请重新选择或粘贴资料。");
+      return;
+    }
+
+    try {
+      for (const file of selectedFiles) {
+        setUploadState("signing");
+        const fileName = file.name || `clipboard-image-${Date.now()}.png`;
+        const normalizedAssetType = forcedAssetType ?? inferAssetType(file);
+        const signed = await createUploadUrl(project.id, {
+          fileName,
+          fileSize: file.size,
+          mimeType: file.type || "application/octet-stream",
+          assetType: normalizedAssetType,
+        });
+
+        if (!signed.ok) {
+          setError(signed.error.message);
+          setUploadState("idle");
+          return;
+        }
+
+        setUploadState("uploading");
+        const uploadResponse = await fetch(signed.data.uploadUrl, {
+          method: "PUT",
+          headers: signed.data.headers,
+          body: file,
+        });
+
+        if (!uploadResponse.ok) {
+          setError("文件没有成功上传到 OSS。请检查 OSS 权限、Bucket 跨域配置，或稍后重试。");
+          setUploadState("idle");
+          return;
+        }
+
+        setUploadState("saving");
+        const saved = await registerUploadedAsset(project.id, {
+          assetType: normalizedAssetType,
+          ossKey: signed.data.objectKey,
+          fileName,
+          fileSize: file.size,
+          mimeType: file.type || "application/octet-stream",
+        });
+
+        if (!saved.ok) {
+          setError(saved.error.message);
+          setUploadState("idle");
+          return;
+        }
+      }
+
+      setMessage(selectedFiles.length > 1 ? `${selectedFiles.length} 份资料已上传并写入资产库。` : "资料已上传并写入资产库。");
+      await onRefresh();
+    } catch {
+      setError("上传过程中发生了网络或浏览器错误。请重新选择文件后再试。");
+    } finally {
+      setUploadState("idle");
+    }
+  }
+
+  async function handlePaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const imageFiles = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
+    if (imageFiles.length > 0) {
+      await handleFiles(imageFiles, "image");
+    }
+  }
+
+  async function handleDrop(event: React.DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    if (event.dataTransfer.files.length > 0) {
+      await handleFiles(event.dataTransfer.files);
+    }
+  }
+
+  async function handleExternalLink() {
+    const cleanUrl = externalUrl.trim();
+    setMessage(null);
+    setError(null);
+
+    if (!cleanUrl) {
+      setError("请先粘贴飞书文档或外部资料链接。");
+      return;
+    }
+
+    setLinkSaving(true);
+    const saved = await registerExternalAsset(project.id, {
+      externalUrl: cleanUrl,
+      fileName: externalTitle.trim() || null,
+    });
+
+    if (saved.ok) {
+      setMessage("链接已保存到项目资产库。后续可先解析，再参与 Brief 更新。");
+      setExternalUrl("");
+      setExternalTitle("");
+      await onRefresh();
+    } else {
+      setError(saved.error.message);
+    }
+    setLinkSaving(false);
+  }
+
+  async function handleAnalyzeAsset(assetId: string) {
+    setAnalyzingAssetId(assetId);
+    setMessage(null);
+    setError(null);
+    const result = await analyzeAsset(project.id, assetId);
+    if (result.ok) {
+      setMessage(result.data.message);
+      await onRefresh();
+    } else {
+      setError(result.error.message);
+    }
+    setAnalyzingAssetId(null);
+  }
+
+  async function handleCopyQuestions() {
+    if (!missingQuestionText) return;
+    setCopyingQuestions(true);
+    try {
+      await navigator.clipboard.writeText(`麻烦帮忙补充确认以下 Brief 信息：\n${missingQuestionText}`);
+      setMessage("待确认问题已复制，可以发给客户澄清；客户回复后粘贴回左侧投放区并点击更新 Brief。");
+    } catch {
+      setError("浏览器没有开放剪贴板权限。可以手动选中待确认问题复制给客户。");
+    } finally {
+      setCopyingQuestions(false);
+    }
+  }
+
   return (
-    <WorkspaceCard>
-      <div className="flex items-center gap-2">
-        <WandSparkles size={18} />
-        <h3 className="ds-text-section-title">需求结构化</h3>
+    <section className="grid gap-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(320px,0.95fr)]">
+      <div className="ds-card-soft p-4" onDragOver={(event) => event.preventDefault()} onDrop={(event) => void handleDrop(event)}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium">客户原始信息投放区</p>
+            <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
+              微信聊天、客户回复、截图、飞书链接和本地文件都从这里进入 Brief 流程。
+            </p>
+          </div>
+          <button type="button" onClick={() => void onRefresh()} className="inline-flex items-center gap-2 text-xs font-medium text-[var(--accent)]">
+            <RefreshCcw size={13} />
+            刷新
+          </button>
+        </div>
+
+        <textarea
+          value={requirementText}
+          onChange={(event) => setRequirementText(event.target.value)}
+          onPaste={(event) => void handlePaste(event)}
+          placeholder={latest ? "粘贴客户针对缺失问题的回复，或补充新的聊天记录..." : "粘贴微信聊天记录、客户原始 Brief、项目需求说明... 也可以直接把截图粘贴到这里。"}
+          className="mt-4 min-h-44 w-full resize-y ds-card-sm bg-[var(--surface-card)] p-3 text-sm leading-6"
+        />
+
+        <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+            <input
+              value={externalTitle}
+              onChange={(event) => setExternalTitle(event.target.value)}
+              placeholder="链接标题"
+              className="h-9 ds-card-sm bg-[var(--surface-card)] px-3 text-sm"
+            />
+            <input
+              value={externalUrl}
+              onChange={(event) => setExternalUrl(event.target.value)}
+              placeholder="飞书链接 / 外部资料链接"
+              className="h-9 ds-card-sm bg-[var(--surface-card)] px-3 text-sm"
+            />
+          </div>
+          <button
+            type="button"
+            disabled={linkSaving}
+            onClick={() => void handleExternalLink()}
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] px-3 text-sm font-medium disabled:opacity-60"
+          >
+            {linkSaving ? <Loader2 className="animate-spin" size={15} /> : <ExternalLink size={15} />}
+            保存链接
+          </button>
+        </div>
+
+        <div className="mt-3 flex flex-wrap gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="sr-only"
+            disabled={uploadState !== "idle"}
+            accept=".pdf,.doc,.docx,.txt,.md,image/*,video/*"
+            onChange={(event) => {
+              const files = event.target.files;
+              event.target.value = "";
+              if (files) void handleFiles(files);
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploadState !== "idle"}
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-card-sm bg-[var(--foreground)] px-3 text-sm font-medium text-[var(--text-inverse)] disabled:opacity-60"
+          >
+            {uploadState === "idle" ? <Upload size={15} /> : <Loader2 className="animate-spin" size={15} />}
+            {uploadLabel(uploadState)}
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleSubmit()}
+            disabled={submitting}
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-card-sm bg-[var(--accent)] px-3 text-sm font-medium text-[var(--accent-foreground)] disabled:opacity-60"
+          >
+            {submitting ? <Loader2 className="animate-spin" size={15} /> : <WandSparkles size={15} />}
+            {submitting ? "正在创建后台任务" : latest ? "更新 Brief" : "AI 整理为标准 Brief"}
+          </button>
+        </div>
+
+        {unparsedAssets.length > 0 && (
+          <p className="mt-3 text-xs leading-5 text-[var(--text-secondary)]">
+            有 {unparsedAssets.length} 份资料尚未解析。它们已入库，但需要解析成功或补充文字后才会进入 Brief 更新依据。
+          </p>
+        )}
+        {error && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm text-[var(--warning)]">{error}</div>}
+        {message && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-3 text-sm text-[var(--success)]">{message}</div>}
       </div>
-      <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">
-        粘贴客户原始需求，系统会创建后台任务并真实调用豆包 Seed 2.1 Pro，生成统一需求模板后保存到项目产物。
-      </p>
 
-      <textarea
-        value={requirementText}
-        onChange={(event) => setRequirementText(event.target.value)}
-        placeholder="粘贴品牌方需求、目标、参考样片描述、交付规格、预算或时间要求..."
-        className="mt-4 min-h-36 w-full resize-y ds-card-sm p-3 text-sm leading-6"
-      />
+      <div className="grid gap-4">
+        <section className="ds-card-soft p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm font-medium">缺失信息追问</p>
+            {openQuestions.length > 0 && (
+              <button
+                type="button"
+                onClick={() => void handleCopyQuestions()}
+                disabled={copyingQuestions}
+                className="inline-flex h-8 items-center justify-center gap-2 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] px-2 text-xs font-medium disabled:opacity-60"
+              >
+                {copyingQuestions ? <Loader2 className="animate-spin" size={12} /> : <ClipboardList size={12} />}
+                复制追问
+              </button>
+            )}
+          </div>
+          {openQuestions.length === 0 ? (
+            <p className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-sm leading-6 text-[var(--text-secondary)]">
+              {latest ? "当前 Brief 没有待确认问题，可以进入内部确认和甲方确认。" : "生成标准 Brief 后，这里会列出需要向客户补齐的问题。"}
+            </p>
+          ) : (
+            <div className="mt-3 grid gap-2">
+              {openQuestions.map((question, index) => (
+                <div key={`${question}-${index}`} className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-sm leading-6">
+                  <span className="mr-2 text-xs font-medium text-[var(--warning)]">Q{index + 1}</span>
+                  {question}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
 
-      <button
-        onClick={() => void handleSubmit()}
-        disabled={submitting}
-        className="mt-3 inline-flex h-9 items-center justify-center gap-2 rounded-card-sm bg-[var(--accent)] px-3 text-sm font-medium text-[var(--accent-foreground)] disabled:opacity-60"
-      >
-        {submitting ? <Loader2 className="animate-spin" size={16} /> : <WandSparkles size={16} />}
-        {submitting ? "正在创建后台任务" : "生成标准需求模板"}
-      </button>
-
-      {error && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm text-[var(--warning)]">{error}</div>}
-      {message && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-3 text-sm text-[var(--success)]">{message}</div>}
-
-      {latest ? <StructuredRequirementPreview artifact={latest} /> : null}
-    </WorkspaceCard>
+        <section className="ds-card-soft p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm font-medium">资料池</p>
+            <span className="text-xs text-[var(--text-secondary)]">{assets.length} 份资料 · {succeededAnalyses.length} 份已解析</span>
+          </div>
+          {assets.length === 0 ? (
+            <div className="mt-3 rounded-card-sm border border-dashed border-[var(--border-soft)] bg-[var(--surface-card)] p-4 text-sm leading-6 text-[var(--text-secondary)]">
+              暂无资料。可以粘贴截图、上传文件，或保存飞书链接。
+            </div>
+          ) : (
+            <div className="mt-3 max-h-80 space-y-2 overflow-y-auto pr-1">
+              {assets.map((asset) => (
+                <AssetRow
+                  key={asset.id}
+                  asset={asset}
+                  analysis={assetAnalyses.find((item) => item.assetId === asset.id) ?? null}
+                  analyzing={analyzingAssetId === asset.id}
+                  onAnalyze={() => void handleAnalyzeAsset(asset.id)}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+    </section>
   );
+}
+
+function buildRequirementStructuringInput({
+  project,
+  latest,
+  rawText,
+  assets,
+  assetAnalyses,
+}: {
+  project: ProjectSummary;
+  latest: ArtifactView | null;
+  rawText: string;
+  assets: AssetView[];
+  assetAnalyses: AssetAnalysisView[];
+}) {
+  const blocks: string[] = [];
+  const cleanRawText = rawText.trim();
+  const assetAnalysisBlock = buildAssetAnalysisRequirementBlock(assets, assetAnalyses);
+
+  if (!cleanRawText && !assetAnalysisBlock) return "";
+
+  blocks.push(`【项目】${project.brandName} / ${project.projectName}`);
+  blocks.push(latest ? "【本轮任务】根据客户补充信息与已解析资料，更新上一版标准 Brief；不要丢失上一版中仍然有效的信息。" : "【本轮任务】把客户原始信息整理成标准 Brief。");
+
+  if (latest) {
+    blocks.push(`【上一版标准 Brief v${latest.version}】\n${JSON.stringify(latest.data, null, 2)}`);
+  }
+
+  if (cleanRawText) {
+    blocks.push(`【客户聊天记录 / 补充回复】\n${cleanRawText}`);
+  }
+
+  if (assetAnalysisBlock) {
+    blocks.push(assetAnalysisBlock);
+  }
+
+  blocks.push("【约束】只根据材料中明确出现的信息填写字段；不确定或缺失的信息放入 openQuestions。");
+  return blocks.join("\n\n");
+}
+
+function buildAssetAnalysisRequirementBlock(assets: AssetView[], assetAnalyses: AssetAnalysisView[]) {
+  const summaries = assetAnalyses
+    .map((analysis) => {
+      const asset = assets.find((item) => item.id === analysis.assetId);
+      const title = asset?.fileName ?? asset?.externalUrl ?? asset?.ossKey ?? analysis.assetId;
+      const labels = analysis.labels.length > 0 ? `\n标签：${analysis.labels.join("、")}` : "";
+      const extractedText = analysis.extractedText ? `\n摘录：${summarizeText(analysis.extractedText, 900)}` : "";
+      return `- ${title}\n摘要：${analysis.summary || "无摘要"}${labels}${extractedText}`;
+    })
+    .filter(Boolean);
+
+  return summaries.length > 0 ? `【已解析资料摘要】\n${summaries.join("\n\n")}` : "";
+}
+
+async function registerFeishuLinksFromText(projectId: string, text: string) {
+  const urls = Array.from(new Set(extractFeishuUrls(text)));
+  for (const url of urls.slice(0, 5)) {
+    await registerExternalAsset(projectId, {
+      externalUrl: url,
+      fileName: "从客户原始信息投放区识别的飞书链接",
+    });
+  }
+}
+
+function extractFeishuUrls(text: string) {
+  const urlMatches = text.match(/https?:\/\/[^\s)）]+/g) ?? [];
+  return urlMatches.filter((url) => url.includes("feishu.cn") || url.includes("larksuite.com"));
+}
+
+function extractArtifactStringArray(value: unknown) {
+  const parsed = typeof value === "string" ? parseSerializedArtifactValue(value) : value;
+  if (Array.isArray(parsed)) return parsed.map(formatArtifactInlineValue).map((item) => item.trim()).filter(Boolean);
+  const formatted = formatArtifactInlineValue(parsed).trim();
+  return formatted ? [formatted] : [];
 }
 
 function StructuredRequirementPreview({ artifact }: { artifact: ArtifactView }) {
@@ -3973,18 +4718,23 @@ function StructuredRequirementPreview({ artifact }: { artifact: ArtifactView }) 
     ["目标受众", data.targetAudience],
     ["视频目标", data.videoGoal],
     ["期望风格", data.expectedStyle],
+    ["参考样片", data.referenceSamples],
+    ["核心卖点", data.keySellingPoints],
+    ["禁忌点", data.restrictions],
     ["交付规格", data.deliverySpecs],
     ["时间节点", data.timeline],
     ["预算/报价", data.budgetOrQuoteInfo],
+    ["项目摘要", data.summary],
   ];
+  const openQuestions = extractArtifactStringArray(data.openQuestions);
 
   return (
-    <div className="mt-4 ds-card-soft p-3">
+    <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm font-medium">{artifact.title}</p>
         <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">v{artifact.version}</span>
       </div>
-      <div className="mt-3 grid gap-2 text-sm">
+      <div className="mt-3 grid gap-2 text-sm md:grid-cols-2">
         {rows.map(([label, value]) => (
           <div key={label} className="grid gap-1 border-b border-[var(--border-soft)] pb-2 last:border-b-0">
             <span className="text-xs text-[var(--text-secondary)]">{label}</span>
@@ -3992,6 +4742,16 @@ function StructuredRequirementPreview({ artifact }: { artifact: ArtifactView }) 
           </div>
         ))}
       </div>
+      {openQuestions.length > 0 && (
+        <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3">
+          <p className="text-xs font-medium text-[var(--warning)]">待客户补充确认</p>
+          <ol className="mt-2 list-decimal space-y-1 pl-4 text-sm leading-6 text-[var(--warning)]">
+            {openQuestions.map((question, index) => (
+              <li key={`${question}-${index}`}>{question}</li>
+            ))}
+          </ol>
+        </div>
+      )}
     </div>
   );
 }
@@ -4036,378 +4796,6 @@ function parseSerializedArtifactValue(value: string): unknown {
   } catch {
     return value;
   }
-}
-
-function AssetCenter({
-  project,
-  assets,
-  assetAnalyses,
-  onRefresh,
-}: {
-  project: ProjectSummary;
-  assets: AssetView[];
-  assetAnalyses: AssetAnalysisView[];
-  onRefresh: () => Promise<void>;
-}) {
-  const [assetType, setAssetType] = useState("other");
-  const [uploadState, setUploadState] = useState<"idle" | "signing" | "uploading" | "saving">("idle");
-  const [linkSaving, setLinkSaving] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [assetError, setAssetError] = useState<string | null>(null);
-  const [analyzingAssetId, setAnalyzingAssetId] = useState<string | null>(null);
-
-  async function handleFileSelected(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    setMessage(null);
-    setAssetError(null);
-
-    if (!file) return;
-    if (file.size === 0) {
-      setAssetError("这个文件是空文件。请重新选择包含内容的资料。");
-      return;
-    }
-
-    try {
-      setUploadState("signing");
-      const normalizedAssetType = assetType === "other" ? inferAssetType(file) : assetType;
-      const signed = await createUploadUrl(project.id, {
-        fileName: file.name,
-        fileSize: file.size,
-        mimeType: file.type || "application/octet-stream",
-        assetType: normalizedAssetType,
-      });
-      if (!signed.ok) {
-        setAssetError(signed.error.message);
-        setUploadState("idle");
-        return;
-      }
-
-      setUploadState("uploading");
-      const uploadResponse = await fetch(signed.data.uploadUrl, {
-        method: "PUT",
-        headers: signed.data.headers,
-        body: file,
-      });
-
-      if (!uploadResponse.ok) {
-        setAssetError("文件没有成功上传到 OSS。请检查 OSS 权限、Bucket 跨域配置，或稍后重试。");
-        setUploadState("idle");
-        return;
-      }
-
-      setUploadState("saving");
-      const saved = await registerUploadedAsset(project.id, {
-        assetType: normalizedAssetType,
-        ossKey: signed.data.objectKey,
-        fileName: file.name,
-        fileSize: file.size,
-        mimeType: file.type || "application/octet-stream",
-      });
-
-      if (!saved.ok) {
-        setAssetError(saved.error.message);
-        setUploadState("idle");
-        return;
-      }
-
-      setMessage("资料已上传到 OSS，并写入项目资产库。后续可以发起解析和 AI 分析。");
-      await onRefresh();
-    } catch {
-      setAssetError("上传过程中发生了网络或浏览器错误。请重新选择文件后再试。");
-    } finally {
-      setUploadState("idle");
-    }
-  }
-
-  async function handleExternalLink(formData: FormData) {
-    const externalUrl = String(formData.get("externalUrl") ?? "").trim();
-    const title = String(formData.get("title") ?? "").trim();
-    setMessage(null);
-    setAssetError(null);
-
-    if (!externalUrl) {
-      setAssetError("请先粘贴飞书文档或外部资料链接。");
-      return;
-    }
-
-    setLinkSaving(true);
-    const saved = await registerExternalAsset(project.id, {
-      externalUrl,
-      fileName: title || null,
-    });
-
-    if (saved.ok) {
-      setMessage("链接已保存到项目资产库。后续解析时会检查链接权限和内容类型。");
-      await onRefresh();
-    } else {
-      setAssetError(saved.error.message);
-    }
-    setLinkSaving(false);
-  }
-
-  async function handleAnalyzeAsset(assetId: string) {
-    setAnalyzingAssetId(assetId);
-    setMessage(null);
-    setAssetError(null);
-    const result = await analyzeAsset(project.id, assetId);
-    if (result.ok) {
-      setMessage(result.data.message);
-      await onRefresh();
-    } else {
-      setAssetError(result.error.message);
-    }
-    setAnalyzingAssetId(null);
-  }
-
-  return (
-    <WorkspaceCard className="lg:col-span-2">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <FileUp size={18} />
-            <h3 className="ds-text-section-title">项目资料中心</h3>
-          </div>
-          <p className="mt-2 text-sm text-[var(--text-secondary)]">
-            文件会先真实上传 OSS，上传成功后再写入数据库。任一步失败都不会显示成功。
-          </p>
-        </div>
-        <button onClick={() => void onRefresh()} className="inline-flex items-center gap-2 text-sm font-medium text-[var(--accent)]">
-          <RefreshCcw size={14} />
-          刷新资料
-        </button>
-      </div>
-
-      <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <div className="ds-card-soft p-3">
-          <p className="text-sm font-medium">上传文件</p>
-          <div className="mt-3 grid gap-3">
-            <select
-              value={assetType}
-              onChange={(event) => setAssetType(event.target.value)}
-              className="h-9 ds-card-sm px-3 text-sm"
-            >
-              <option value="other">自动识别资料类型</option>
-              <option value="pdf">PDF 文件</option>
-              <option value="word">Word 文件</option>
-              <option value="contract_file">甲方合同/报价文件</option>
-              <option value="image">图片</option>
-              <option value="video">视频</option>
-              <option value="text">文本资料</option>
-            </select>
-            <label className="flex min-h-28 cursor-pointer flex-col items-center justify-center rounded-card-sm border border-dashed border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-center text-sm">
-              {uploadState === "idle" ? <Upload size={22} /> : <Loader2 className="animate-spin" size={22} />}
-              <span className="mt-2 font-medium">{uploadLabel(uploadState)}</span>
-              <span className="mt-1 text-xs text-[var(--text-secondary)]">支持 PDF、Word、图片、视频和文本资料</span>
-              <input
-                type="file"
-                className="sr-only"
-                disabled={uploadState !== "idle"}
-                onChange={(event) => void handleFileSelected(event)}
-                accept=".pdf,.doc,.docx,.txt,.md,image/*,video/*"
-              />
-            </label>
-          </div>
-        </div>
-
-        <form action={handleExternalLink} className="ds-card-soft p-3">
-          <p className="text-sm font-medium">录入飞书/外部链接</p>
-          <div className="mt-3 grid gap-3">
-            <input name="title" placeholder="标题或来源说明" className="h-9 ds-card-sm px-3 text-sm" />
-            <input
-              name="externalUrl"
-              type="url"
-              required
-              placeholder="https://..."
-              className="h-9 ds-card-sm px-3 text-sm"
-            />
-            <button
-              disabled={linkSaving}
-              className="inline-flex h-9 items-center justify-center gap-2 rounded-card-sm bg-[var(--foreground)] px-3 text-sm font-medium text-[var(--text-inverse)] disabled:opacity-60"
-            >
-              {linkSaving ? <Loader2 className="animate-spin" size={16} /> : <ExternalLink size={16} />}
-              保存链接
-            </button>
-          </div>
-        </form>
-      </div>
-
-      {assetError && (
-        <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm text-[var(--warning)]">{assetError}</div>
-      )}
-      {message && <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-3 text-sm text-[var(--success)]">{message}</div>}
-
-      <div className="mt-5">
-        <p className="mb-3 text-sm font-medium">资产列表</p>
-        {assets.length === 0 ? (
-          <div className="ds-card-sm p-3 text-sm text-[var(--text-secondary)]">
-            当前项目还没有资料。上传客户需求、样片、参考图，或先保存飞书文档链接。
-          </div>
-        ) : (
-          <div className="grid gap-2">
-            {assets.map((asset) => (
-              <AssetRow
-                key={asset.id}
-                asset={asset}
-                analysis={assetAnalyses.find((item) => item.assetId === asset.id) ?? null}
-                analyzing={analyzingAssetId === asset.id}
-                onAnalyze={() => void handleAnalyzeAsset(asset.id)}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-    </WorkspaceCard>
-  );
-}
-
-function ProjectBasicsCard({
-  project,
-  user,
-  clientReviewTasks,
-  onProjectUpdated,
-  onRefresh,
-}: {
-  project: ProjectSummary;
-  user: CurrentUser;
-  clientReviewTasks: ClientReviewTaskView[];
-  onProjectUpdated: (project: ProjectSummary) => Promise<void>;
-  onRefresh: () => Promise<void>;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [projectError, setProjectError] = useState<string | null>(null);
-  const canEdit = user.role === "business" || user.role === "admin";
-
-  async function handleSubmit(formData: FormData) {
-    setSaving(true);
-    setMessage(null);
-    setProjectError(null);
-
-    const result = await updateProjectBasics(project.id, {
-      brandName: String(formData.get("brandName") ?? ""),
-      projectName: String(formData.get("projectName") ?? ""),
-      ownerName: String(formData.get("ownerName") ?? ""),
-      dueDate: String(formData.get("dueDate") ?? "") || null,
-    });
-
-    if (result.ok) {
-      await onProjectUpdated(result.data.project);
-      setMessage(result.data.message);
-      setEditing(false);
-    } else {
-      setProjectError(result.error.message);
-    }
-
-    setSaving(false);
-  }
-
-  return (
-    <WorkspaceCard className="lg:col-span-2">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <BriefcaseBusiness size={18} />
-            <h3 className="ds-text-section-title">项目基础信息</h3>
-          </div>
-          <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-            品牌、项目名、负责人和截止时间都持久化在数据库，保存后左侧项目列表和阶段负责人会同步刷新。
-          </p>
-        </div>
-        {canEdit ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="lg"
-            onClick={() => {
-              setEditing((value) => !value);
-              setMessage(null);
-              setProjectError(null);
-            }}
-          >
-            {editing ? <XCircle size={15} /> : <BriefcaseBusiness size={15} />}
-            {editing ? "收起编辑" : "编辑信息"}
-          </Button>
-        ) : (
-          <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">当前角色只读</span>
-        )}
-      </div>
-
-      <div className="mt-4 grid gap-3 md:grid-cols-4">
-        <MiniMetric label="品牌" value={project.brandName} />
-        <MiniMetric label="项目" value={project.projectName} />
-        <MiniMetric label="负责人" value={project.ownerName} />
-        <MiniMetric label="截止时间" value={project.dueDate ?? "未设截止"} />
-      </div>
-
-      {editing && (
-        <form action={handleSubmit} className="mt-4 grid gap-3 ds-card-soft p-3 md:grid-cols-2">
-          <label className="grid gap-1 text-sm">
-            <span className="font-medium">品牌名</span>
-            <Input
-              name="brandName"
-              required
-              defaultValue={project.brandName}
-              disabled={saving}
-              className="bg-[var(--surface-card)]"
-            />
-          </label>
-          <label className="grid gap-1 text-sm">
-            <span className="font-medium">项目名</span>
-            <Input
-              name="projectName"
-              required
-              defaultValue={project.projectName}
-              disabled={saving}
-              className="bg-[var(--surface-card)]"
-            />
-          </label>
-          <label className="grid gap-1 text-sm">
-            <span className="font-medium">负责人显示名</span>
-            <Input
-              name="ownerName"
-              required
-              defaultValue={project.ownerName}
-              disabled={saving}
-              className="bg-[var(--surface-card)]"
-            />
-            <span className="text-xs leading-5 text-[var(--text-secondary)]">这里更新展示负责人；商务编辑权限仍以创建项目的负责人账号为准。</span>
-          </label>
-          <label className="grid gap-1 text-sm">
-            <span className="font-medium">截止时间</span>
-            <Input
-              name="dueDate"
-              type="date"
-              defaultValue={project.dueDate ?? ""}
-              disabled={saving}
-              className="bg-[var(--surface-card)]"
-            />
-          </label>
-          <div className="md:col-span-2">
-            <Button
-              disabled={saving}
-            >
-              {saving ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
-              保存项目基础信息
-            </Button>
-          </div>
-        </form>
-      )}
-
-      {projectError && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm text-[var(--warning)]">{projectError}</div>}
-      {message && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-3 text-sm text-[var(--success)]">{message}</div>}
-      <ClientReviewLaunchBox
-        projectId={project.id}
-        reviewType="brief_confirmation"
-        targetScopeId={project.id}
-        title="甲方 Brief 确认"
-        detail="生成无需登录的安全链接，让甲方确认项目 Brief 和结构化需求；结果会回写到当前阶段状态机。"
-        tasks={clientReviewTasks}
-        onRefresh={onRefresh}
-      />
-    </WorkspaceCard>
-  );
 }
 
 function AssetAnalysisResults({ analyses, artifacts }: { analyses: AssetAnalysisView[]; artifacts: ArtifactView[] }) {
@@ -8641,11 +9029,12 @@ function StageNavigator({
   const selectedIndex = Math.min(projectStages.indexOf(selectedStage), currentIndex);
   const visibleSelectedStage = projectStages[selectedIndex] ?? currentStage;
   const stageStateByKey = new Map(stageStates.map((item) => [item.stageKey, item]));
+  const selectedModule = workflowModules.find((module) => module.stages.includes(visibleSelectedStage)) ?? null;
 
   return (
     <nav className="module-nav-band" aria-label="工作台功能模块导航">
       <div className="module-nav-grid">
-        {workflowModules.map((module, moduleIndex) => {
+        {workflowModules.map((module) => {
           const moduleStageIndexes = module.stages.map((stage) => projectStages.indexOf(stage));
           const firstAccessibleStage = module.stages.find((stage) => projectStages.indexOf(stage) <= currentIndex) ?? null;
           const isFutureModule = moduleStageIndexes.every((index) => index > currentIndex);
@@ -8667,96 +9056,48 @@ function StageNavigator({
                   isSelectedModule && "is-selected",
                   isFutureModule && "is-disabled"
                 )}
-                aria-label={`${module.label}，${isFutureModule ? "未进入，暂不可查看" : statusLabels[moduleStatus]}`}
+                aria-label={`${module.label}，${isFutureModule ? "未进入" : statusLabels[moduleStatus]}`}
                 aria-current={isCurrentModule ? "step" : undefined}
               >
-                <span className="flex items-center justify-between gap-2">
-                  <span className="module-nav-index">M{moduleIndex + 1}</span>
-                  <span className="module-nav-status">{isFutureModule ? "未进入" : statusLabels[moduleStatus]}</span>
-                </span>
                 <span className="module-nav-title">{moduleTitle}</span>
               </button>
-
-              <div className="module-stage-dots" aria-label={`${moduleTitle} 阶段状态导航`}>
-                {module.stages.map((stage) => {
-                  const stageIndex = projectStages.indexOf(stage);
-                  const persisted = stageStateByKey.get(stage);
-                  const inferredStatus =
-                    persisted?.status ?? (stageIndex < currentIndex ? "completed" : stageIndex === currentIndex ? "in_progress" : "not_started");
-                  const isCurrent = stageIndex === currentIndex;
-                  const isSelected = stage === visibleSelectedStage;
-                  const isFuture = stageIndex > currentIndex;
-
-                  return (
-                    <button
-                      key={stage}
-                      type="button"
-                      disabled={isFuture}
-                      onClick={() => onStageSelect(stage)}
-                      aria-pressed={isSelected}
-                      aria-label={`${stageIndex + 1}. ${stageStepLabels[stage]}，${isFuture ? "未进入，暂不可查看" : statusLabels[inferredStatus]}`}
-                      title={`${stageIndex + 1}. ${stageStepLabels[stage]} · ${isFuture ? "未进入，暂不可查看" : statusLabels[inferredStatus]}`}
-                      className={cn(
-                        "stage-status-dot",
-                        isSelected && "is-selected",
-                        isCurrent && "is-current",
-                        (inferredStatus === "blocked" || inferredStatus === "needs_revision") && "is-attention",
-                        isFuture && "is-disabled"
-                      )}
-                    >
-                      <span>{stageIndex + 1}</span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="module-nav-popover">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--text-tertiary)]">Module {moduleIndex + 1}</p>
-                    <p className="mt-1 text-sm font-semibold leading-5 text-[var(--text-primary)]">{moduleTitle}</p>
-                  </div>
-                  <Badge variant={isCurrentModule ? "default" : "outline"}>
-                    {isFutureModule ? "未进入" : statusLabels[moduleStatus]}
-                  </Badge>
-                </div>
-                <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">{module.detail}</p>
-                <div className="mt-3 grid gap-2">
-                  {module.stages.map((stage) => {
-                    const stageIndex = projectStages.indexOf(stage);
-                    const persisted = stageStateByKey.get(stage);
-                    const inferredStatus =
-                      persisted?.status ?? (stageIndex < currentIndex ? "completed" : stageIndex === currentIndex ? "in_progress" : "not_started");
-                    const isFuture = stageIndex > currentIndex;
-                    const isSelected = stage === visibleSelectedStage;
-                    return (
-                      <button
-                        key={stage}
-                        type="button"
-                        disabled={isFuture}
-                        onClick={() => onStageSelect(stage)}
-                        aria-pressed={isSelected}
-                        className={cn(
-                          "flex min-w-0 items-center justify-between gap-3 rounded-[0.85rem] border px-3 py-2 text-left text-xs transition",
-                          isSelected
-                            ? "border-[var(--foreground)] bg-[var(--foreground)] text-[var(--text-inverse)]"
-                            : "border-[var(--border-soft)] bg-[var(--surface-soft)] text-[var(--text-secondary)]",
-                          isFuture ? "cursor-not-allowed opacity-60" : "hover:border-[var(--foreground)] hover:text-[var(--text-primary)]"
-                        )}
-                      >
-                        <span className="min-w-0 truncate">
-                          {stageIndex + 1}. {stageStepLabels[stage]}
-                        </span>
-                        <span className="shrink-0">{isFuture ? "未进入" : statusLabels[inferredStatus]}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
             </div>
           );
         })}
       </div>
+      {selectedModule && selectedModule.stages.length > 1 && (
+        <div className="module-stage-strip" aria-label={`${compactModuleTitle(selectedModule.label)} 子流程导航`}>
+          {selectedModule.stages.map((stage) => {
+            const stageIndex = projectStages.indexOf(stage);
+            const persisted = stageStateByKey.get(stage);
+            const inferredStatus =
+              persisted?.status ?? (stageIndex < currentIndex ? "completed" : stageIndex === currentIndex ? "in_progress" : "not_started");
+            const isCurrent = stageIndex === currentIndex;
+            const isFuture = stageIndex > currentIndex;
+            const isSelected = stage === visibleSelectedStage;
+
+            return (
+              <button
+                key={stage}
+                type="button"
+                disabled={isFuture}
+                onClick={() => onStageSelect(stage)}
+                aria-pressed={isSelected}
+                aria-label={`${stageStepLabels[stage]}，${isFuture ? "未进入，暂不可查看" : statusLabels[inferredStatus]}`}
+                title={stageStepLabels[stage]}
+                className={cn(
+                  "module-stage-strip-item",
+                  isSelected && "is-selected",
+                  isCurrent && "is-current",
+                  isFuture && "is-disabled"
+                )}
+              >
+                <span>{stageStepLabels[stage]}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </nav>
   );
 }
@@ -8780,27 +9121,6 @@ function inferModuleStatus(
   if (statuses.every((status) => status === "completed" || status === "approved" || status === "archived")) return "completed";
   if (statuses.some((status) => status === "in_progress" || status === "approved" || status === "completed")) return "in_progress";
   return "not_started";
-}
-
-function WorkCard({ icon, title, detail, items }: { icon: React.ReactNode; title: string; detail: string; items: string[] }) {
-  return (
-    <Card size="sm" className="ds-card">
-      <CardContent>
-      <div className="flex items-center gap-2">
-        {icon}
-        <h3 className="min-w-0 truncate ds-text-section-title">{title}</h3>
-      </div>
-      <p className="mt-2 truncate text-sm leading-6 text-[var(--text-secondary)]">{detail}</p>
-      <div className="mt-3 flex flex-wrap gap-2">
-        {items.map((item) => (
-          <span key={item} className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">
-            {item}
-          </span>
-        ))}
-      </div>
-      </CardContent>
-    </Card>
-  );
 }
 
 function CenterState({ icon, title, detail }: { icon: React.ReactNode; title: string; detail: string }) {

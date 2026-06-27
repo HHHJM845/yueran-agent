@@ -55,3 +55,20 @@ Pass
 ## Concerns
 
 - `src/components/workspace/workspace-shell.tsx` already contained substantial unrelated uncommitted changes in this worktree before Task 3. I kept the implementation additive and did not revert or rewrite those changes.
+
+## Fix follow-up
+
+### Changed files
+
+- `src/components/workspace/workspace-shell.tsx`
+- `src/components/workspace/workspace-shell-project-actions.test.mjs`
+- `.superpowers/sdd/task-3-report.md`
+
+### Validation
+
+- `node --test src/components/workspace/workspace-shell-project-actions.test.mjs`
+  - PASS
+- `npm run typecheck`
+  - PASS
+- `npx eslint src/components/workspace/workspace-shell.tsx`
+  - PASS
