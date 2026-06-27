@@ -132,6 +132,41 @@ export async function updateProjectBasics(projectId: string, input: ProjectBasic
   return project;
 }
 
+export async function getProjectDeletionSnapshot(projectId: string) {
+  const result = await query<ProjectRow>(
+    `select id, brand_name, project_name, current_stage, owner_id, owner_name, due_date, status, updated_at
+     from projects
+     where id = $1
+     limit 1`,
+    [projectId]
+  );
+
+  return result.rows[0] ? mapProject(result.rows[0]) : null;
+}
+
+export async function archiveProject(projectId: string) {
+  const result = await query<ProjectRow>(
+    `update projects
+     set archived_at = now(),
+         status = 'archived',
+         updated_at = now()
+     where id = $1
+       and archived_at is null
+     returning id, brand_name, project_name, current_stage, owner_id, owner_name, due_date, status, updated_at`,
+    [projectId]
+  );
+
+  return result.rows[0] ? mapProject(result.rows[0]) : null;
+}
+
+export async function permanentlyDeleteProject(projectId: string) {
+  const existing = await getProjectDeletionSnapshot(projectId);
+  if (!existing) return null;
+
+  await query(`delete from projects where id = $1`, [projectId]);
+  return existing;
+}
+
 export async function getProjectById(projectId: string) {
   const result = await query<ProjectRow>(
     `select id, brand_name, project_name, current_stage, owner_id, owner_name, due_date, status, updated_at
