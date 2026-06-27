@@ -8,7 +8,6 @@ import {
   archiveProjectWithTransaction,
   getProjectDeletionSnapshot,
   getProjectDeletionSnapshotWithTransaction,
-  permanentlyDeleteProjectWithTransaction,
   updateProjectBasics,
 } from "@/server/repositories/projects";
 import { assertCanDeleteProject, type ProjectDeleteMode } from "@/server/use-cases/project-delete";
@@ -87,7 +86,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ proj
 
     const mode: ProjectDeleteMode = parsedBody.data.mode;
     const project = await getProjectDeletionSnapshot(projectId);
-    const allowedProject = assertCanDeleteProject({ user, project, mode });
+    assertCanDeleteProject({ user, project, mode });
 
     if (mode === "archive") {
       const archivedProject = await withTransaction(async (transactionQuery) => {
@@ -132,17 +131,34 @@ export async function DELETE(request: Request, context: { params: Promise<{ proj
     }
 
     const deletedProject = await withTransaction(async (transactionQuery) => {
+      const projectSnapshot = await getProjectDeletionSnapshotWithTransaction(transactionQuery, projectId);
+      const allowedSnapshot = assertCanDeleteProject({ user, project: projectSnapshot, mode });
+
+      const deleteResult = await transactionQuery<{ id: string }>(
+        `delete from projects where id = $1 returning id`,
+        [projectId]
+      );
+
+      const deletedRow = deleteResult.rows[0] ?? null;
+      if (!deletedRow) {
+        throw new AppError({
+          status: 404,
+          code: "project_not_found",
+          userMessage: "项目已经不存在，列表将自动刷新。",
+        });
+      }
+
       await createAuditLog({
         actorId: user.id,
         projectId,
         action: "project.deleted",
         objectType: "project",
         objectId: projectId,
-        before: allowedProject,
+        before: allowedSnapshot,
         transactionQuery,
       });
 
-      return permanentlyDeleteProjectWithTransaction(transactionQuery, projectId);
+      return projectSnapshot;
     });
 
     if (!deletedProject) {
