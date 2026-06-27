@@ -1100,6 +1100,18 @@ export async function updateProjectBasics(projectId: string, input: {
   );
 }
 
+export type ProjectDeleteMode = "archive" | "permanent";
+
+export async function deleteProject(projectId: string, input: { mode: ProjectDeleteMode }) {
+  return readApi<{ projectId: string; mode: ProjectDeleteMode; message: string }>(
+    await fetch(`/api/projects/${projectId}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    })
+  );
+}
+
 export async function fetchWorkspace(projectId: string) {
   const result = await readApi<Omit<WorkspaceData, "projectId">>(await fetch(`/api/projects/${projectId}/workspace`, { cache: "no-store" }));
   if (!result.ok) return result;
