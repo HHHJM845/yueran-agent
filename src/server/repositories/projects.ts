@@ -1,4 +1,4 @@
-import { query } from "@/lib/db";
+import { query, withTransaction, type TransactionQuery } from "@/lib/db";
 import { projectStages, type ProjectSummary, type ProjectStage, type StageStatus } from "@/domain/types";
 import type { AuthUser } from "@/server/repositories/users";
 import { addProjectMember } from "@/server/repositories/project-members";
@@ -144,6 +144,18 @@ export async function getProjectDeletionSnapshot(projectId: string) {
   return result.rows[0] ? mapProject(result.rows[0]) : null;
 }
 
+export async function getProjectDeletionSnapshotWithTransaction(transactionQuery: TransactionQuery, projectId: string) {
+  const result = await transactionQuery<ProjectRow>(
+    `select id, brand_name, project_name, current_stage, owner_id, owner_name, due_date, status, updated_at
+     from projects
+     where id = $1
+     limit 1`,
+    [projectId]
+  );
+
+  return result.rows[0] ? mapProject(result.rows[0]) : null;
+}
+
 export async function archiveProject(projectId: string) {
   const result = await query<ProjectRow>(
     `update projects
@@ -160,10 +172,14 @@ export async function archiveProject(projectId: string) {
 }
 
 export async function permanentlyDeleteProject(projectId: string) {
-  const existing = await getProjectDeletionSnapshot(projectId);
+  return withTransaction(async (transactionQuery) => permanentlyDeleteProjectWithTransaction(transactionQuery, projectId));
+}
+
+export async function permanentlyDeleteProjectWithTransaction(transactionQuery: TransactionQuery, projectId: string) {
+  const existing = await getProjectDeletionSnapshotWithTransaction(transactionQuery, projectId);
   if (!existing) return null;
 
-  await query(`delete from projects where id = $1`, [projectId]);
+  await transactionQuery(`delete from projects where id = $1`, [projectId]);
   return existing;
 }
 

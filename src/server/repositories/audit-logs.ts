@@ -1,3 +1,4 @@
+import type { TransactionQuery } from "@/lib/db";
 import { query } from "@/lib/db";
 
 export type AuditLogView = {
@@ -44,23 +45,33 @@ export async function createAuditLog(input: {
   objectId?: string | null;
   before?: unknown;
   after?: unknown;
+  transactionQuery?: TransactionQuery;
 }) {
-  await query(
-    `insert into audit_logs (actor_id, project_id, action, object_type, object_id, before_json, after_json, created_at)
+  const params = [
+    input.actorId ?? null,
+    input.projectId ?? null,
+    input.action,
+    input.objectType,
+    input.objectId ?? null,
+    JSON.stringify(input.before ?? null),
+    JSON.stringify(input.after ?? null),
+  ];
+
+  const sql = `insert into audit_logs (actor_id, project_id, action, object_type, object_id, before_json, after_json, created_at)
      values (
        case when exists (select 1 from users where id = $1::uuid) then $1::uuid else null end,
        case when $2::uuid is not null and exists (select 1 from projects where id = $2::uuid) then $2::uuid else null end,
        $3, $4, $5, $6::jsonb, $7::jsonb, now()
-     )`,
-    [
-      input.actorId ?? null,
-      input.projectId ?? null,
-      input.action,
-      input.objectType,
-      input.objectId ?? null,
-      JSON.stringify(input.before ?? null),
-      JSON.stringify(input.after ?? null),
-    ]
+     )`;
+
+  if (input.transactionQuery) {
+    await input.transactionQuery(sql, params);
+    return;
+  }
+
+  await query(
+    sql,
+    params
   );
 }
 
