@@ -606,8 +606,33 @@ export function WorkspaceShell() {
       await Promise.all([refreshDashboard(), refreshGovernance()]);
     } else {
       setError(result.error);
-      if (result.error.code === "project_not_found" || result.error.code === "project_delete_forbidden") {
+      if (result.error.code === "project_not_found") {
         await load();
+      } else if (result.error.code === "project_delete_forbidden") {
+        const permissionResult = await fetchCurrentUser();
+        if (permissionResult.ok && permissionResult.data.user.isActive) {
+          setUser(permissionResult.data.user);
+          setAuthError(null);
+          await load();
+        } else if (permissionResult.ok) {
+          setUser(null);
+          setProjects([]);
+          setSelectedProjectId(null);
+          setWorkspaceData(null);
+          setConfig(null);
+          setDashboard(null);
+          setDashboardError(null);
+          setGovernance(null);
+          setGovernanceError(null);
+          setAuthError("你的工作台权限已更新，请重新登录后继续。");
+        } else {
+          setAuthError("系统刚刚更新了你的操作权限，但本地状态还没同步。请重新登录后继续。");
+          setError({
+            code: "workspace_permission_refresh_failed",
+            message: "系统刚刚更新了你的操作权限，请刷新页面或重新登录后再试一次。",
+            recoverable: true,
+          });
+        }
       }
     }
 

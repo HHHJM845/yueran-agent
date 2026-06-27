@@ -72,3 +72,20 @@ Pass
   - PASS
 - `npx eslint src/components/workspace/workspace-shell.tsx`
   - PASS
+
+## Fix follow-up
+
+### Changed files
+
+- `src/components/workspace/workspace-shell.tsx`
+- `src/components/workspace/workspace-shell-project-actions.test.mjs`
+- `.superpowers/sdd/task-3-report.md`
+
+### Validation
+
+- `node --test src/components/workspace/workspace-shell-project-actions.test.mjs`
+  - PASS
+- `npm run typecheck`
+  - PASS
+- `npx eslint src/components/workspace/workspace-shell.tsx`
+  - PASS

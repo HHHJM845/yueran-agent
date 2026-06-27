@@ -25,4 +25,6 @@ test("delete action calls real deleteProject api and refreshes stale permissions
   assert.match(source, /mode: "archive"/);
   assert.match(source, /mode: "permanent"/);
   assert.match(source, /project_delete_forbidden/);
+  assert.match(source, /fetchCurrentUser\(\)/);
+  assert.match(source, /setUser\(permissionResult\.data\.user\)/);
 });
