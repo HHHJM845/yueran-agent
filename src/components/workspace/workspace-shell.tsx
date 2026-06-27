@@ -76,6 +76,7 @@ import {
   createStoryboardImageBatch,
   createStoryboardImageBatchClientReview,
   deliverToFeishu,
+  deleteProject,
   exportContract,
   fetchBootstrapStatus,
   fetchConfig,
@@ -169,6 +170,7 @@ import {
   type StoryboardShotView,
   type StoryboardVideoInputMode,
   type StoryboardVideoView,
+  type ProjectDeleteMode,
   type TechnicalFeasibilityAction,
   type WorkspaceData,
   type WorkloadEstimateView,
@@ -379,6 +381,9 @@ export function WorkspaceShell() {
   const [error, setError] = useState<ApiError | null>(null);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [createProjectMessage, setCreateProjectMessage] = useState<string | null>(null);
+  const [deleteProjectMessage, setDeleteProjectMessage] = useState<string | null>(null);
+  const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
   const [workspaceData, setWorkspaceData] = useState<WorkspaceData | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
@@ -552,6 +557,8 @@ export function WorkspaceShell() {
 
   async function handleCreateProject(formData: FormData) {
     setCreating(true);
+    setCreateProjectMessage(null);
+    setDeleteProjectMessage(null);
     setError(null);
     const result = await createProject({
       brandName: String(formData.get("brandName") ?? ""),
@@ -563,11 +570,39 @@ export function WorkspaceShell() {
     if (result.ok) {
       setProjects((current) => [result.data, ...current]);
       setSelectedProjectId(result.data.id);
+      setCreateProjectMessage(`已创建项目“${result.data.projectName}”。`);
       await refreshDashboard();
     } else {
       setError(result.error);
     }
     setCreating(false);
+  }
+
+  async function handleDeleteProject(project: ProjectSummary, mode: ProjectDeleteMode) {
+    setDeletingProjectId(project.id);
+    setDeleteProjectMessage(null);
+    setCreateProjectMessage(null);
+    setError(null);
+    const result = await deleteProject(project.id, { mode });
+
+    if (result.ok) {
+      const nextProjects = projects.filter((item) => item.id !== project.id);
+      setProjects(nextProjects);
+      if (selectedProjectId === project.id) {
+        const nextSelectedProjectId = nextProjects[0]?.id ?? null;
+        setSelectedProjectId(nextSelectedProjectId);
+        if (!nextSelectedProjectId) setWorkspaceData(null);
+      }
+      setDeleteProjectMessage(result.data.message);
+      await Promise.all([refreshDashboard(), refreshGovernance()]);
+    } else {
+      setError(result.error);
+      if (result.error.code === "project_not_found" || result.error.code === "project_access_denied") {
+        await load();
+      }
+    }
+
+    setDeletingProjectId(null);
   }
 
   async function handleProjectUpdated(project: ProjectSummary) {
@@ -643,6 +678,8 @@ export function WorkspaceShell() {
         creating={creating}
         user={user}
         onLogout={() => void handleLogout()}
+        onDeleteProject={(project, mode) => void handleDeleteProject(project, mode)}
+        deletingProjectId={deletingProjectId}
         onToggleSidebar={() => setSidebarCollapsed(true)}
       />
 
@@ -660,6 +697,8 @@ export function WorkspaceShell() {
       )}
 
       <section className="workspace-workbench min-w-0 border-x border-[var(--border-soft)] bg-[var(--surface-soft)] min-[821px]:h-screen min-[821px]:overflow-y-auto">
+        {deleteProjectMessage && <Feedback tone="success" text={deleteProjectMessage} />}
+        {createProjectMessage && <Feedback tone="success" text={createProjectMessage} />}
         <WorkspaceCenter
           key={selectedProject?.id ?? "dashboard"}
           project={selectedProject}
@@ -795,6 +834,8 @@ function ProjectSidebar({
   user,
   onLogout,
   onToggleSidebar,
+  onDeleteProject,
+  deletingProjectId,
 }: {
   projects: ProjectSummary[];
   selectedProjectId: string | null;
@@ -807,8 +848,18 @@ function ProjectSidebar({
   user: CurrentUser;
   onLogout: () => void;
   onToggleSidebar: () => void;
+  onDeleteProject: (project: ProjectSummary, mode: ProjectDeleteMode) => void;
+  deletingProjectId: string | null;
 }) {
   const canCreateProject = user.role === "business" || user.role === "admin";
+  const [contextMenu, setContextMenu] = useState<{ project: ProjectSummary; x: number; y: number } | null>(null);
+  const [deleteDialog, setDeleteDialog] = useState<{
+    project: ProjectSummary;
+    mode: ProjectDeleteMode;
+    step: "archive" | "permanent_first" | "permanent_second";
+  } | null>(null);
+  const canArchiveProject = (project: ProjectSummary) => user.role === "admin" || (user.role === "business" && project.ownerName === user.name);
+  const canPermanentlyDeleteProject = user.role === "admin";
 
   return (
     <aside className="workspace-sidebar flex min-h-screen flex-col bg-[var(--sidebar)] min-[821px]:sticky min-[821px]:top-0 min-[821px]:h-screen min-[821px]:min-h-0">
@@ -857,7 +908,12 @@ function ProjectSidebar({
             {projects.map((project) => (
               <button
                 key={project.id}
+                type="button"
                 onClick={() => onSelect(project.id)}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  setContextMenu({ project, x: event.clientX, y: event.clientY });
+                }}
                 title={`${project.brandName} / ${project.projectName} · ${stageLabels[project.currentStage]} · ${project.ownerName} · ${project.dueDate ?? "未设截止"}`}
                 className={cn(
                   "group rounded-[0.95rem] border text-left transition-all",
@@ -888,6 +944,97 @@ function ProjectSidebar({
         )}
         </div>
       </ScrollArea>
+      {contextMenu && (
+        <div
+          className="project-context-menu fixed z-[80] min-w-44 overflow-hidden rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-1 text-sm shadow-card"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onMouseLeave={() => setContextMenu(null)}
+        >
+          <button
+            type="button"
+            className="w-full rounded-[0.8rem] px-3 py-2 text-left hover:bg-[var(--surface-soft)]"
+            onClick={() => {
+              onSelect(contextMenu.project.id);
+              setContextMenu(null);
+            }}
+          >
+            打开项目
+          </button>
+          {canArchiveProject(contextMenu.project) && (
+            <button
+              type="button"
+              className="w-full rounded-[0.8rem] px-3 py-2 text-left hover:bg-[var(--surface-soft)]"
+              disabled={deletingProjectId === contextMenu.project.id}
+              onClick={() => {
+                setDeleteDialog({ project: contextMenu.project, mode: "archive", step: "archive" });
+                setContextMenu(null);
+              }}
+            >
+              移出项目列表
+            </button>
+          )}
+          {canPermanentlyDeleteProject && (
+            <button
+              type="button"
+              className="w-full rounded-[0.8rem] px-3 py-2 text-left text-[var(--danger)] hover:bg-[var(--macaron-pink-bg)]"
+              disabled={deletingProjectId === contextMenu.project.id}
+              onClick={() => {
+                setDeleteDialog({ project: contextMenu.project, mode: "permanent", step: "permanent_first" });
+                setContextMenu(null);
+              }}
+            >
+              永久删除
+            </button>
+          )}
+        </div>
+      )}
+      {deleteDialog && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/20 p-4">
+          <section className="w-full max-w-md rounded-card border border-[var(--border-soft)] bg-[var(--surface-card)] p-5 shadow-card">
+            <h3 className="text-base font-semibold text-[var(--text-primary)]">
+              {deleteDialog.step === "archive"
+                ? "移出项目列表？"
+                : deleteDialog.step === "permanent_first"
+                  ? "永久删除项目？"
+                  : "再次确认永久删除"}
+            </h3>
+            <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
+              {deleteDialog.step === "archive"
+                ? `“${deleteDialog.project.projectName}”会从项目列表隐藏，但资料、流程记录和审计日志会保留。`
+                : deleteDialog.step === "permanent_first"
+                  ? `“${deleteDialog.project.projectName}”及关联流程记录会被删除，无法恢复。`
+                  : "这个操作不可恢复。请再次确认是否永久删除该项目。"}
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setDeleteDialog(null)}>
+                取消
+              </Button>
+              {deleteDialog.step === "permanent_first" ? (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  onClick={() => setDeleteDialog({ ...deleteDialog, step: "permanent_second" })}
+                >
+                  永久删除
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  variant={deleteDialog.mode === "permanent" ? "destructive" : "default"}
+                  disabled={deletingProjectId === deleteDialog.project.id}
+                  onClick={() => {
+                    onDeleteProject(deleteDialog.project, deleteDialog.mode);
+                    setDeleteDialog(null);
+                  }}
+                >
+                  {deletingProjectId === deleteDialog.project.id ? <Loader2 className="animate-spin" size={16} /> : null}
+                  {deleteDialog.mode === "permanent" ? "确认永久删除" : "确认移出"}
+                </Button>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
       <div className="border-t border-[var(--border-soft)] p-3">
         {canCreateProject ? (
           <Sheet>
