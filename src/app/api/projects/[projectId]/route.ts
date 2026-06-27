@@ -8,6 +8,7 @@ import {
   archiveProjectWithTransaction,
   getProjectDeletionSnapshot,
   getProjectDeletionSnapshotWithTransaction,
+  permanentlyDeleteProjectWithTransaction,
   updateProjectBasics,
 } from "@/server/repositories/projects";
 import { assertCanDeleteProject, type ProjectDeleteMode } from "@/server/use-cases/project-delete";
@@ -134,13 +135,8 @@ export async function DELETE(request: Request, context: { params: Promise<{ proj
       const projectSnapshot = await getProjectDeletionSnapshotWithTransaction(transactionQuery, projectId);
       const allowedSnapshot = assertCanDeleteProject({ user, project: projectSnapshot, mode });
 
-      const deleteResult = await transactionQuery<{ id: string }>(
-        `delete from projects where id = $1 returning id`,
-        [projectId]
-      );
-
-      const deletedRow = deleteResult.rows[0] ?? null;
-      if (!deletedRow) {
+      const deletedSnapshot = await permanentlyDeleteProjectWithTransaction(transactionQuery, projectId);
+      if (!deletedSnapshot) {
         throw new AppError({
           status: 404,
           code: "project_not_found",
@@ -158,7 +154,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ proj
         transactionQuery,
       });
 
-      return projectSnapshot;
+      return deletedSnapshot;
     });
 
     if (!deletedProject) {

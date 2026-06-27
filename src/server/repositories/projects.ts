@@ -183,7 +183,13 @@ export async function permanentlyDeleteProjectWithTransaction(transactionQuery: 
   const existing = await getProjectDeletionSnapshotWithTransaction(transactionQuery, projectId);
   if (!existing) return null;
 
-  await transactionQuery(`delete from projects where id = $1`, [projectId]);
+  const deleteResult = await transactionQuery<{ id: string }>(
+    `delete from projects where id = $1 returning id`,
+    [projectId]
+  );
+
+  if (!deleteResult.rows[0]) return null;
+
   return existing;
 }
 
