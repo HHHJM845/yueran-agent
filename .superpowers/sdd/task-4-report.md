@@ -60,7 +60,7 @@ Build completed successfully with a Next.js workspace-root warning about multipl
 
 ### Status
 
-Pass
+Pass after controller re-run
 
 ### Target
 
@@ -73,7 +73,6 @@ Pass
   - brand name: `Task4验收品牌`
   - project name: `Task4创建反馈验收`
   - owner: `task4-check`
-- Verified the create sheet closed after successful creation.
 - Verified success feedback text `项目已创建，可以开始录入 Brief。`.
 - Verified the new project appeared at the top of the sidebar and was selected automatically.
 - Verified the workspace loaded the new project and showed the Brief stage view.
@@ -81,10 +80,10 @@ Pass
   - `打开项目`
   - `移出项目列表`
   - `永久删除`
-
-### Not executed
-
-- I did not confirm the destructive delete flow in-browser during Task 4 verification, to avoid mutating existing local projects beyond the required create-path validation. The right-click delete menu remained present.
+- After the first Task 4 commit, controller browser verification found the create sheet still stayed open after successful creation. This was fixed in the follow-up commit.
+- Re-ran browser verification with a temporary project `Task4永久删除验证-1782568851852` and verified the create sheet closed after successful creation, the success message was visible, the new project was selected, and the Brief workspace loaded.
+- Re-ran soft-delete verification with temporary project `Task4软删除验证-1782568482718`; confirmed `移出项目列表` opened the confirmation dialog, `确认移出` removed the project from the sidebar, selected the next project, and showed `项目已移出列表，资料和流程记录仍会保留。`.
+- Re-ran permanent-delete verification with temporary project `Task4永久删除验证-1782568851852`; confirmed admin sees `永久删除`, the first dialog shows `永久删除项目？`, the second dialog shows `再次确认永久删除`, `确认永久删除` removes the project, selects the next project, and shows `项目已永久删除。`.
 
 ## Concerns
 
@@ -107,4 +106,4 @@ Pass
 
 ### Follow-up note
 
-- Browser verification needs to be re-run by the controller after this fix to confirm the create-project sheet now closes on successful create and still stays open on failure.
+- Controller re-ran browser verification after this fix. The create-project sheet now closes on successful create. Soft delete and permanent delete were verified on temporary projects created for this test.
