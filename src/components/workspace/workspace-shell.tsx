@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   BriefcaseBusiness,
@@ -1130,8 +1130,9 @@ function ProjectSidebar({
                 <SheetDescription>项目创建后会进入数据库，并出现在左侧项目列表中。</SheetDescription>
               </SheetHeader>
               <form
-                action={async (formData) => {
-                  const created = await onCreate(formData);
+                onSubmit={async (event: FormEvent<HTMLFormElement>) => {
+                  event.preventDefault();
+                  const created = await onCreate(new FormData(event.currentTarget));
                   if (created) setCreateSheetOpen(false);
                 }}
                 className="grid gap-3 px-4"

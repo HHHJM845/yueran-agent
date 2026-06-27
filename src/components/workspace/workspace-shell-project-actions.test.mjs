@@ -33,4 +33,7 @@ test("project creation closes sheet only after successful create and shows succe
   assert.match(source, /setCreateSheetOpen\(false\)/);
   assert.match(source, /项目已创建，可以开始录入 Brief。/);
   assert.match(source, /Promise<boolean>/);
+  assert.match(source, /onSubmit=\{/);
+  assert.match(source, /event\.preventDefault\(\)/);
+  assert.match(source, /new FormData\(event\.currentTarget\)/);
 });

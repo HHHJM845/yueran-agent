@@ -89,3 +89,22 @@ Pass
 ## Concerns
 
 - This worktree already contained unrelated dirty files before Task 4. I kept the patch scoped to the requested files and did not revert or rewrite unrelated changes.
+
+## Fix follow-up
+
+### Changed files
+
+- `src/components/workspace/workspace-shell.tsx`
+- `src/components/workspace/workspace-shell-project-actions.test.mjs`
+- `.superpowers/sdd/task-4-report.md`
+
+### Validation results
+
+- `node --test src/components/workspace/workspace-shell-project-actions.test.mjs` — Pass
+- `npm run typecheck` — Pass
+- `npx eslint src/components/workspace/workspace-shell.tsx src/components/workspace/api.ts` — Pass
+- `npm run build` — Pass, with the existing Next.js workspace-root warning about multiple `package-lock.json` files
+
+### Follow-up note
+
+- Browser verification needs to be re-run by the controller after this fix to confirm the create-project sheet now closes on successful create and still stays open on failure.
