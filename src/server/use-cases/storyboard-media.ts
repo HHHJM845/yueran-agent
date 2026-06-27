@@ -47,6 +47,7 @@ const storyboardVideoJobInputSchema = z.object({
   requestedBy: z.string().uuid(),
   mode: z.enum(["single_image", "start_end_frame", "multi_reference"]).optional(),
   imageIds: z.array(z.string().uuid()).optional(),
+  prompt: z.string().optional(),
 });
 
 export type StoryboardVideoInputMode = "single_image" | "start_end_frame" | "multi_reference";
@@ -352,6 +353,7 @@ export async function enqueueStoryboardVideoGeneration(input: {
   shotId: string;
   mode: StoryboardVideoInputMode;
   imageIds: string[];
+  prompt?: string;
   requestedBy: string;
 }) {
   const config = assertArkVideoGenerationReady();
@@ -390,13 +392,14 @@ export async function enqueueStoryboardVideoGeneration(input: {
     }
   }
   const primaryImage = inputImages[0];
+  const videoPrompt = input.prompt?.trim() || buildStoryboardVideoPrompt(shot);
 
   const video = await createStoryboardVideoRecord({
     projectId: input.projectId,
     sceneId: shot.sceneId,
     shotId: shot.id,
     imageId: primaryImage.id,
-    prompt: buildStoryboardVideoPrompt(shot),
+    prompt: videoPrompt,
     provider: config.provider,
     modelName: config.model,
     actorId: input.requestedBy,
@@ -407,7 +410,7 @@ export async function enqueueStoryboardVideoGeneration(input: {
     shotId: shot.id,
     mode: input.mode,
     imageIds: uniqueImageIds,
-    prompt: buildStoryboardVideoPrompt(shot),
+    prompt: videoPrompt,
     metadata: {
       providerSupports: "single_image",
       primaryImageId: primaryImage.id,
@@ -426,6 +429,7 @@ export async function enqueueStoryboardVideoGeneration(input: {
       storyboardVideoId: video.id,
       mode: input.mode,
       imageIds: uniqueImageIds,
+      prompt: videoPrompt,
       requestedBy: input.requestedBy,
     },
     createdBy: input.requestedBy,
@@ -444,7 +448,7 @@ export async function enqueueStoryboardVideoGeneration(input: {
       ...uniqueImageIds.map((imageId) => ({ type: "storyboard_image", id: imageId })),
     ],
     outputRefs: [{ type: "storyboard_video", id: video.id }],
-    snapshot: { shotId: shot.id, storyboardVideoId: video.id, videoInputId: videoInput.id, mode: input.mode, imageIds: uniqueImageIds },
+    snapshot: { shotId: shot.id, storyboardVideoId: video.id, videoInputId: videoInput.id, mode: input.mode, imageIds: uniqueImageIds, prompt: videoPrompt },
   });
 
   return {
@@ -526,9 +530,10 @@ export async function runStoryboardVideoGenerationJob(jobId: string) {
   });
 
   try {
+    const videoPrompt = input.prompt?.trim() || persistedInput?.prompt || buildStoryboardVideoPrompt(shot);
     const generatedVideo = await generateArkImageToVideo({
       model: env.ARK_VIDEO_GENERATION_MODEL,
-      prompt: buildStoryboardVideoPrompt(shot),
+      prompt: videoPrompt,
       imageUrl: selectedImage.ossKey ? createReadUrl(selectedImage.ossKey, 60 * 60) : selectedImage.ossUrl,
       timeoutMs: 12 * 60_000,
       telemetry: {
@@ -574,7 +579,7 @@ export async function runStoryboardVideoGenerationJob(jobId: string) {
         shotId: shot.id,
         sceneId: shot.sceneId,
         storyboardVideoId: savedVideo.id,
-        prompt: savedVideo.prompt,
+        prompt: videoPrompt,
         imageId: selectedImage.id,
         inputMode: mode,
         inputImageIds: imageIds,

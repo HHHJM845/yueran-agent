@@ -1548,7 +1548,7 @@ export async function approveReviewCut(projectId: string, reviewCutId: string) {
 
 export async function generateStoryboardVideo(
   projectId: string,
-  input: { shotId: string; mode: StoryboardVideoInputMode; imageIds: string[] }
+  input: { shotId: string; mode: StoryboardVideoInputMode; imageIds: string[]; prompt?: string }
 ) {
   return readApi<{ jobId: string; storyboardVideoId: string; message: string }>(
     await fetch(`/api/projects/${projectId}/storyboard-videos/generate`, {
