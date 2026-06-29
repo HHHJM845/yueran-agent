@@ -11,6 +11,7 @@ import {
   restoreProductionEntity,
   submitProductionSetupReview,
   updateProductionEntityDepth,
+  updateProductionReferencePrompt,
 } from "@/server/use-cases/production-setup";
 
 const patchSchema = z.discriminatedUnion("action", [
@@ -33,6 +34,13 @@ const patchSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("restore_entity"),
     entityId: z.string().uuid("人物或场景设定 ID 不正确，请刷新后再试。"),
+  }),
+  z.object({
+    action: z.literal("save_prompt"),
+    referenceSetId: z.string().uuid("设定图卡片 ID 不正确，请刷新后再试。"),
+    prompt: z.string().trim().min(1, "请填写生成提示词。"),
+    ratio: z.enum(["1:1", "3:4", "4:3", "16:9", "9:16"]),
+    generationCount: z.coerce.number().int().min(1).max(8),
   }),
 ]);
 
@@ -78,7 +86,20 @@ export async function PATCH(request: Request, context: { params: Promise<{ proje
     if (input.action === "ignore_entity") {
       return Response.json({ ok: true, data: await ignoreProductionEntity({ projectId, entityId: input.entityId, reason: input.reason, actorId: user.id }) });
     }
-    return Response.json({ ok: true, data: await restoreProductionEntity({ projectId, entityId: input.entityId, actorId: user.id }) });
+    if (input.action === "restore_entity") {
+      return Response.json({ ok: true, data: await restoreProductionEntity({ projectId, entityId: input.entityId, actorId: user.id }) });
+    }
+    return Response.json({
+      ok: true,
+      data: await updateProductionReferencePrompt({
+        projectId,
+        referenceSetId: input.referenceSetId,
+        prompt: input.prompt,
+        ratio: input.ratio,
+        generationCount: input.generationCount,
+        actorId: user.id,
+      }),
+    });
   } catch (error) {
     return jsonError(error);
   }

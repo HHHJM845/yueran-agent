@@ -72,3 +72,18 @@ test("production setup supports confirmable active and ignored entity lists", as
   assert.match(route, /action: z\.literal\("restore_entity"\)/);
   assert.match(route, /action: z\.literal\("confirm_list"\)/);
 });
+
+test("production setup prompts are visible editable and style-aware", async () => {
+  const source = await readFile(new URL("./production-setup.ts", import.meta.url), "utf8");
+  const repository = await readFile(new URL("../repositories/production-entities.ts", import.meta.url), "utf8");
+  const route = await readFile(new URL("../../app/api/projects/[projectId]/production-entities/route.ts", import.meta.url), "utf8");
+
+  assert.match(source, /listProjectCreativeDirections/);
+  assert.match(source, /已确认视觉风格/);
+  assert.match(source, /sourceShotIds/);
+  assert.match(repository, /saveProductionReferencePrompt/);
+  assert.match(repository, /current_prompt = \$3/);
+  assert.match(repository, /default_ratio = \$4/);
+  assert.match(repository, /last_generation_count = \$5/);
+  assert.match(route, /action: z\.literal\("save_prompt"\)/);
+});

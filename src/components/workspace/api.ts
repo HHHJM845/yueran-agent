@@ -1458,6 +1458,24 @@ export async function confirmProductionEntityList(projectId: string) {
   );
 }
 
+export async function saveProductionReferencePrompt(
+  projectId: string,
+  input: {
+    referenceSetId: string;
+    prompt: string;
+    ratio: ProductionReferenceSetView["defaultRatio"];
+    generationCount: number;
+  }
+) {
+  return readApi<{ referenceSet: ProductionReferenceSetView; message: string }>(
+    await fetch(`/api/projects/${projectId}/production-entities`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "save_prompt", ...input }),
+    })
+  );
+}
+
 export async function generateStoryboardImage(projectId: string, shotId: string) {
   return readApi<{ jobId: string; storyboardImageId: string; message: string }>(
     await fetch(`/api/projects/${projectId}/storyboard-images/generate`, {

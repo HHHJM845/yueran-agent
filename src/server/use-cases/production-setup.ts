@@ -4,6 +4,7 @@ import {
   confirmProductionEntities,
   listProductionEntities,
   listProductionReferenceSets,
+  saveProductionReferencePrompt,
   setProductionEntityInclusion,
   updateProjectProductionSetupStatus,
   updateProductionEntityDetails,
@@ -15,6 +16,7 @@ import {
   type ProductionReferenceSetView,
   type ReferenceSetDepth,
 } from "@/server/repositories/production-entities";
+import { listProjectCreativeDirections } from "@/server/repositories/creative-directions";
 import { listStoryboardShots, type StoryboardShotView } from "@/server/repositories/story-production";
 import { createWorkflowClientReview } from "@/server/use-cases/client-review";
 
@@ -57,6 +59,12 @@ export async function createProductionSetupFromStoryboard(input: {
   actorId: string;
 }) {
   const drafts = extractProductionEntitiesFromStoryboard({ storyboardShots: input.storyboardShots });
+  const creativeDirections = await listProjectCreativeDirections(input.projectId);
+  const selectedStyleContext = creativeDirections
+    .filter((direction) => direction.isSelected)
+    .map((direction) => `${direction.title}：${direction.coreIdea}；已确认视觉风格：${direction.atmospherePrompt || direction.referenceTags.join("、")}`)
+    .join("\n");
+  const shotContextById = new Map(input.storyboardShots.map((shot) => [shot.id, `${shot.shotNumber}：${shot.visualDescription}`]));
   const entities: ProductionEntityView[] = [];
   const referenceSets: ProductionReferenceSetView[] = [];
 
@@ -76,11 +84,15 @@ export async function createProductionSetupFromStoryboard(input: {
         entityId: entity.id,
         depth: entity.referenceDepth,
         status: entity.status,
-        prompt: buildReferencePrompt(entity),
+        prompt: buildReferencePrompt(entity, {
+          styleContext: selectedStyleContext,
+          shotContext: entity.sourceShotIds.map((shotId) => shotContextById.get(shotId)).filter(Boolean).join("\n"),
+        }),
         snapshot: {
           entityType: entity.entityType,
           name: entity.name,
           sourceShotIds: entity.sourceShotIds,
+          styleContext: selectedStyleContext,
         },
         actorId: input.actorId,
       })
@@ -253,6 +265,39 @@ export async function confirmProductionEntityList(input: { projectId: string; ac
   return { entities: confirmed, message: "人物和场景清单已确认，可以开始生成设定图。" };
 }
 
+export async function updateProductionReferencePrompt(input: {
+  projectId: string;
+  referenceSetId: string;
+  prompt: string;
+  ratio: "1:1" | "3:4" | "4:3" | "16:9" | "9:16";
+  generationCount: number;
+  actorId: string;
+}) {
+  if (!input.prompt.trim()) {
+    throw new AppError({
+      status: 422,
+      code: "production_reference_prompt_required",
+      userMessage: "请先填写这个人物或场景的生成提示词。",
+    });
+  }
+  const referenceSet = await saveProductionReferencePrompt({
+    projectId: input.projectId,
+    referenceSetId: input.referenceSetId,
+    prompt: input.prompt,
+    ratio: input.ratio,
+    generationCount: input.generationCount,
+    actorId: input.actorId,
+  });
+  if (!referenceSet) {
+    throw new AppError({
+      status: 404,
+      code: "production_reference_set_not_found",
+      userMessage: "没有找到这个设定图卡片。请刷新工作台后再试。",
+    });
+  }
+  return { referenceSet, message: "提示词、比例和生成数量已保存。" };
+}
+
 export async function submitProductionSetupReview(input: {
   projectId: string;
   actorId: string;
@@ -406,7 +451,24 @@ function firstString(...values: unknown[]) {
   return null;
 }
 
-function buildReferencePrompt(entity: ProductionEntityView) {
-  const label = entity.entityType === "character" ? "人物" : entity.entityType === "scene" ? "场景" : "道具";
-  return `${label}设定：${entity.name}${entity.description ? `。补充说明：${entity.description}` : ""}`;
+function defaultRatioForEntity(entityType: ProductionEntityType): "3:4" | "16:9" | "1:1" {
+  if (entityType === "character") return "3:4";
+  if (entityType === "scene") return "16:9";
+  return "1:1";
+}
+
+function buildReferencePrompt(
+  entity: Pick<ProductionEntityView, "entityType" | "name" | "description" | "importance" | "sourceShotIds">,
+  context: { styleContext?: string; shotContext?: string } = {}
+) {
+  const label = entity.entityType === "character" ? "角色人物设定图" : entity.entityType === "scene" ? "场景设定图" : "道具设定图";
+  const defaultRatio = defaultRatioForEntity(entity.entityType);
+  return [
+    `${label}：${entity.name}`,
+    entity.description ? `设定说明：${entity.description}` : "设定说明：根据剧本文字分镜生成可用于后续分镜图片生产的稳定参考。",
+    context.shotContext ? `剧本上下文：${context.shotContext}` : `来源分镜：${entity.sourceShotIds.length} 条`,
+    context.styleContext ? `已确认视觉风格：${context.styleContext}` : "已确认视觉风格：延续上一轮甲方通过的创意视觉方向。",
+    `默认比例：${defaultRatio}`,
+    "生成要求：主体清晰，角色和场景特征稳定，适合后续分镜图片生产参考；不要文字水印，不要 UI 边框，不要拼贴。",
+  ].join("\n");
 }
