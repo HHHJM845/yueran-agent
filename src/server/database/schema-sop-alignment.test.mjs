@@ -83,3 +83,16 @@ test("schema contains SOP alignment tables and review metadata", () => {
     assert.match(schema, representativePattern);
   }
 });
+
+test("SOP5 production entity prompt pool schema is persisted", async () => {
+  const schema = readFileSync(new URL("./schema.sql", import.meta.url), "utf8");
+
+  assert.match(schema, /inclusion_status text not null default 'active'/);
+  assert.match(schema, /ignore_reason text not null default ''/);
+  assert.match(schema, /confirmed_at timestamptz/);
+  assert.match(schema, /current_prompt text not null default ''/);
+  assert.match(schema, /selected_image_id uuid references generated_images\(id\) on delete set null/);
+  assert.match(schema, /default_ratio text not null default '1:1'/);
+  assert.match(schema, /last_generation_count integer not null default 1/);
+  assert.match(schema, /metadata_json jsonb not null default '\{\}'::jsonb/);
+});

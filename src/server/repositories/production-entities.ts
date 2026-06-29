@@ -2,6 +2,8 @@ import { query } from "@/lib/db";
 
 export type ProductionEntityType = "character" | "scene" | "prop";
 export type ReferenceSetDepth = "basic" | "full";
+export type ProductionEntityInclusionStatus = "active" | "ignored";
+export type ProductionImageRatio = "1:1" | "3:4" | "4:3" | "16:9" | "9:16";
 export type ProductionEntityStatus =
   | "draft"
   | "generating"
@@ -21,6 +23,9 @@ export type ProductionEntityView = {
   referenceDepth: ReferenceSetDepth;
   sourceShotIds: string[];
   status: ProductionEntityStatus;
+  inclusionStatus: ProductionEntityInclusionStatus;
+  ignoreReason: string;
+  confirmedAt: string | null;
   version: number;
   lockedAt: string | null;
   updatedAt: string;
@@ -33,7 +38,11 @@ export type ProductionReferenceSetView = {
   depth: ReferenceSetDepth;
   status: ProductionEntityStatus;
   prompt: string;
+  currentPrompt: string;
   referenceImageIds: string[];
+  selectedImageId: string | null;
+  defaultRatio: ProductionImageRatio;
+  lastGenerationCount: number;
   snapshot: Record<string, unknown>;
   version: number;
   updatedAt: string;
@@ -79,6 +88,9 @@ type ProductionEntityRow = {
   reference_depth: ReferenceSetDepth;
   source_shot_ids: unknown;
   status: ProductionEntityStatus;
+  inclusion_status: ProductionEntityInclusionStatus;
+  ignore_reason: string;
+  confirmed_at: string | null;
   version: number;
   locked_at: string | null;
   updated_at: string;
@@ -91,7 +103,11 @@ type ProductionReferenceSetRow = {
   depth: ReferenceSetDepth;
   status: ProductionEntityStatus;
   prompt: string;
+  current_prompt: string;
   reference_image_ids: unknown;
+  selected_image_id: string | null;
+  default_ratio: ProductionImageRatio;
+  last_generation_count: number;
   snapshot_json: unknown;
   version: number;
   updated_at: string;
@@ -100,7 +116,8 @@ type ProductionReferenceSetRow = {
 export async function listProductionEntities(projectId: string): Promise<ProductionEntityView[]> {
   const result = await query<ProductionEntityRow>(
     `select id, project_id, entity_type, name, description, importance, reference_depth,
-            source_shot_ids, status, version, locked_at, updated_at
+            source_shot_ids, status, inclusion_status, ignore_reason, confirmed_at,
+            version, locked_at, updated_at
      from production_entities
      where project_id = $1
      order by entity_type, name asc, updated_at desc`,
@@ -112,6 +129,7 @@ export async function listProductionEntities(projectId: string): Promise<Product
 export async function listProductionReferenceSets(projectId: string): Promise<ProductionReferenceSetView[]> {
   const result = await query<ProductionReferenceSetRow>(
     `select id, project_id, entity_id, depth, status, prompt, reference_image_ids,
+            current_prompt, selected_image_id, default_ratio, last_generation_count,
             snapshot_json, version, updated_at
      from production_reference_sets
      where project_id = $1
@@ -150,7 +168,8 @@ export async function upsertProductionEntity(input: UpsertProductionEntityInput)
        and entity_type = $2
        and lower(name) = lower($3)
      returning id, project_id, entity_type, name, description, importance, reference_depth,
-               source_shot_ids, status, version, locked_at, updated_at`,
+               source_shot_ids, status, inclusion_status, ignore_reason, confirmed_at,
+               version, locked_at, updated_at`,
       [
         input.projectId,
         input.entityType,
@@ -173,7 +192,8 @@ export async function upsertProductionEntity(input: UpsertProductionEntityInput)
      )
      values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $9)
      returning id, project_id, entity_type, name, description, importance, reference_depth,
-               source_shot_ids, status, version, locked_at, updated_at`,
+               source_shot_ids, status, inclusion_status, ignore_reason, confirmed_at,
+               version, locked_at, updated_at`,
     [
       input.projectId,
       input.entityType,
@@ -204,20 +224,19 @@ export async function upsertReferenceSet(input: UpsertReferenceSetInput): Promis
   if (existing.rows[0]) {
     const updated = await query<ProductionReferenceSetRow>(
       `update production_reference_sets
-       set status = $4,
-           prompt = $5,
-           reference_image_ids = coalesce($6::jsonb, reference_image_ids),
-           snapshot_json = $7::jsonb,
+       set status = $1,
+           prompt = case when $2 <> '' then $2 else prompt end,
+           current_prompt = case when $2 <> '' then $2 else current_prompt end,
+           reference_image_ids = coalesce($3::jsonb, reference_image_ids),
+           snapshot_json = $4::jsonb,
            version = version + 1,
-           updated_by = coalesce($8, updated_by),
+           updated_by = coalesce($5, updated_by),
            updated_at = now()
-       where id = $9
+       where id = $6
        returning id, project_id, entity_id, depth, status, prompt, reference_image_ids,
+                 current_prompt, selected_image_id, default_ratio, last_generation_count,
                  snapshot_json, version, updated_at`,
       [
-        input.projectId,
-        input.entityId,
-        input.depth,
         input.status ?? "draft",
         input.prompt ?? "",
         input.referenceImageIds ? JSON.stringify(input.referenceImageIds) : null,
@@ -232,10 +251,11 @@ export async function upsertReferenceSet(input: UpsertReferenceSetInput): Promis
   const result = await query<ProductionReferenceSetRow>(
     `insert into production_reference_sets (
        project_id, entity_id, depth, status, prompt, reference_image_ids,
-       snapshot_json, created_by, updated_by
+       current_prompt, snapshot_json, created_by, updated_by
      )
-     values ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $8)
+     values ($1, $2, $3, $4, $5, $6::jsonb, $5, $7::jsonb, $8, $8)
      returning id, project_id, entity_id, depth, status, prompt, reference_image_ids,
+               current_prompt, selected_image_id, default_ratio, last_generation_count,
                snapshot_json, version, updated_at`,
     [
       input.projectId,
@@ -260,7 +280,8 @@ export async function updateProductionEntityStatus(input: UpdateProductionEntity
          updated_at = now()
      where project_id = $1 and id = $2
      returning id, project_id, entity_type, name, description, importance, reference_depth,
-               source_shot_ids, status, version, locked_at, updated_at`,
+               source_shot_ids, status, inclusion_status, ignore_reason, confirmed_at,
+               version, locked_at, updated_at`,
     [input.projectId, input.entityId, input.status, input.actorId ?? null]
   );
   return result.rows[0] ? mapEntity(result.rows[0]) : null;
@@ -301,6 +322,9 @@ function mapEntity(row: ProductionEntityRow): ProductionEntityView {
     referenceDepth: row.reference_depth,
     sourceShotIds: normalizeStringArray(row.source_shot_ids),
     status: row.status,
+    inclusionStatus: row.inclusion_status,
+    ignoreReason: row.ignore_reason,
+    confirmedAt: row.confirmed_at,
     version: row.version,
     lockedAt: row.locked_at,
     updatedAt: row.updated_at,
@@ -315,7 +339,11 @@ function mapReferenceSet(row: ProductionReferenceSetRow): ProductionReferenceSet
     depth: row.depth,
     status: row.status,
     prompt: row.prompt,
+    currentPrompt: row.current_prompt || row.prompt,
     referenceImageIds: normalizeStringArray(row.reference_image_ids),
+    selectedImageId: row.selected_image_id,
+    defaultRatio: row.default_ratio,
+    lastGenerationCount: row.last_generation_count,
     snapshot: normalizeRecord(row.snapshot_json),
     version: row.version,
     updatedAt: row.updated_at,

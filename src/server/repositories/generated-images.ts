@@ -21,6 +21,7 @@ export type GeneratedImageView = {
   reviewedBy: string | null;
   reviewedAt: string | null;
   sourceJobId: string | null;
+  metadata: Record<string, unknown>;
   updatedAt: string;
 };
 
@@ -42,6 +43,7 @@ type GeneratedImageRow = {
   reviewed_by: string | null;
   reviewed_at: string | null;
   source_job_id: string | null;
+  metadata_json: unknown;
   updated_at: string;
 };
 
@@ -49,7 +51,7 @@ export async function listProjectGeneratedImages(projectId: string) {
   const result = await query<GeneratedImageRow>(
     `select id, project_id, direction_id, expansion_id, prompt, provider, model_name,
             status, oss_key, oss_url, failure_reason, retry_count, review_status, review_note,
-            reviewed_by, reviewed_at, source_job_id, updated_at
+            reviewed_by, reviewed_at, source_job_id, metadata_json, updated_at
      from generated_images
      where project_id = $1
      order by updated_at desc
@@ -69,20 +71,21 @@ export async function createGeneratedImage(input: {
   modelName: string;
   status?: string;
   sourceJobId?: string | null;
+  metadata?: Record<string, unknown>;
   createdBy?: string | null;
 }) {
   const result = await query<GeneratedImageRow>(
     `insert into generated_images (
        project_id, direction_id, expansion_id, prompt, provider, model_name,
-       status, source_job_id, created_by
+       status, source_job_id, metadata_json, created_by
      )
      values (
-       $1, $2, $3, $4, $5, $6, $7, $8,
-       case when exists (select 1 from users where id = $9::uuid) then $9::uuid else null end
+       $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb,
+       case when exists (select 1 from users where id = $10::uuid) then $10::uuid else null end
      )
      returning id, project_id, direction_id, expansion_id, prompt, provider, model_name,
                status, oss_key, oss_url, failure_reason, retry_count, review_status, review_note,
-               reviewed_by, reviewed_at, source_job_id, updated_at`,
+               reviewed_by, reviewed_at, source_job_id, metadata_json, updated_at`,
     [
       input.projectId,
       input.directionId ?? null,
@@ -92,6 +95,7 @@ export async function createGeneratedImage(input: {
       input.modelName,
       input.status ?? "queued",
       input.sourceJobId ?? null,
+      JSON.stringify(input.metadata ?? {}),
       input.createdBy ?? null,
     ]
   );
@@ -131,7 +135,7 @@ export async function markGeneratedImageSucceeded(input: { id: string; ossKey: s
      where id = $1
      returning id, project_id, direction_id, expansion_id, prompt, provider, model_name,
                status, oss_key, oss_url, failure_reason, retry_count, review_status, review_note,
-               reviewed_by, reviewed_at, source_job_id, updated_at`,
+               reviewed_by, reviewed_at, source_job_id, metadata_json, updated_at`,
     [input.id, input.ossKey, input.ossUrl]
   );
 
@@ -161,7 +165,7 @@ export async function reviewGeneratedImageRecord(input: {
     const currentResult = await transactionQuery<GeneratedImageRow>(
       `select id, project_id, direction_id, expansion_id, prompt, provider, model_name,
               status, oss_key, oss_url, failure_reason, retry_count, review_status, review_note,
-              reviewed_by, reviewed_at, source_job_id, updated_at
+              reviewed_by, reviewed_at, source_job_id, metadata_json, updated_at
        from generated_images
        where project_id = $1
          and id = $2
@@ -191,7 +195,7 @@ export async function reviewGeneratedImageRecord(input: {
          and id = $2
        returning id, project_id, direction_id, expansion_id, prompt, provider, model_name,
                  status, oss_key, oss_url, failure_reason, retry_count, review_status, review_note,
-                 reviewed_by, reviewed_at, source_job_id, updated_at`,
+                 reviewed_by, reviewed_at, source_job_id, metadata_json, updated_at`,
       [input.projectId, input.imageId, input.reviewStatus, input.reviewNote, input.actorId]
     );
     const updated = updatedResult.rows[0];
@@ -252,6 +256,11 @@ function mapGeneratedImage(row: GeneratedImageRow): GeneratedImageView {
     reviewedBy: row.reviewed_by,
     reviewedAt: row.reviewed_at,
     sourceJobId: row.source_job_id,
+    metadata: normalizeRecord(row.metadata_json),
     updatedAt: row.updated_at,
   };
+}
+
+function normalizeRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }

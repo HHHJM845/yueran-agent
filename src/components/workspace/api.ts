@@ -305,6 +305,7 @@ export type GeneratedImageView = {
   reviewStatus: "pending" | "confirmed" | "discarded";
   reviewNote: string | null;
   reviewedAt: string | null;
+  metadata: Record<string, unknown>;
   updatedAt: string;
 };
 
@@ -385,6 +386,9 @@ export type ProductionEntityView = {
   referenceDepth: ReferenceSetDepth;
   sourceShotIds: string[];
   status: string;
+  inclusionStatus: "active" | "ignored";
+  ignoreReason: string;
+  confirmedAt: string | null;
   version: number;
   lockedAt: string | null;
   updatedAt: string;
@@ -397,7 +401,11 @@ export type ProductionReferenceSetView = {
   depth: ReferenceSetDepth;
   status: string;
   prompt: string;
+  currentPrompt: string;
   referenceImageIds: string[];
+  selectedImageId: string | null;
+  defaultRatio: "1:1" | "3:4" | "4:3" | "16:9" | "9:16";
+  lastGenerationCount: number;
   snapshot: Record<string, unknown>;
   version: number;
   updatedAt: string;

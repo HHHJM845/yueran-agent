@@ -311,7 +311,8 @@ alter table generated_images
   add column if not exists review_status text not null default 'pending',
   add column if not exists review_note text,
   add column if not exists reviewed_by uuid references users(id),
-  add column if not exists reviewed_at timestamptz;
+  add column if not exists reviewed_at timestamptz,
+  add column if not exists metadata_json jsonb not null default '{}'::jsonb;
 
 do $$
 begin
@@ -1091,6 +1092,47 @@ create table if not exists production_reference_sets (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table production_entities
+  add column if not exists inclusion_status text not null default 'active',
+  add column if not exists ignore_reason text not null default '',
+  add column if not exists confirmed_at timestamptz;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'production_entities_inclusion_status_check'
+      and conrelid = 'production_entities'::regclass
+  ) then
+    alter table production_entities
+      add constraint production_entities_inclusion_status_check
+      check (inclusion_status in ('active', 'ignored'));
+  end if;
+end
+$$;
+
+alter table production_reference_sets
+  add column if not exists current_prompt text not null default '',
+  add column if not exists selected_image_id uuid references generated_images(id) on delete set null,
+  add column if not exists default_ratio text not null default '1:1',
+  add column if not exists last_generation_count integer not null default 1;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'production_reference_sets_default_ratio_check'
+      and conrelid = 'production_reference_sets'::regclass
+  ) then
+    alter table production_reference_sets
+      add constraint production_reference_sets_default_ratio_check
+      check (default_ratio in ('1:1', '3:4', '4:3', '16:9', '9:16'));
+  end if;
+end
+$$;
 
 create table if not exists storyboard_image_batches (
   id uuid primary key default gen_random_uuid(),
