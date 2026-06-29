@@ -9,6 +9,7 @@ import {
   getProductionSetup,
   ignoreProductionEntity,
   restoreProductionEntity,
+  selectProductionReferenceImageForSetup,
   submitProductionSetupReview,
   updateProductionEntityDepth,
   updateProductionReferencePrompt,
@@ -41,6 +42,11 @@ const patchSchema = z.discriminatedUnion("action", [
     prompt: z.string().trim().min(1, "请填写生成提示词。"),
     ratio: z.enum(["1:1", "3:4", "4:3", "16:9", "9:16"]),
     generationCount: z.coerce.number().int().min(1).max(8),
+  }),
+  z.object({
+    action: z.literal("select_image"),
+    referenceSetId: z.string().uuid("设定图卡片 ID 不正确，请刷新后再试。"),
+    imageId: z.string().uuid("图片 ID 不正确，请刷新后再试。"),
   }),
 ]);
 
@@ -88,6 +94,17 @@ export async function PATCH(request: Request, context: { params: Promise<{ proje
     }
     if (input.action === "restore_entity") {
       return Response.json({ ok: true, data: await restoreProductionEntity({ projectId, entityId: input.entityId, actorId: user.id }) });
+    }
+    if (input.action === "select_image") {
+      return Response.json({
+        ok: true,
+        data: await selectProductionReferenceImageForSetup({
+          projectId,
+          referenceSetId: input.referenceSetId,
+          imageId: input.imageId,
+          actorId: user.id,
+        }),
+      });
     }
     return Response.json({
       ok: true,

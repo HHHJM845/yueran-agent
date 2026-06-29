@@ -279,6 +279,31 @@ export async function upsertReferenceSet(input: UpsertReferenceSetInput): Promis
   return mapReferenceSet(result.rows[0]);
 }
 
+export async function selectProductionReferenceImage(input: {
+  projectId: string;
+  referenceSetId: string;
+  imageId: string;
+  actorId?: string | null;
+}): Promise<ProductionReferenceSetView | null> {
+  const result = await query<ProductionReferenceSetRow>(
+    `update production_reference_sets
+     set selected_image_id = $3,
+         reference_image_ids = coalesce((
+           select jsonb_agg(distinct value)
+           from jsonb_array_elements_text(reference_image_ids || jsonb_build_array($3::text)) as value
+         ), jsonb_build_array($3::text)),
+         status = 'internal_confirmed',
+         updated_by = coalesce($4, updated_by),
+         updated_at = now()
+     where project_id = $1 and id = $2
+     returning id, project_id, entity_id, depth, status, prompt, current_prompt,
+               reference_image_ids, selected_image_id, default_ratio, last_generation_count,
+               snapshot_json, version, updated_at`,
+    [input.projectId, input.referenceSetId, input.imageId, input.actorId ?? null]
+  );
+  return result.rows[0] ? mapReferenceSet(result.rows[0]) : null;
+}
+
 export async function saveProductionReferencePrompt(input: {
   projectId: string;
   referenceSetId: string;

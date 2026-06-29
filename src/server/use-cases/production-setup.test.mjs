@@ -102,3 +102,16 @@ test("initial production reference sets persist entity default ratios", async ()
   assert.match(source, /defaultRatioForEntity\(entity\.entityType\)/);
   assert.match(source, /defaultRatioForEntity\(updatedEntity\.entityType\)/);
 });
+
+test("production setup selected image is explicit and review gate skips ignored entities", async () => {
+  const source = await readFile(new URL("./production-setup.ts", import.meta.url), "utf8");
+  const repository = await readFile(new URL("../repositories/production-entities.ts", import.meta.url), "utf8");
+  const route = await readFile(new URL("../../app/api/projects/[projectId]/production-entities/route.ts", import.meta.url), "utf8");
+
+  assert.match(repository, /selectProductionReferenceImage/);
+  assert.match(repository, /selected_image_id = \$3/);
+  assert.match(source, /selectProductionReferenceImageForSetup/);
+  assert.match(source, /referenceSet\.selectedImageId/);
+  assert.match(source, /entity\.inclusionStatus === "ignored"/);
+  assert.match(route, /action: z\.literal\("select_image"\)/);
+});

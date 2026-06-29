@@ -1476,6 +1476,19 @@ export async function saveProductionReferencePrompt(
   );
 }
 
+export async function selectProductionReferenceImage(
+  projectId: string,
+  input: { referenceSetId: string; imageId: string }
+) {
+  return readApi<{ referenceSet: ProductionReferenceSetView; message: string }>(
+    await fetch(`/api/projects/${projectId}/production-entities`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "select_image", ...input }),
+    })
+  );
+}
+
 export async function generateProductionReferenceImages(
   projectId: string,
   input: {

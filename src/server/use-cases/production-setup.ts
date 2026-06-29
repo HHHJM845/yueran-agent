@@ -1,10 +1,11 @@
 import { AppError } from "@/lib/errors";
-import { listGeneratedImagesByIds, type GeneratedImageView } from "@/server/repositories/generated-images";
+import { listGeneratedImagesByIds, reviewGeneratedImageRecord, type GeneratedImageView } from "@/server/repositories/generated-images";
 import {
   confirmProductionEntities,
   listProductionEntities,
   listProductionReferenceSets,
   saveProductionReferencePrompt,
+  selectProductionReferenceImage,
   setProductionEntityInclusion,
   updateProjectProductionSetupStatus,
   updateProductionEntityDetails,
@@ -301,6 +302,44 @@ export async function updateProductionReferencePrompt(input: {
   return { referenceSet, message: "提示词、比例和生成数量已保存。" };
 }
 
+export async function selectProductionReferenceImageForSetup(input: {
+  projectId: string;
+  referenceSetId: string;
+  imageId: string;
+  actorId: string;
+}) {
+  const images = await listGeneratedImagesByIds({ projectId: input.projectId, imageIds: [input.imageId] });
+  const image = images[0];
+  if (!image || image.status !== "succeeded" || !image.ossUrl) {
+    throw new AppError({
+      status: 422,
+      code: "production_reference_image_not_ready",
+      userMessage: "这张设定图还没有生成成功，暂时不能设为采用。",
+    });
+  }
+  await reviewGeneratedImageRecord({
+    projectId: input.projectId,
+    imageId: input.imageId,
+    reviewStatus: "confirmed",
+    reviewNote: "人物/场景设定图内部采用",
+    actorId: input.actorId,
+  });
+  const referenceSet = await selectProductionReferenceImage({
+    projectId: input.projectId,
+    referenceSetId: input.referenceSetId,
+    imageId: input.imageId,
+    actorId: input.actorId,
+  });
+  if (!referenceSet) {
+    throw new AppError({
+      status: 404,
+      code: "production_reference_set_not_found",
+      userMessage: "没有找到这个设定图卡片。请刷新后再试。",
+    });
+  }
+  return { referenceSet, message: "已设为最终采用图。" };
+}
+
 export async function submitProductionSetupReview(input: {
   projectId: string;
   actorId: string;
@@ -357,19 +396,24 @@ export async function assertProductionSetupReferenceImagesReady(input: {
   referenceSets: ProductionReferenceSetView[];
 }) {
   const activeEntities = input.entities.filter((entity) => entity.inclusionStatus !== "ignored");
-  const imageIds = input.referenceSets.flatMap((referenceSet) => referenceSet.referenceImageIds);
+  const imageIds = input.referenceSets.flatMap((referenceSet) => [
+    ...referenceSet.referenceImageIds,
+    referenceSet.selectedImageId ?? "",
+  ]);
   const generatedImages = await listGeneratedImagesByIds({ projectId: input.projectId, imageIds });
   const generatedImageById = new Map(generatedImages.map((image) => [image.id, image]));
 
   for (const entity of activeEntities) {
+    if (entity.inclusionStatus === "ignored") continue;
     const activeReference = input.referenceSets.find(
       (referenceSet) => referenceSet.entityId === entity.id && referenceSet.depth === entity.referenceDepth
     );
-    const hasConfirmedReferenceImage = Boolean(
-      activeReference?.referenceImageIds
-        .map((imageId) => generatedImageById.get(imageId))
-        .some(isConfirmedProductionReferenceImage)
-    );
+    const candidateIds = activeReference?.selectedImageId
+      ? [activeReference.selectedImageId]
+      : activeReference?.referenceImageIds ?? [];
+    const hasConfirmedReferenceImage = candidateIds
+      .map((imageId) => generatedImageById.get(imageId))
+      .some(isConfirmedProductionReferenceImage);
     if (!hasConfirmedReferenceImage) {
       throw new AppError({
         status: 422,
