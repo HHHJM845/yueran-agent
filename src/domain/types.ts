@@ -40,6 +40,7 @@ export const jobTypes = [
   "creative_expansion_generation",
   "atmosphere_image_generation",
   "storyboard_split_generation",
+  "production_reference_image_generation",
   "storyboard_image_generation",
   "storyboard_video_generation",
   "proposal_generation",

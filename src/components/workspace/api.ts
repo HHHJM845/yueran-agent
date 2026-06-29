@@ -1476,6 +1476,27 @@ export async function saveProductionReferencePrompt(
   );
 }
 
+export async function generateProductionReferenceImages(
+  projectId: string,
+  input: {
+    entityId: string;
+    prompt: string;
+    count: number;
+    ratio: ProductionReferenceSetView["defaultRatio"];
+  }
+) {
+  return readApi<{
+    jobs: Array<{ jobId: string; generatedImageId: string; entityId: string; referenceSetId: string }>;
+    message: string;
+  }>(
+    await fetch(`/api/projects/${projectId}/production-entities/reference-images`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    })
+  );
+}
+
 export async function generateStoryboardImage(projectId: string, shotId: string) {
   return readApi<{ jobId: string; storyboardImageId: string; message: string }>(
     await fetch(`/api/projects/${projectId}/storyboard-images/generate`, {

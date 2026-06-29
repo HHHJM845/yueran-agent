@@ -1,109 +1,114 @@
-# Task 4 Report
+# Task 4 Report: Generate Candidates With Current Prompt, Count, And Ratio
 
-## Changed files
+## What I implemented
 
-- `src/components/workspace/workspace-shell.tsx`
-- `src/components/workspace/workspace-shell-project-actions.test.mjs`
-- `.superpowers/sdd/task-4-report.md`
+- Added `enqueueProductionReferenceImages` support for a single visible production entity card with explicit `prompt`, `count`, and `ratio`.
+- Added `ratioToOpenAIImageSize` mapping:
+  - `1:1` -> `1024x1024`
+  - `3:4` -> `1024x1536`
+  - `4:3` -> `1536x1024`
+  - `16:9` -> `1536x864`
+  - `9:16` -> `864x1536`
+- Persisted the submitted prompt, ratio, and generation count through `saveProductionReferencePrompt` before enqueueing jobs.
+- Created generated image records with production-reference metadata including purpose, entity ID, reference set ID, entity type, ratio, size, and prompt.
+- Created job input payloads containing `{ entityId, referenceSetId, generatedImageId, requestedBy, imageIndex, prompt, ratio, size }`.
+- Updated the worker to use the queued `input.prompt` and `input.size`, and to include `ratio`, `size`, and `promptSource: "visible_card_prompt"` in telemetry metadata.
+- Removed the old auto-ready behavior based on candidate pool count; reference sets are no longer marked internally ready just because four candidates exist.
+- Updated the reference-images route schema to accept `entityId`, `prompt`, `count`, and `ratio`.
+- Added the frontend API wrapper signature for the new payload shape.
+- Registered the production reference image job type and worker handler so queued jobs can run on a clean checkout.
 
-## Behavior implemented
+## What I tested and test results
 
-- Added controlled open state for the create-project sheet in `ProjectSidebar`.
-- Changed the create callback contract to `onCreate: (formData: FormData) => Promise<boolean>`.
-- Kept the create sheet open while the create request is in flight or fails.
-- Close the create sheet only after `handleCreateProject` returns success.
-- Updated project creation success copy to `项目已创建，可以开始录入 Brief。`.
-- On successful create:
-  - prepends the new project to the sidebar list without duplicate ids
-  - selects the new project
-  - refreshes workspace, dashboard, and governance data
-  - loads the new project workspace so the right pane switches to the created project
-- Preserved the existing Task 3 right-click delete menu behavior.
+- `node --test --import tsx src/server/use-cases/production-reference-images.test.mjs`
+  - PASS: 2 tests, 0 failures.
+- `npm run typecheck`
+  - PASS: `tsc --noEmit` completed with exit code 0.
 
-## Validation
+## TDD Evidence
 
-### Command
+### RED
 
-`node --test src/components/workspace/workspace-shell-project-actions.test.mjs`
+Command:
 
-### Result
+```bash
+node --test --import tsx src/server/use-cases/production-reference-images.test.mjs
+```
 
-Pass
+Output:
 
-### Command
+```text
+✔ production reference image generation is wired to jobs and reference sets (2.422792ms)
+✖ production reference image generation uses current prompt count and ratio (0.773792ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 1
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 62.716792
 
-`npm run typecheck`
+AssertionError [ERR_ASSERTION]: The input did not match the regular expression /count: z\.coerce\.number\(\)\.int\(\)\.min\(1\)\.max\(8\)/.
+```
 
-### Result
+The failure was expected: the route still accepted the old `entityIds` / `countPerEntity` request shape.
 
-Pass
+### GREEN
 
-### Command
+Command:
 
-`npx eslint src/components/workspace/workspace-shell.tsx src/components/workspace/api.ts`
+```bash
+node --test --import tsx src/server/use-cases/production-reference-images.test.mjs
+```
 
-### Result
+Output:
 
-Pass
+```text
+✔ production reference image generation is wired to jobs and reference sets (2.641833ms)
+✔ production reference image generation uses current prompt count and ratio (0.552458ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 70.199459
+```
 
-### Command
+Command:
 
-`npm run build`
+```bash
+npm run typecheck
+```
 
-### Result
+Output:
 
-Pass
+```text
+> augc-flow@0.1.0 typecheck
+> tsc --noEmit
+```
 
-Build completed successfully with a Next.js workspace-root warning about multiple `package-lock.json` files in the main repo and this worktree, but no build failure.
+## Files changed
 
-## Browser verification
+- `src/server/use-cases/production-reference-images.ts`
+- `src/server/use-cases/production-reference-images.test.mjs`
+- `src/app/api/projects/[projectId]/production-entities/reference-images/route.ts`
+- `src/components/workspace/api.ts`
+- `src/domain/types.ts`
+- `src/server/workers/handlers.ts`
 
-### Status
+## Self-review findings
 
-Pass after controller re-run
+- The route validates count with `.min(1).max(8)` and validates the allowed production ratios.
+- The worker no longer rebuilds prompts from entity data; it uses the prompt captured in the job input.
+- The OpenAI generation call receives the ratio-derived size.
+- Generated image metadata records the visible prompt, ratio, and resolved size for traceability.
+- The reference set is not auto-confirmed when the candidate pool reaches four images.
 
-### Target
+## Issues or concerns
 
-`http://localhost:3001/`
-
-### Verified
-
-- Opened the existing local workspace app successfully.
-- Created a real project with:
-  - brand name: `Task4验收品牌`
-  - project name: `Task4创建反馈验收`
-  - owner: `task4-check`
-- Verified success feedback text `项目已创建，可以开始录入 Brief。`.
-- Verified the new project appeared at the top of the sidebar and was selected automatically.
-- Verified the workspace loaded the new project and showed the Brief stage view.
-- Re-checked Task 3 context-menu entries on a project card:
-  - `打开项目`
-  - `移出项目列表`
-  - `永久删除`
-- After the first Task 4 commit, controller browser verification found the create sheet still stayed open after successful creation. This was fixed in the follow-up commit.
-- Re-ran browser verification with a temporary project `Task4永久删除验证-1782568851852` and verified the create sheet closed after successful creation, the success message was visible, the new project was selected, and the Brief workspace loaded.
-- Re-ran soft-delete verification with temporary project `Task4软删除验证-1782568482718`; confirmed `移出项目列表` opened the confirmation dialog, `确认移出` removed the project from the sidebar, selected the next project, and showed `项目已移出列表，资料和流程记录仍会保留。`.
-- Re-ran permanent-delete verification with temporary project `Task4永久删除验证-1782568851852`; confirmed admin sees `永久删除`, the first dialog shows `永久删除项目？`, the second dialog shows `再次确认永久删除`, `确认永久删除` removes the project, selects the next project, and shows `项目已永久删除。`.
-
-## Concerns
-
-- This worktree already contained unrelated dirty files before Task 4. I kept the patch scoped to the requested files and did not revert or rewrite unrelated changes.
-
-## Fix follow-up
-
-### Changed files
-
-- `src/components/workspace/workspace-shell.tsx`
-- `src/components/workspace/workspace-shell-project-actions.test.mjs`
-- `.superpowers/sdd/task-4-report.md`
-
-### Validation results
-
-- `node --test src/components/workspace/workspace-shell-project-actions.test.mjs` — Pass
-- `npm run typecheck` — Pass
-- `npx eslint src/components/workspace/workspace-shell.tsx src/components/workspace/api.ts` — Pass
-- `npm run build` — Pass, with the existing Next.js workspace-root warning about multiple `package-lock.json` files
-
-### Follow-up note
-
-- Controller re-ran browser verification after this fix. The create-project sheet now closes on successful create. Soft delete and permanent delete were verified on temporary projects created for this test.
+- The working tree had broad pre-existing dirty changes before Task 4. I staged only the Task 4 server/route/API-wrapper changes.
+- I also staged the minimal job type and worker registration hunks required by the new production reference image jobs.
+- `src/components/workspace/workspace-shell.tsx` remains dirty from prior work and includes a local compatibility update in the working tree so the new API wrapper is called with the new payload shape. I did not stage it because it is entangled with larger pre-existing UI changes not owned by this task.
