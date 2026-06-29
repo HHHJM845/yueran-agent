@@ -115,3 +115,15 @@ test("production setup selected image is explicit and review gate skips ignored 
   assert.match(source, /entity\.inclusionStatus === "ignored"/);
   assert.match(route, /action: z\.literal\("select_image"\)/);
 });
+
+test("production setup selected image validates target and candidate before confirming review", async () => {
+  const source = await readFile(new URL("./production-setup.ts", import.meta.url), "utf8");
+
+  assert.match(source, /const referenceSet = referenceSets\.find\(\(item\) => item\.id === input\.referenceSetId\)/);
+  assert.match(source, /production_reference_set_not_found/);
+  assert.match(source, /const imageReferenceSetId = typeof image\.metadata\.referenceSetId === "string" \? image\.metadata\.referenceSetId : null/);
+  assert.match(source, /referenceSet\.referenceImageIds\.includes\(image\.id\) \|\| imageReferenceSetId === referenceSet\.id/);
+  assert.match(source, /production_reference_image_mismatch/);
+  assert.ok(source.indexOf("production_reference_image_mismatch") < source.indexOf("await reviewGeneratedImageRecord"));
+  assert.ok(source.indexOf("const referenceSet = referenceSets.find") < source.indexOf("await reviewGeneratedImageRecord"));
+});

@@ -308,13 +308,33 @@ export async function selectProductionReferenceImageForSetup(input: {
   imageId: string;
   actorId: string;
 }) {
-  const images = await listGeneratedImagesByIds({ projectId: input.projectId, imageIds: [input.imageId] });
+  const [images, referenceSets] = await Promise.all([
+    listGeneratedImagesByIds({ projectId: input.projectId, imageIds: [input.imageId] }),
+    listProductionReferenceSets(input.projectId),
+  ]);
+  const referenceSet = referenceSets.find((item) => item.id === input.referenceSetId);
+  if (!referenceSet) {
+    throw new AppError({
+      status: 404,
+      code: "production_reference_set_not_found",
+      userMessage: "没有找到这个设定图卡片。请刷新后再试。",
+    });
+  }
   const image = images[0];
   if (!image || image.status !== "succeeded" || !image.ossUrl) {
     throw new AppError({
       status: 422,
       code: "production_reference_image_not_ready",
       userMessage: "这张设定图还没有生成成功，暂时不能设为采用。",
+    });
+  }
+  const imageReferenceSetId = typeof image.metadata.referenceSetId === "string" ? image.metadata.referenceSetId : null;
+  const isReferenceSetCandidate = referenceSet.referenceImageIds.includes(image.id) || imageReferenceSetId === referenceSet.id;
+  if (!isReferenceSetCandidate) {
+    throw new AppError({
+      status: 422,
+      code: "production_reference_image_mismatch",
+      userMessage: "这张设定图不属于当前人物或场景卡片，不能跨卡片设为采用。请在对应卡片的候选图中选择。",
     });
   }
   await reviewGeneratedImageRecord({
@@ -324,20 +344,20 @@ export async function selectProductionReferenceImageForSetup(input: {
     reviewNote: "人物/场景设定图内部采用",
     actorId: input.actorId,
   });
-  const referenceSet = await selectProductionReferenceImage({
+  const updatedReferenceSet = await selectProductionReferenceImage({
     projectId: input.projectId,
     referenceSetId: input.referenceSetId,
     imageId: input.imageId,
     actorId: input.actorId,
   });
-  if (!referenceSet) {
+  if (!updatedReferenceSet) {
     throw new AppError({
       status: 404,
       code: "production_reference_set_not_found",
       userMessage: "没有找到这个设定图卡片。请刷新后再试。",
     });
   }
-  return { referenceSet, message: "已设为最终采用图。" };
+  return { referenceSet: updatedReferenceSet, message: "已设为最终采用图。" };
 }
 
 export async function submitProductionSetupReview(input: {
