@@ -112,3 +112,34 @@ Output:
 - The working tree had broad pre-existing dirty changes before Task 4. I staged only the Task 4 server/route/API-wrapper changes.
 - I also staged the minimal job type and worker registration hunks required by the new production reference image jobs.
 - `src/components/workspace/workspace-shell.tsx` remains dirty from prior work and includes a local compatibility update in the working tree so the new API wrapper is called with the new payload shape. I did not stage it because it is entangled with larger pre-existing UI changes not owned by this task.
+
+## Review fix: use-case count validation
+
+Addressed Task 4 review findings:
+
+- Added a use-case level guard in `enqueueProductionReferenceImages` so internal callers cannot enqueue paid/provider image jobs unless `input.count` is an integer from 1 to 8.
+- Invalid counts now throw `AppError` with code `production_reference_count_invalid` and the natural Chinese user message `请一次生成 1 到 8 张设定图。`
+- Extended `production-reference-images.test.mjs` source assertions to verify the guard is present in the use case, not only in the HTTP route zod schema.
+- Removed the unused `buildProductionReferencePrompt` helper after confirming the worker uses the queued job `input.prompt`.
+
+Verification:
+
+```text
+$ node --test --import tsx src/server/use-cases/production-reference-images.test.mjs
+✔ production reference image generation is wired to jobs and reference sets (2.503541ms)
+✔ production reference image generation uses current prompt count and ratio (0.506958ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 63.887625
+```
+
+```text
+$ npm run typecheck
+> augc-flow@0.1.0 typecheck
+> tsc --noEmit
+```

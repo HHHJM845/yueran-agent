@@ -67,6 +67,14 @@ export async function enqueueProductionReferenceImages(input: {
     });
   }
 
+  if (!Number.isInteger(input.count) || input.count < 1 || input.count > 8) {
+    throw new AppError({
+      status: 422,
+      code: "production_reference_count_invalid",
+      userMessage: "请一次生成 1 到 8 张设定图。",
+    });
+  }
+
   const entity = entities.find((item) => item.id === input.entityId);
   if (!entity || entity.inclusionStatus === "ignored" || entity.status === "locked") {
     throw new AppError({
@@ -289,23 +297,4 @@ export async function runProductionReferenceImageGenerationJob(jobId: string) {
     });
     throw error;
   }
-}
-
-function buildProductionReferencePrompt(
-  entity: {
-    entityType: "character" | "scene" | "prop";
-    name: string;
-    description: string;
-    importance: string;
-  },
-  imageIndex = 0
-) {
-  const label = entity.entityType === "character" ? "角色人物设定图" : entity.entityType === "scene" ? "场景设定图" : "道具设定图";
-  const variation = ["正面清晰设定", "侧面或环境关系", "情绪/光线变化", "制作参考细节"][imageIndex % 4];
-  return [
-    `${label}：${entity.name}`,
-    entity.description ? `设定说明：${entity.description}` : "设定说明：根据剧本文字分镜生成可用于后续分镜图片生产的稳定参考。",
-    `生成要求：${variation}；画面主体清晰，适合 AIGC 视频生产参考；不要文字水印，不要 UI 边框，不要拼贴。`,
-    "风格：商业广告级视觉开发图，干净构图，细节明确，角色和场景特征稳定。",
-  ].join("\n");
 }

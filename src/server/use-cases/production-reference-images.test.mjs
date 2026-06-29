@@ -28,7 +28,12 @@ test("production reference image generation uses current prompt count and ratio"
   assert.match(useCase, /ratioToOpenAIImageSize/);
   assert.match(useCase, /currentPrompt/);
   assert.match(useCase, /lastGenerationCount/);
+  assert.match(useCase, /Number\.isInteger\(input\.count\)/);
+  assert.match(useCase, /input\.count < 1 \|\| input\.count > 8/);
+  assert.match(useCase, /production_reference_count_invalid/);
+  assert.match(useCase, /请一次生成 1 到 8 张设定图/);
   assert.match(useCase, /metadata: \{[\s\S]*purpose: "production_reference"/);
   assert.match(useCase, /prompt: input\.prompt/);
   assert.match(useCase, /size: input\.size/);
+  assert.doesNotMatch(useCase, /function buildProductionReferencePrompt/);
 });
