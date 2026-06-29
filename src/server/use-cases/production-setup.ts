@@ -329,8 +329,14 @@ export async function selectProductionReferenceImageForSetup(input: {
     });
   }
   const imageReferenceSetId = typeof image.metadata.referenceSetId === "string" ? image.metadata.referenceSetId : null;
-  const isReferenceSetCandidate = referenceSet.referenceImageIds.includes(image.id) || imageReferenceSetId === referenceSet.id;
-  if (!isReferenceSetCandidate) {
+  if (imageReferenceSetId && imageReferenceSetId !== referenceSet.id) {
+    throw new AppError({
+      status: 422,
+      code: "production_reference_image_mismatch",
+      userMessage: "这张设定图不属于当前人物或场景卡片，不能跨卡片设为采用。请在对应卡片的候选图中选择。",
+    });
+  }
+  if (!imageReferenceSetId && !referenceSet.referenceImageIds.includes(image.id)) {
     throw new AppError({
       status: 422,
       code: "production_reference_image_mismatch",

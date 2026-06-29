@@ -122,8 +122,10 @@ test("production setup selected image validates target and candidate before conf
   assert.match(source, /const referenceSet = referenceSets\.find\(\(item\) => item\.id === input\.referenceSetId\)/);
   assert.match(source, /production_reference_set_not_found/);
   assert.match(source, /const imageReferenceSetId = typeof image\.metadata\.referenceSetId === "string" \? image\.metadata\.referenceSetId : null/);
-  assert.match(source, /referenceSet\.referenceImageIds\.includes\(image\.id\) \|\| imageReferenceSetId === referenceSet\.id/);
+  assert.match(source, /if \(imageReferenceSetId && imageReferenceSetId !== referenceSet\.id\)/);
+  assert.match(source, /if \(!imageReferenceSetId && !referenceSet\.referenceImageIds\.includes\(image\.id\)\)/);
   assert.match(source, /production_reference_image_mismatch/);
+  assert.ok(source.indexOf("imageReferenceSetId && imageReferenceSetId !== referenceSet.id") < source.indexOf("!imageReferenceSetId && !referenceSet.referenceImageIds.includes(image.id)"));
   assert.ok(source.indexOf("production_reference_image_mismatch") < source.indexOf("await reviewGeneratedImageRecord"));
   assert.ok(source.indexOf("const referenceSet = referenceSets.find") < source.indexOf("await reviewGeneratedImageRecord"));
 });
