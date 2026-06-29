@@ -67,6 +67,8 @@ export type UpsertReferenceSetInput = {
   status?: ProductionEntityStatus;
   prompt?: string;
   referenceImageIds?: string[];
+  defaultRatio?: ProductionImageRatio;
+  lastGenerationCount?: number;
   snapshot?: Record<string, unknown>;
   actorId?: string | null;
 };
@@ -229,10 +231,12 @@ export async function upsertReferenceSet(input: UpsertReferenceSetInput): Promis
            current_prompt = case when $2 <> '' then $2 else current_prompt end,
            reference_image_ids = coalesce($3::jsonb, reference_image_ids),
            snapshot_json = $4::jsonb,
+           default_ratio = coalesce($5, default_ratio),
+           last_generation_count = coalesce($6, last_generation_count),
            version = version + 1,
-           updated_by = coalesce($5, updated_by),
+           updated_by = coalesce($7, updated_by),
            updated_at = now()
-       where id = $6
+       where id = $8
        returning id, project_id, entity_id, depth, status, prompt, reference_image_ids,
                  current_prompt, selected_image_id, default_ratio, last_generation_count,
                  snapshot_json, version, updated_at`,
@@ -241,6 +245,8 @@ export async function upsertReferenceSet(input: UpsertReferenceSetInput): Promis
         input.prompt ?? "",
         input.referenceImageIds ? JSON.stringify(input.referenceImageIds) : null,
         JSON.stringify(input.snapshot ?? {}),
+        input.defaultRatio ?? null,
+        input.lastGenerationCount ?? null,
         input.actorId ?? null,
         existing.rows[0].id,
       ]
@@ -251,9 +257,9 @@ export async function upsertReferenceSet(input: UpsertReferenceSetInput): Promis
   const result = await query<ProductionReferenceSetRow>(
     `insert into production_reference_sets (
        project_id, entity_id, depth, status, prompt, reference_image_ids,
-       current_prompt, snapshot_json, created_by, updated_by
+       current_prompt, default_ratio, last_generation_count, snapshot_json, created_by, updated_by
      )
-     values ($1, $2, $3, $4, $5, $6::jsonb, $5, $7::jsonb, $8, $8)
+     values ($1, $2, $3, $4, $5, $6::jsonb, $5, $7, $8, $9::jsonb, $10, $10)
      returning id, project_id, entity_id, depth, status, prompt, reference_image_ids,
                current_prompt, selected_image_id, default_ratio, last_generation_count,
                snapshot_json, version, updated_at`,
@@ -264,6 +270,8 @@ export async function upsertReferenceSet(input: UpsertReferenceSetInput): Promis
       input.status ?? "draft",
       input.prompt ?? "",
       JSON.stringify(input.referenceImageIds ?? []),
+      input.defaultRatio ?? "1:1",
+      input.lastGenerationCount ?? 1,
       JSON.stringify(input.snapshot ?? {}),
       input.actorId ?? null,
     ]

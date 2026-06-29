@@ -87,3 +87,18 @@ test("production setup prompts are visible editable and style-aware", async () =
   assert.match(repository, /last_generation_count = \$5/);
   assert.match(route, /action: z\.literal\("save_prompt"\)/);
 });
+
+test("initial production reference sets persist entity default ratios", async () => {
+  const source = await readFile(new URL("./production-setup.ts", import.meta.url), "utf8");
+  const repository = await readFile(new URL("../repositories/production-entities.ts", import.meta.url), "utf8");
+
+  assert.match(repository, /defaultRatio\?: ProductionImageRatio/);
+  assert.match(repository, /lastGenerationCount\?: number/);
+  assert.match(repository, /default_ratio\s*=\s*coalesce\(/);
+  assert.match(repository, /last_generation_count\s*=\s*coalesce\(/);
+  assert.match(repository, /default_ratio,\s*last_generation_count/);
+  assert.match(repository, /input\.defaultRatio\s*\?\?\s*"1:1"/);
+  assert.match(repository, /input\.lastGenerationCount\s*\?\?\s*1/);
+  assert.match(source, /defaultRatioForEntity\(entity\.entityType\)/);
+  assert.match(source, /defaultRatioForEntity\(updatedEntity\.entityType\)/);
+});

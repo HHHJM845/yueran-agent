@@ -88,6 +88,7 @@ export async function createProductionSetupFromStoryboard(input: {
           styleContext: selectedStyleContext,
           shotContext: entity.sourceShotIds.map((shotId) => shotContextById.get(shotId)).filter(Boolean).join("\n"),
         }),
+        defaultRatio: defaultRatioForEntity(entity.entityType),
         snapshot: {
           entityType: entity.entityType,
           name: entity.name,
@@ -146,6 +147,7 @@ export async function updateProductionEntityDepth(input: {
     depth: input.depth,
     status: "internal_confirmed",
     prompt: buildReferencePrompt(updatedEntity),
+    defaultRatio: defaultRatioForEntity(updatedEntity.entityType),
     snapshot: {
       entityType: updatedEntity.entityType,
       name: updatedEntity.name,
@@ -191,6 +193,7 @@ export async function createProductionEntityManual(input: {
     depth: entity.referenceDepth,
     status: entity.status,
     prompt: buildReferencePrompt(entity),
+    defaultRatio: defaultRatioForEntity(entity.entityType),
     snapshot: { entityType: entity.entityType, name: entity.name, sourceShotIds: entity.sourceShotIds },
     actorId: input.actorId,
   });

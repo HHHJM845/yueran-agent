@@ -89,3 +89,27 @@ Pass
   - PASS
 - `npx eslint src/components/workspace/workspace-shell.tsx`
   - PASS
+
+## Review fix: persist initial default ratios
+
+### Changed files
+
+- `src/server/repositories/production-entities.ts`
+- `src/server/use-cases/production-setup.ts`
+- `src/server/use-cases/production-setup.test.mjs`
+- `.superpowers/sdd/task-3-report.md`
+
+### Fix details
+
+- Extended `UpsertReferenceSetInput` with optional `defaultRatio` and `lastGenerationCount`.
+- Updated `upsertReferenceSet` to persist `default_ratio` and `last_generation_count` on both insert and update while preserving existing callers with defaults.
+- Passed `defaultRatioForEntity(entity.entityType)` when creating or updating SOP5 initial reference sets from storyboard setup, depth changes, and manual entity creation.
+- Added a source test that fails unless initial reference-set upserts can persist entity default ratios and setup passes the entity-derived ratio.
+
+### Validation
+
+- RED: `node --test --import tsx src/server/use-cases/production-setup.test.mjs`
+  - Failed as expected on `initial production reference sets persist entity default ratios` because `UpsertReferenceSetInput` did not expose `defaultRatio`.
+- GREEN: `node --test --import tsx src/server/use-cases/production-setup.test.mjs && npm run typecheck`
+  - PASS: 8 tests passed, 0 failed.
+  - PASS: `tsc --noEmit` exited 0.
