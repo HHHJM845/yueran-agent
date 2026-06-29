@@ -1,8 +1,11 @@
 import { AppError } from "@/lib/errors";
 import {
+  confirmProductionEntities,
   listProductionEntities,
   listProductionReferenceSets,
+  setProductionEntityInclusion,
   updateProjectProductionSetupStatus,
+  updateProductionEntityDetails,
   updateProductionEntityStatus,
   upsertProductionEntity,
   upsertReferenceSet,
@@ -20,6 +23,8 @@ export type ProductionEntityDraft = {
   description: string;
   sourceShotIds: string[];
 };
+
+const genericCharacterNames = new Set(["路人", "路人甲", "路人乙", "群众", "人群", "背景人群", "观众", "行人", "路人群众"]);
 
 export type ProductionSetupBundle = {
   entities: ProductionEntityView[];
@@ -143,6 +148,110 @@ export async function updateProductionEntityDepth(input: {
   };
 }
 
+export async function createProductionEntityManual(input: {
+  projectId: string;
+  entityType: Extract<ProductionEntityType, "character" | "scene">;
+  name: string;
+  description: string;
+  actorId: string;
+}) {
+  const name = input.name.trim();
+  if (!name) {
+    throw new AppError({
+      status: 422,
+      code: "production_entity_name_required",
+      userMessage: "请先填写人物或场景名称。",
+    });
+  }
+  const entity = await upsertProductionEntity({
+    projectId: input.projectId,
+    entityType: input.entityType,
+    name,
+    description: input.description.trim(),
+    sourceShotIds: [],
+    status: "draft",
+    actorId: input.actorId,
+  });
+  const referenceSet = await upsertReferenceSet({
+    projectId: input.projectId,
+    entityId: entity.id,
+    depth: entity.referenceDepth,
+    status: entity.status,
+    prompt: buildReferencePrompt(entity),
+    snapshot: { entityType: entity.entityType, name: entity.name, sourceShotIds: entity.sourceShotIds },
+    actorId: input.actorId,
+  });
+  return { entity, referenceSet, message: "已新增到设定清单。请确认提示词后再生成设定图。" };
+}
+
+export async function editProductionEntity(input: {
+  projectId: string;
+  entityId: string;
+  name: string;
+  description: string;
+  actorId: string;
+}) {
+  const entity = await updateProductionEntityDetails(input);
+  if (!entity) {
+    throw new AppError({
+      status: 404,
+      code: "production_entity_not_found",
+      userMessage: "没有找到这个人物或场景。请刷新工作台后再试。",
+    });
+  }
+  return { entity, message: "设定清单已更新。" };
+}
+
+export async function ignoreProductionEntity(input: {
+  projectId: string;
+  entityId: string;
+  reason: string;
+  actorId: string;
+}) {
+  const entity = await setProductionEntityInclusion({
+    projectId: input.projectId,
+    entityId: input.entityId,
+    inclusionStatus: "ignored",
+    ignoreReason: input.reason || "用户手动移除到忽略列表",
+    actorId: input.actorId,
+  });
+  if (!entity) {
+    throw new AppError({ status: 404, code: "production_entity_not_found", userMessage: "没有找到这个人物或场景。请刷新后再试。" });
+  }
+  return { entity, message: "已移入忽略列表，不会参与设定图生成，也不会阻塞提交审核。" };
+}
+
+export async function restoreProductionEntity(input: {
+  projectId: string;
+  entityId: string;
+  actorId: string;
+}) {
+  const entity = await setProductionEntityInclusion({
+    projectId: input.projectId,
+    entityId: input.entityId,
+    inclusionStatus: "active",
+    actorId: input.actorId,
+  });
+  if (!entity) {
+    throw new AppError({ status: 404, code: "production_entity_not_found", userMessage: "没有找到这个人物或场景。请刷新后再试。" });
+  }
+  return { entity, message: "已恢复到设定清单。" };
+}
+
+export async function confirmProductionEntityList(input: { projectId: string; actorId: string }) {
+  const setup = await getProductionSetup(input.projectId);
+  const activeEntities = setup.entities.filter((entity) => entity.inclusionStatus !== "ignored");
+  if (activeEntities.length === 0) {
+    throw new AppError({
+      status: 422,
+      code: "production_entity_list_empty",
+      userMessage: "人物和场景清单为空。请先新增需要生成设定图的人物或场景。",
+    });
+  }
+  const confirmed = await confirmProductionEntities({ projectId: input.projectId, actorId: input.actorId });
+  return { entities: confirmed, message: "人物和场景清单已确认，可以开始生成设定图。" };
+}
+
 export async function submitProductionSetupReview(input: {
   projectId: string;
   actorId: string;
@@ -217,6 +326,7 @@ function collectRefs(input: {
   for (const ref of input.refs) {
     const parsed = normalizeRef(ref);
     if (!parsed.name) continue;
+    if (shouldSkipEntity(input.entityType, parsed.name)) continue;
     const key = `${input.entityType}:${parsed.name.toLowerCase()}`;
     const current =
       input.drafts.get(key) ??
@@ -230,6 +340,10 @@ function collectRefs(input: {
     if (!current.sourceShotIds.includes(input.shotId)) current.sourceShotIds.push(input.shotId);
     input.drafts.set(key, current);
   }
+}
+
+function shouldSkipEntity(entityType: ProductionEntityType, name: string) {
+  return entityType === "character" && genericCharacterNames.has(name.trim());
 }
 
 function normalizeRef(ref: unknown) {

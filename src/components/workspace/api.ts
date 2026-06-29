@@ -1383,7 +1383,7 @@ export async function updateProductionEntityReferenceDepth(
     await fetch(`/api/projects/${projectId}/production-entities`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ entityId, referenceDepth }),
+      body: JSON.stringify({ action: "update_depth", entityId, referenceDepth }),
     })
   );
 }
@@ -1396,6 +1396,64 @@ export async function submitProductionSetupClientReview(projectId: string) {
   }>(
     await fetch(`/api/projects/${projectId}/production-entities`, {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "submit_review" }),
+    })
+  );
+}
+
+export async function createProductionEntity(
+  projectId: string,
+  input: { entityType: "character" | "scene"; name: string; description: string }
+) {
+  return readApi<{ entity: ProductionEntityView; referenceSet: ProductionReferenceSetView; message: string }>(
+    await fetch(`/api/projects/${projectId}/production-entities`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "create_entity", ...input }),
+    })
+  );
+}
+
+export async function editProductionEntityDetails(
+  projectId: string,
+  input: { entityId: string; name: string; description: string }
+) {
+  return readApi<{ entity: ProductionEntityView; message: string }>(
+    await fetch(`/api/projects/${projectId}/production-entities`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "edit_entity", ...input }),
+    })
+  );
+}
+
+export async function ignoreProductionEntity(projectId: string, input: { entityId: string; reason?: string }) {
+  return readApi<{ entity: ProductionEntityView; message: string }>(
+    await fetch(`/api/projects/${projectId}/production-entities`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "ignore_entity", entityId: input.entityId, reason: input.reason ?? "" }),
+    })
+  );
+}
+
+export async function restoreProductionEntity(projectId: string, entityId: string) {
+  return readApi<{ entity: ProductionEntityView; message: string }>(
+    await fetch(`/api/projects/${projectId}/production-entities`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "restore_entity", entityId }),
+    })
+  );
+}
+
+export async function confirmProductionEntityList(projectId: string) {
+  return readApi<{ entities: ProductionEntityView[]; message: string }>(
+    await fetch(`/api/projects/${projectId}/production-entities`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "confirm_list" }),
     })
   );
 }

@@ -3,17 +3,53 @@ import { jsonError } from "@/lib/errors";
 import { requireProjectAccess } from "@/server/auth/rbac";
 import { requireUser } from "@/server/auth/session";
 import {
+  confirmProductionEntityList,
+  createProductionEntityManual,
+  editProductionEntity,
   getProductionSetup,
+  ignoreProductionEntity,
+  restoreProductionEntity,
   submitProductionSetupReview,
   updateProductionEntityDepth,
 } from "@/server/use-cases/production-setup";
 
-const updateDepthSchema = z.object({
-  entityId: z.string().uuid("人物或场景设定 ID 不正确，请刷新后再试。"),
-  referenceDepth: z.enum(["basic", "full"], {
-    message: "请选择基础设定或完整设定。",
+const patchSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("update_depth"),
+    entityId: z.string().uuid("人物或场景设定 ID 不正确，请刷新后再试。"),
+    referenceDepth: z.enum(["basic", "full"], { message: "请选择基础设定或完整设定。" }),
   }),
-});
+  z.object({
+    action: z.literal("edit_entity"),
+    entityId: z.string().uuid("人物或场景设定 ID 不正确，请刷新后再试。"),
+    name: z.string().trim().min(1, "请填写人物或场景名称。"),
+    description: z.string().trim().default(""),
+  }),
+  z.object({
+    action: z.literal("ignore_entity"),
+    entityId: z.string().uuid("人物或场景设定 ID 不正确，请刷新后再试。"),
+    reason: z.string().trim().default(""),
+  }),
+  z.object({
+    action: z.literal("restore_entity"),
+    entityId: z.string().uuid("人物或场景设定 ID 不正确，请刷新后再试。"),
+  }),
+]);
+
+const postSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("submit_review"),
+  }),
+  z.object({
+    action: z.literal("create_entity"),
+    entityType: z.enum(["character", "scene"]),
+    name: z.string().trim().min(1, "请填写人物或场景名称。"),
+    description: z.string().trim().default(""),
+  }),
+  z.object({
+    action: z.literal("confirm_list"),
+  }),
+]);
 
 export async function GET(request: Request, context: { params: Promise<{ projectId: string }> }) {
   try {
@@ -31,14 +67,18 @@ export async function PATCH(request: Request, context: { params: Promise<{ proje
     const user = await requireUser(request);
     const { projectId } = await context.params;
     await requireProjectAccess(user, projectId);
-    const input = updateDepthSchema.parse(await request.json());
-    const result = await updateProductionEntityDepth({
-      projectId,
-      entityId: input.entityId,
-      depth: input.referenceDepth,
-      actorId: user.id,
-    });
-    return Response.json({ ok: true, data: result });
+    const input = patchSchema.parse(await request.json());
+    if (input.action === "update_depth") {
+      const result = await updateProductionEntityDepth({ projectId, entityId: input.entityId, depth: input.referenceDepth, actorId: user.id });
+      return Response.json({ ok: true, data: result });
+    }
+    if (input.action === "edit_entity") {
+      return Response.json({ ok: true, data: await editProductionEntity({ projectId, entityId: input.entityId, name: input.name, description: input.description, actorId: user.id }) });
+    }
+    if (input.action === "ignore_entity") {
+      return Response.json({ ok: true, data: await ignoreProductionEntity({ projectId, entityId: input.entityId, reason: input.reason, actorId: user.id }) });
+    }
+    return Response.json({ ok: true, data: await restoreProductionEntity({ projectId, entityId: input.entityId, actorId: user.id }) });
   } catch (error) {
     return jsonError(error);
   }
@@ -49,6 +89,13 @@ export async function POST(request: Request, context: { params: Promise<{ projec
     const user = await requireUser(request);
     const { projectId } = await context.params;
     await requireProjectAccess(user, projectId);
+    const input = postSchema.parse(await request.json());
+    if (input.action === "create_entity") {
+      return Response.json({ ok: true, data: await createProductionEntityManual({ projectId, entityType: input.entityType, name: input.name, description: input.description, actorId: user.id }) });
+    }
+    if (input.action === "confirm_list") {
+      return Response.json({ ok: true, data: await confirmProductionEntityList({ projectId, actorId: user.id }) });
+    }
     const origin = request.headers.get("origin") ?? new URL(request.url).origin;
     const review = await submitProductionSetupReview({
       projectId,

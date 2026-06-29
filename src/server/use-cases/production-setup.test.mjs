@@ -36,3 +36,20 @@ test("upsertProductionEntity preserves reference depth when caller omits it", as
   assert.match(source, /input\.referenceDepth\s*\?\?\s*null/);
   assert.doesNotMatch(source, /reference_depth\s*=\s*\$6[\s\S]*input\.referenceDepth\s*\?\?\s*"basic"/);
 });
+
+
+test("production setup supports confirmable active and ignored entity lists", async () => {
+  const source = await readFile(new URL("./production-setup.ts", import.meta.url), "utf8");
+  const repository = await readFile(new URL("../repositories/production-entities.ts", import.meta.url), "utf8");
+  const route = await readFile(new URL("../../app/api/projects/[projectId]/production-entities/route.ts", import.meta.url), "utf8");
+
+  assert.match(source, /confirmProductionEntityList/);
+  assert.match(source, /genericCharacterNames/);
+  assert.match(source, /inclusionStatus !== "ignored"/);
+  assert.match(repository, /setProductionEntityInclusion/);
+  assert.match(repository, /updateProductionEntityDetails/);
+  assert.match(route, /action: z\.literal\("create_entity"\)/);
+  assert.match(route, /action: z\.literal\("ignore_entity"\)/);
+  assert.match(route, /action: z\.literal\("restore_entity"\)/);
+  assert.match(route, /action: z\.literal\("confirm_list"\)/);
+});

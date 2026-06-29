@@ -271,6 +271,69 @@ export async function upsertReferenceSet(input: UpsertReferenceSetInput): Promis
   return mapReferenceSet(result.rows[0]);
 }
 
+export async function updateProductionEntityDetails(input: {
+  projectId: string;
+  entityId: string;
+  name: string;
+  description: string;
+  actorId?: string | null;
+}): Promise<ProductionEntityView | null> {
+  const result = await query<ProductionEntityRow>(
+    `update production_entities
+     set name = $3,
+         description = $4,
+         updated_by = coalesce($5, updated_by),
+         updated_at = now()
+     where project_id = $1 and id = $2
+     returning id, project_id, entity_type, name, description, importance, reference_depth,
+               source_shot_ids, status, inclusion_status, ignore_reason, confirmed_at,
+               version, locked_at, updated_at`,
+    [input.projectId, input.entityId, input.name.trim(), input.description.trim(), input.actorId ?? null]
+  );
+  return result.rows[0] ? mapEntity(result.rows[0]) : null;
+}
+
+export async function setProductionEntityInclusion(input: {
+  projectId: string;
+  entityId: string;
+  inclusionStatus: ProductionEntityInclusionStatus;
+  ignoreReason?: string;
+  actorId?: string | null;
+}): Promise<ProductionEntityView | null> {
+  const result = await query<ProductionEntityRow>(
+    `update production_entities
+     set inclusion_status = $3,
+         ignore_reason = case when $3 = 'ignored' then $4 else '' end,
+         updated_by = coalesce($5, updated_by),
+         updated_at = now()
+     where project_id = $1 and id = $2
+     returning id, project_id, entity_type, name, description, importance, reference_depth,
+               source_shot_ids, status, inclusion_status, ignore_reason, confirmed_at,
+               version, locked_at, updated_at`,
+    [input.projectId, input.entityId, input.inclusionStatus, input.ignoreReason ?? "", input.actorId ?? null]
+  );
+  return result.rows[0] ? mapEntity(result.rows[0]) : null;
+}
+
+export async function confirmProductionEntities(input: {
+  projectId: string;
+  actorId?: string | null;
+}): Promise<ProductionEntityView[]> {
+  const result = await query<ProductionEntityRow>(
+    `update production_entities
+     set confirmed_at = now(),
+         updated_by = coalesce($2, updated_by),
+         updated_at = now()
+     where project_id = $1
+       and inclusion_status = 'active'
+     returning id, project_id, entity_type, name, description, importance, reference_depth,
+               source_shot_ids, status, inclusion_status, ignore_reason, confirmed_at,
+               version, locked_at, updated_at`,
+    [input.projectId, input.actorId ?? null]
+  );
+  return result.rows.map(mapEntity);
+}
+
 export async function updateProductionEntityStatus(input: UpdateProductionEntityStatusInput): Promise<ProductionEntityView | null> {
   const result = await query<ProductionEntityRow>(
     `update production_entities
