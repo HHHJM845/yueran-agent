@@ -89,3 +89,28 @@ Output:
 
 - No issues found in focused tests or typecheck.
 - This task adds API/use-case wrappers but does not wire new UI controls into the workspace; that appears outside Task 2's requested file list and brief.
+
+## Review fix: ignored entities no longer block review submission
+
+- Updated `submitProductionSetupReview` to derive active entities with `inclusionStatus !== "ignored"` before checking for missing reference sets or confirmed selected/adopted images.
+- Updated `assertProductionSetupReferenceImagesReady` to defensively filter ignored entities before image-readiness checks, while leaving ignored rows persisted in the setup bundle for restore/visibility.
+- Added source-level coverage proving the submit gate and readiness helper use active entities for blocking checks.
+
+Test output:
+
+```text
+node --test --import tsx src/server/use-cases/production-setup.test.mjs
+✔ assertProductionSetupLocked requires locked entities before image stage
+✔ storyboard image generation is protected by the production setup lock gate
+✔ upsertProductionEntity preserves reference depth when caller omits it
+✔ production setup review requires confirmed generated reference images
+✔ production setup review gate skips ignored entities
+✔ production setup supports confirmable active and ignored entity lists
+tests 6
+pass 6
+fail 0
+
+npm run typecheck
+> augc-flow@0.1.0 typecheck
+> tsc --noEmit
+```

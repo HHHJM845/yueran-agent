@@ -37,6 +37,25 @@ test("upsertProductionEntity preserves reference depth when caller omits it", as
   assert.doesNotMatch(source, /reference_depth\s*=\s*\$6[\s\S]*input\.referenceDepth\s*\?\?\s*"basic"/);
 });
 
+test("production setup review requires confirmed generated reference images", async () => {
+  const source = await readFile(new URL("./production-setup.ts", import.meta.url), "utf8");
+  const generatedImages = await readFile(new URL("../repositories/generated-images.ts", import.meta.url), "utf8");
+
+  assert.match(generatedImages, /listGeneratedImagesByIds/);
+  assert.match(source, /assertProductionSetupReferenceImagesReady/);
+  assert.match(source, /reviewStatus === "confirmed"/);
+  assert.match(source, /production_reference_image_missing/);
+});
+
+test("production setup review gate skips ignored entities", async () => {
+  const source = await readFile(new URL("./production-setup.ts", import.meta.url), "utf8");
+
+  assert.match(source, /const activeEntities = setup\.entities\.filter\(\(entity\) => entity\.inclusionStatus !== "ignored"\)/);
+  assert.match(source, /const missingReference = activeEntities\.find\(/);
+  assert.match(source, /entities: activeEntities/);
+  assert.match(source, /const activeEntities = input\.entities\.filter\(\(entity\) => entity\.inclusionStatus !== "ignored"\)/);
+  assert.match(source, /for \(const entity of activeEntities\)/);
+});
 
 test("production setup supports confirmable active and ignored entity lists", async () => {
   const source = await readFile(new URL("./production-setup.ts", import.meta.url), "utf8");

@@ -1,4 +1,5 @@
 import { AppError } from "@/lib/errors";
+import { listGeneratedImagesByIds, type GeneratedImageView } from "@/server/repositories/generated-images";
 import {
   confirmProductionEntities,
   listProductionEntities,
@@ -258,14 +259,15 @@ export async function submitProductionSetupReview(input: {
   origin: string;
 }) {
   const [setup, storyboardShots] = await Promise.all([getProductionSetup(input.projectId), listStoryboardShots(input.projectId)]);
-  if (setup.entities.length === 0 || storyboardShots.length === 0) {
+  const activeEntities = setup.entities.filter((entity) => entity.inclusionStatus !== "ignored");
+  if (activeEntities.length === 0 || storyboardShots.length === 0) {
     throw new AppError({
       status: 422,
       code: "production_setup_empty",
       userMessage: "人物和场景设定还没有生成。请先拆分文字分镜，再确认设定后提交审核。",
     });
   }
-  const missingReference = setup.entities.find(
+  const missingReference = activeEntities.find(
     (entity) => !setup.referenceSets.some((referenceSet) => referenceSet.entityId === entity.id && referenceSet.depth === entity.referenceDepth)
   );
   if (missingReference) {
@@ -275,6 +277,11 @@ export async function submitProductionSetupReview(input: {
       userMessage: `“${missingReference.name}”还没有对应参考集。请先保存设定深度，再提交人物场景设定审核。`,
     });
   }
+  await assertProductionSetupReferenceImagesReady({
+    projectId: input.projectId,
+    entities: activeEntities,
+    referenceSets: setup.referenceSets,
+  });
 
   const entitySetVersion = Math.max(1, ...setup.entities.map((entity) => entity.version), ...setup.referenceSets.map((set) => set.version));
   const review = await createWorkflowClientReview({
@@ -294,6 +301,39 @@ export async function submitProductionSetupReview(input: {
     actorId: input.actorId,
   });
   return review;
+}
+
+export async function assertProductionSetupReferenceImagesReady(input: {
+  projectId: string;
+  entities: ProductionEntityView[];
+  referenceSets: ProductionReferenceSetView[];
+}) {
+  const activeEntities = input.entities.filter((entity) => entity.inclusionStatus !== "ignored");
+  const imageIds = input.referenceSets.flatMap((referenceSet) => referenceSet.referenceImageIds);
+  const generatedImages = await listGeneratedImagesByIds({ projectId: input.projectId, imageIds });
+  const generatedImageById = new Map(generatedImages.map((image) => [image.id, image]));
+
+  for (const entity of activeEntities) {
+    const activeReference = input.referenceSets.find(
+      (referenceSet) => referenceSet.entityId === entity.id && referenceSet.depth === entity.referenceDepth
+    );
+    const hasConfirmedReferenceImage = Boolean(
+      activeReference?.referenceImageIds
+        .map((imageId) => generatedImageById.get(imageId))
+        .some(isConfirmedProductionReferenceImage)
+    );
+    if (!hasConfirmedReferenceImage) {
+      throw new AppError({
+        status: 422,
+        code: "production_reference_image_missing",
+        userMessage: `“${entity.name}”还没有已采用的设定图。请先生成设定图，并在候选图里选择“设为采用”。`,
+      });
+    }
+  }
+}
+
+function isConfirmedProductionReferenceImage(image: GeneratedImageView | undefined) {
+  return Boolean(image?.ossUrl && image.status === "succeeded" && image.reviewStatus === "confirmed");
 }
 
 export function assertProductionSetupLocked(input: {
