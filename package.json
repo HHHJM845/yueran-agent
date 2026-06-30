@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "worker": "tsx src/scripts/job-worker.ts",
     "worker:once": "tsx src/scripts/job-worker.ts --once",
+    "seed:ui-inspection": "tsx src/scripts/seed-ui-inspection.ts",
     "smoke:stage-5-9": "tsx src/scripts/smoke-stage-5-9.ts",
     "user:create": "tsx src/scripts/create-user.ts",
     "start": "next start"
