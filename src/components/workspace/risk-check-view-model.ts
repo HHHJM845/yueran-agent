@@ -145,12 +145,13 @@ export function getRiskDecisionStateLabel(
 }
 
 function buildDimensionIssue(dimension: RiskCheckDimensionView): RiskIssueView | null {
-  const titleGroup = dimensionTitleMap[dimension.dimensionKey];
   const levelLabel = dimension.level === "high" ? "高" : "中";
-  const title = titleGroup?.[dimension.level] ?? `${dimensionFallbackLabels[dimension.dimensionKey] ?? dimension.dimensionKey}待确认`;
-  const reason = normalizeText(dimension.evidence) || normalizeText(dimension.anchorText) || "需要人工确认该维度的影响范围。";
+  if (dimension.level === "low") return null;
 
-  if (dimension.level === "low" && !titleGroup) return null;
+  const titleGroup = dimensionTitleMap[dimension.dimensionKey];
+  const titleKey: "high" | "medium" = dimension.level;
+  const title = titleGroup?.[titleKey] ?? `${dimensionFallbackLabels[dimension.dimensionKey] ?? dimension.dimensionKey}待确认`;
+  const reason = normalizeText(dimension.evidence) || normalizeText(dimension.anchorText) || "需要人工确认该维度的影响范围。";
   return {
     key: `dimension-${dimension.dimensionKey}`,
     title,
