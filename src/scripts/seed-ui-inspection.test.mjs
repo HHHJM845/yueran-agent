@@ -15,6 +15,17 @@ test("UI inspection seed script is wired and avoids real external providers", as
   assert.match(source, /seedCreativeAndCommercial/);
   assert.match(source, /seedScriptSetupAndStoryboard/);
   assert.match(source, /seedReviewCutsAndArchive/);
+  assert.match(source, /risk_check_cards/);
+  assert.match(source, /creative_directions/);
+  assert.match(source, /creative_proposal_rounds/);
+  assert.match(source, /workload_estimates/);
+  assert.match(source, /quotes/);
+  assert.match(source, /contracts/);
+  assert.match(source, /script_direction_packages/);
+  assert.match(source, /production_entities/);
+  assert.match(source, /production_reference_sets/);
+  assert.match(source, /storyboard_scenes/);
+  assert.match(source, /storyboard_shots/);
   assert.match(source, /current_stage = 'settlement_delivery_archive'/);
   assert.doesNotMatch(source, /generateOpenAIImage/);
   assert.doesNotMatch(source, /callArk/);
