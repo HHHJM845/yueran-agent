@@ -24,7 +24,6 @@ const stageKeys = [
   "settlement_delivery_archive",
 ] as const;
 
-type StageKey = (typeof stageKeys)[number];
 type Db = Awaited<ReturnType<typeof getDb>>;
 type QueryRunner = Db["query"];
 type TransactionRunner = Parameters<Db["withTransaction"]>[0] extends (query: infer T) => Promise<unknown> ? T : never;
@@ -1937,7 +1936,7 @@ async function seedReviewCutsAndArchive(projectId: string, actorId: string) {
       },
     ] as const;
 
-    for (const [index, cut] of reviewCutDefinitions.entries()) {
+    for (const cut of reviewCutDefinitions) {
       const assetId = await upsertAsset(query, {
         projectId,
         actorId,
@@ -1953,28 +1952,45 @@ async function seedReviewCutsAndArchive(projectId: string, actorId: string) {
       const reviewType = cut.cutType === "a_copy" ? "a_copy_review" : "b_copy_review";
       const reviewToken = sha256(`${UI_INSPECTION_MARKER}:${projectId}:${reviewType}:${cut.cutType}`);
       const reviewCode = sha256(`${UI_INSPECTION_MARKER}:${cut.cutType}:code`);
-      const cutResult = await query<{ id: string }>(
-        `insert into review_cuts (
-           project_id, cut_type, title, description, asset_id, video_url, duration_seconds,
-           status, version, created_by, reviewed_by, reviewed_at
-         )
-         values ($1, $2, $3, $4, $5, $6, 45, $7, $8, $9, $9, now())
-         on conflict (project_id, cut_type, version)
-         do update set
-           title = excluded.title,
-           description = excluded.description,
-           asset_id = excluded.asset_id,
-           video_url = excluded.video_url,
-           duration_seconds = excluded.duration_seconds,
-           status = excluded.status,
-           created_by = excluded.created_by,
-           reviewed_by = excluded.reviewed_by,
-           reviewed_at = excluded.reviewed_at,
-           updated_at = now()
-         returning id`,
-        [projectId, cut.cutType, cut.title, cut.description, assetId, SAMPLE_VIDEO_URL, cut.status, cut.version, actorId]
+      const existingReviewCutId = await findExistingId(
+        query,
+        `select id
+         from review_cuts
+         where project_id = $1
+           and cut_type = $2
+           and version = $3
+         limit 1`,
+        [projectId, cut.cutType, cut.version]
       );
-      const reviewCutId = cutResult.rows[0].id;
+      let reviewCutId = existingReviewCutId;
+      if (reviewCutId) {
+        await query(
+          `update review_cuts
+           set title = $2,
+               description = $3,
+               asset_id = $4,
+               video_url = $5,
+               duration_seconds = 45,
+               status = $6,
+               created_by = $7,
+               reviewed_by = $7,
+               reviewed_at = now(),
+               updated_at = now()
+           where id = $1`,
+          [reviewCutId, cut.title, cut.description, assetId, SAMPLE_VIDEO_URL, cut.status, actorId]
+        );
+      } else {
+        const cutResult = await query<{ id: string }>(
+          `insert into review_cuts (
+             project_id, cut_type, title, description, asset_id, video_url, duration_seconds,
+             status, version, created_by, reviewed_by, reviewed_at
+           )
+           values ($1, $2, $3, $4, $5, $6, 45, $7, $8, $9, $9, now())
+           returning id`,
+          [projectId, cut.cutType, cut.title, cut.description, assetId, SAMPLE_VIDEO_URL, cut.status, cut.version, actorId]
+        );
+        reviewCutId = cutResult.rows[0].id;
+      }
 
       const taskResult = await query<{ id: string }>(
         `insert into client_review_tasks (
@@ -2178,6 +2194,47 @@ async function seedReviewCutsAndArchive(projectId: string, actorId: string) {
   });
 }
 
+async function buildSeedSummary(projectId: string): Promise<Record<string, unknown>> {
+  const { query } = await getDb();
+  const projectResult = await query<{ current_stage: string }>(
+    `select current_stage
+     from projects
+     where id = $1
+     limit 1`,
+    [projectId]
+  );
+  const tables = {
+    stageCount: "project_stage_states",
+    riskCards: "risk_check_cards",
+    creativeDirections: "creative_directions",
+    proposalRounds: "creative_proposal_rounds",
+    quotes: "quotes",
+    contracts: "contracts",
+    scriptPackages: "script_direction_packages",
+    storyboardScenes: "storyboard_scenes",
+    storyboardShots: "storyboard_shots",
+    productionEntities: "production_entities",
+    storyboardImages: "storyboard_images",
+    storyboardVideos: "storyboard_videos",
+    reviewCuts: "review_cuts",
+    archiveRecords: "archive_records",
+  } as const;
+
+  const counts: Record<string, number> = {};
+  for (const [key, table] of Object.entries(tables)) {
+    const result = await query<{ count: number }>(`select count(*)::int as count from ${table} where project_id = $1`, [
+      projectId,
+    ]);
+    counts[key] = result.rows[0]?.count ?? 0;
+  }
+
+  return {
+    projectId,
+    currentStage: projectResult.rows[0]?.current_stage ?? null,
+    ...counts,
+  };
+}
+
 async function main() {
   const { withTransaction } = await getDb();
   const { actorId, projectId } = await withTransaction(async (query) => {
@@ -2191,7 +2248,8 @@ async function main() {
   const script = await seedScriptSetupAndStoryboard(projectId, actorId, commercial.directionId);
   await seedStoryboardImageAndVideo(projectId, actorId, script.sceneId, script.shotIds);
   await seedReviewCutsAndArchive(projectId, actorId);
-  console.log(JSON.stringify({ ok: true, projectId, marker: UI_INSPECTION_MARKER }, null, 2));
+  const summary = await buildSeedSummary(projectId);
+  console.log(JSON.stringify({ ok: true, marker: UI_INSPECTION_MARKER, ...summary }, null, 2));
 }
 
 void main().catch((error) => {
