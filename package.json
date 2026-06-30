@@ -8,7 +8,7 @@
     "build": "next build",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test:baseline": "tsx --test src/components/workspace/workspace-shell-brief-risk-simplification.test.mjs src/server/use-cases/risk-check-card.test.mjs src/components/workspace/risk-check-view-model.test.mjs",
+    "test:baseline": "tsx --test src/components/workspace/workspace-shell-brief-risk-simplification.test.mjs src/components/workspace/workspace-shell-stage-tabs.test.mjs src/components/workspace/workspace-shell-sop3-focus.test.mjs src/components/workspace/risk-check-view-model.test.mjs src/components/workspace/sop3-focused-flow-view-model.test.mjs src/server/use-cases/risk-check-card.test.mjs src/scripts/dev-with-worker.test.mjs",
     "worker": "tsx src/scripts/job-worker.ts",
     "worker:once": "tsx src/scripts/job-worker.ts --once",
     "seed:ui-inspection": "tsx src/scripts/seed-ui-inspection.ts",
