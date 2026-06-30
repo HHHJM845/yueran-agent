@@ -2070,26 +2070,50 @@ async function seedReviewCutsAndArchive(projectId: string, actorId: string) {
       }
 
       if (cut.cutType === "a_copy") {
-        await query(
-          `insert into change_requests (
-             project_id, source_sop, source_object_type, source_object_id, status, original_scope,
-             requested_scope, impact_json, decision_reason, decided_by, decided_at, created_by, updated_by
-           )
-           values (
-             $1, 'sop8_a_copy_revision', 'review_cut', $2, 'implemented', $3,
-             $4, $5::jsonb, $6, $7, now(), $7, $7
-           )
-           on conflict do nothing`,
-          [
-            projectId,
-            reviewCutId,
-            "A copy 第一版完整交付。",
-            "优化镜头 12 秒节奏，并降低 28 秒字幕负担。",
-            asJson({ marker: UI_INSPECTION_MARKER, rounds: 2, impact: "minor_edit" }),
-            "客户反馈已纳入 B copy 定稿版本。",
-            actorId,
-          ]
+        const originalScope = "A copy 第一版完整交付。";
+        const requestedScope = "优化镜头 12 秒节奏，并降低 28 秒字幕负担。";
+        const impactJson = asJson({ marker: UI_INSPECTION_MARKER, rounds: 2, impact: "minor_edit" });
+        const decisionReason = "客户反馈已纳入 B copy 定稿版本。";
+        const existingChangeRequestId = await findExistingId(
+          query,
+          `select id
+           from change_requests
+           where project_id = $1
+             and source_sop = 'sop8_a_copy_revision'
+             and source_object_type = 'review_cut'
+             and source_object_id = $2
+             and original_scope = $3
+             and requested_scope = $4
+           limit 1`,
+          [projectId, reviewCutId, originalScope, requestedScope]
         );
+
+        if (existingChangeRequestId) {
+          await query(
+            `update change_requests
+             set status = 'implemented',
+                 impact_json = $2::jsonb,
+                 decision_reason = $3,
+                 decided_by = $4,
+                 decided_at = now(),
+                 updated_by = $4,
+                 updated_at = now()
+             where id = $1`,
+            [existingChangeRequestId, impactJson, decisionReason, actorId]
+          );
+        } else {
+          await query(
+            `insert into change_requests (
+               project_id, source_sop, source_object_type, source_object_id, status, original_scope,
+               requested_scope, impact_json, decision_reason, decided_by, decided_at, created_by, updated_by
+             )
+             values (
+               $1, 'sop8_a_copy_revision', 'review_cut', $2, 'implemented', $3,
+               $4, $5::jsonb, $6, $7, now(), $7, $7
+             )`,
+            [projectId, reviewCutId, originalScope, requestedScope, impactJson, decisionReason, actorId]
+          );
+        }
       }
     }
 

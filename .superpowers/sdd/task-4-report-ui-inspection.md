@@ -160,3 +160,64 @@ Result: pass
 ## Notes / Residual Concerns
 
 - The provided source-level test verifies wiring and required table references, not live database execution. The seed logic is implemented against current schema constraints, but runtime DB validation would still be a useful follow-up once a dedicated seed verification path exists.
+
+## Fix: change_requests idempotency
+
+### Reviewed issue
+
+- The original `change_requests` seed path used `insert ... on conflict do nothing`.
+- `change_requests` has no unique constraint covering the seeded business fields.
+- Result: reruns could create duplicate rows instead of reusing the seeded A copy change request.
+
+### Fix applied
+
+Replaced the insert-only block in `seedReviewCutsAndArchive` with a stable lookup followed by update-or-insert using this natural key:
+
+- `project_id`
+- `source_sop = 'sop8_a_copy_revision'`
+- `source_object_type = 'review_cut'`
+- `source_object_id = <reviewCutId>`
+- `original_scope`
+- `requested_scope`
+
+Behavior now:
+
+- If a matching row exists, update:
+  - `status`
+  - `impact_json`
+  - `decision_reason`
+  - `decided_by`
+  - `decided_at`
+  - `updated_by`
+  - `updated_at`
+- If no matching row exists, insert a new row
+
+### Fix TDD evidence
+
+#### RED
+
+Extended `src/scripts/seed-ui-inspection.test.mjs` to require:
+
+- a `from change_requests` lookup path
+- absence of the old `insert into change_requests ... on conflict do nothing` pattern
+
+Then ran:
+
+```bash
+node --test src/scripts/seed-ui-inspection.test.mjs
+```
+
+Observed expected failure:
+
+- `AssertionError [ERR_ASSERTION]: The input did not match the regular expression /from change_requests/`
+
+#### GREEN
+
+Updated the seed logic to perform stable lookup + update-or-insert, then reran:
+
+```bash
+node --test src/scripts/seed-ui-inspection.test.mjs
+npm run typecheck
+```
+
+Both passed.

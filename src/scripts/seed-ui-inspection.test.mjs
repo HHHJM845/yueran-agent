@@ -23,6 +23,8 @@ test("UI inspection seed script is wired and avoids real external providers", as
   assert.match(source, /review_cuts/);
   assert.match(source, /archive_records/);
   assert.match(source, /SAMPLE_VIDEO_URL/);
+  assert.match(source, /from change_requests/);
+  assert.doesNotMatch(source, /insert into change_requests[\s\S]*on conflict do nothing/);
   assert.match(source, /risk_check_cards/);
   assert.match(source, /creative_directions/);
   assert.match(source, /creative_proposal_rounds/);
