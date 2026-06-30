@@ -6,6 +6,7 @@ import {
   confirmProductionEntityList,
   createProductionEntityManual,
   editProductionEntity,
+  generateProductionReferencePrompts,
   getProductionSetup,
   ignoreProductionEntity,
   restoreProductionEntity,
@@ -62,6 +63,9 @@ const postSchema = z.discriminatedUnion("action", [
   }),
   z.object({
     action: z.literal("confirm_list"),
+  }),
+  z.object({
+    action: z.literal("regenerate_prompts"),
   }),
 ]);
 
@@ -133,6 +137,9 @@ export async function POST(request: Request, context: { params: Promise<{ projec
     }
     if (input.action === "confirm_list") {
       return Response.json({ ok: true, data: await confirmProductionEntityList({ projectId, actorId: user.id }) });
+    }
+    if (input.action === "regenerate_prompts") {
+      return Response.json({ ok: true, data: await generateProductionReferencePrompts({ projectId, actorId: user.id, force: true }) });
     }
     const origin = request.headers.get("origin") ?? new URL(request.url).origin;
     const review = await submitProductionSetupReview({

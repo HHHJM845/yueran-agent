@@ -1,4 +1,5 @@
-import { query, withTransaction } from "@/lib/db";
+import { AppError } from "@/lib/errors";
+import { query, withTransaction, type TransactionQuery } from "@/lib/db";
 
 export type ScriptPackageStatus =
   | "draft"
@@ -378,6 +379,42 @@ export async function updateScriptDirectionPackageStatus(input: {
   return result.rows[0] ? mapPackage(result.rows[0]) : null;
 }
 
+export async function updateScriptDirectionPackageScript(input: {
+  projectId: string;
+  packageId: string;
+  title?: string | null;
+  concept?: string | null;
+  fullScript: string;
+  status?: ScriptPackageStatus;
+  actorId?: string | null;
+}) {
+  const result = await query<ScriptPackageRow>(
+    `update script_direction_packages
+     set title = coalesce(nullif($3, ''), title),
+         concept = coalesce(nullif($4, ''), concept),
+         full_script = $5,
+         status = coalesce($6, status),
+         version = version + 1,
+         updated_by = coalesce($7, updated_by),
+         updated_at = now()
+     where project_id = $1
+       and id = $2
+       and status <> 'archived'
+     returning id, project_id, direction_id, title, concept, full_script, status, version,
+               selected_at, locked_at, updated_at`,
+    [
+      input.projectId,
+      input.packageId,
+      input.title ?? null,
+      input.concept ?? null,
+      input.fullScript,
+      input.status ?? null,
+      input.actorId ?? null,
+    ]
+  );
+  return result.rows[0] ? mapPackage(result.rows[0]) : null;
+}
+
 export async function listScriptReferenceAssets(projectId: string) {
   const result = await query<ReferenceRow>(
     `select id, project_id, package_id, reference_type, title, style_label, prompt,
@@ -412,6 +449,187 @@ export async function listStoryboardShots(projectId: string) {
     [projectId]
   );
   return result.rows.map(mapShot);
+}
+
+export async function createStoryboardShot(input: {
+  projectId: string;
+  sceneId: string;
+  packageId?: string | null;
+  shotNumber: string;
+  visualDescription: string;
+  shotSize?: string;
+  actionExpression?: string;
+  cameraMovement?: string;
+  durationSeconds?: number | null;
+  soundTransition?: string;
+  notes?: string;
+  characterRefs?: unknown[];
+  sceneRefs?: unknown[];
+  imagePrompt?: string;
+  videoPrompt?: string;
+  sortOrder: number;
+  actorId?: string | null;
+}) {
+  const result = await query<ShotRow>(
+    `insert into storyboard_shots (
+       project_id, scene_id, package_id, shot_number, visual_description, shot_size,
+       action_expression, camera_movement, duration_seconds, sound_transition, notes,
+       character_refs, scene_refs, image_prompt, video_prompt, status, sort_order, created_by, updated_by
+     )
+     values (
+       $1, $2, $3, $4, $5, $6,
+       $7, $8, $9, $10, $11,
+       $12::jsonb, $13::jsonb, $14, $15, 'draft', $16, $17, $17
+     )
+     returning id, project_id, scene_id, package_id, shot_number, visual_description, shot_size,
+               action_expression, camera_movement, duration_seconds, sound_transition, notes,
+               character_refs, scene_refs, image_prompt, video_prompt, status, version, sort_order, updated_at`,
+    [
+      input.projectId,
+      input.sceneId,
+      input.packageId ?? null,
+      input.shotNumber,
+      input.visualDescription,
+      input.shotSize ?? "",
+      input.actionExpression ?? "",
+      input.cameraMovement ?? "",
+      input.durationSeconds ?? null,
+      input.soundTransition ?? "",
+      input.notes ?? "",
+      JSON.stringify(input.characterRefs ?? []),
+      JSON.stringify(input.sceneRefs ?? []),
+      input.imagePrompt ?? "",
+      input.videoPrompt ?? "",
+      input.sortOrder,
+      input.actorId ?? null,
+    ]
+  );
+  return mapShot(result.rows[0]);
+}
+
+export async function updateStoryboardShotOrder(input: {
+  projectId: string;
+  shotId: string;
+  sceneId: string;
+  sortOrder: number;
+  actorId?: string | null;
+}) {
+  const result = await query<ShotRow>(
+    `update storyboard_shots
+     set scene_id = $3,
+         sort_order = $4,
+         updated_by = coalesce($5, updated_by),
+         updated_at = now()
+     where project_id = $1 and id = $2
+     returning id, project_id, scene_id, package_id, shot_number, visual_description, shot_size,
+               action_expression, camera_movement, duration_seconds, sound_transition, notes,
+               character_refs, scene_refs, image_prompt, video_prompt, status, version, sort_order, updated_at`,
+    [input.projectId, input.shotId, input.sceneId, input.sortOrder, input.actorId ?? null]
+  );
+  return result.rows[0] ? mapShot(result.rows[0]) : null;
+}
+
+export async function updateStoryboardShotContent(input: {
+  projectId: string;
+  shotId: string;
+  sceneId: string;
+  shotNumber: string;
+  visualDescription: string;
+  shotSize?: string;
+  actionExpression?: string;
+  cameraMovement?: string;
+  durationSeconds?: number | null;
+  soundTransition?: string;
+  notes?: string;
+  characterRefs?: unknown[];
+  sceneRefs?: unknown[];
+  imagePrompt?: string;
+  videoPrompt?: string;
+  sortOrder: number;
+  actorId?: string | null;
+}) {
+  const result = await query<ShotRow>(
+    `update storyboard_shots
+     set scene_id = $3,
+         shot_number = $4,
+         visual_description = $5,
+         shot_size = $6,
+         action_expression = $7,
+         camera_movement = $8,
+         duration_seconds = $9,
+         sound_transition = $10,
+         notes = $11,
+         character_refs = $12::jsonb,
+         scene_refs = $13::jsonb,
+         image_prompt = $14,
+         video_prompt = $15,
+         sort_order = $16,
+         version = version + 1,
+         updated_by = coalesce($17, updated_by),
+         updated_at = now()
+     where project_id = $1 and id = $2
+     returning id, project_id, scene_id, package_id, shot_number, visual_description, shot_size,
+               action_expression, camera_movement, duration_seconds, sound_transition, notes,
+               character_refs, scene_refs, image_prompt, video_prompt, status, version, sort_order, updated_at`,
+    [
+      input.projectId,
+      input.shotId,
+      input.sceneId,
+      input.shotNumber,
+      input.visualDescription,
+      input.shotSize ?? "",
+      input.actionExpression ?? "",
+      input.cameraMovement ?? "",
+      input.durationSeconds ?? null,
+      input.soundTransition ?? "",
+      input.notes ?? "",
+      JSON.stringify(input.characterRefs ?? []),
+      JSON.stringify(input.sceneRefs ?? []),
+      input.imagePrompt ?? "",
+      input.videoPrompt ?? "",
+      input.sortOrder,
+      input.actorId ?? null,
+    ]
+  );
+  return result.rows[0] ? mapShot(result.rows[0]) : null;
+}
+
+export async function deleteStoryboardShotIfUnused(input: {
+  projectId: string;
+  shotId: string;
+  actorId?: string | null;
+}) {
+  return withTransaction(async (tx) => deleteStoryboardShotIfUnusedTx(tx, input));
+}
+
+async function deleteStoryboardShotIfUnusedTx(
+  tx: TransactionQuery,
+  input: { projectId: string; shotId: string; actorId?: string | null }
+) {
+  const usage = await tx<{ image_count: string; video_count: string }>(
+    `select
+       (select count(*) from storyboard_images where project_id = $1 and shot_id = $2)::text as image_count,
+       (select count(*) from storyboard_videos where project_id = $1 and shot_id = $2)::text as video_count`,
+    [input.projectId, input.shotId]
+  );
+  const counts = usage.rows[0];
+  if (Number(counts?.image_count ?? 0) > 0 || Number(counts?.video_count ?? 0) > 0) {
+    throw new AppError({
+      status: 422,
+      code: "storyboard_shot_has_assets",
+      userMessage: "这条分镜已经生成过图片或视频，不能直接删除。请先处理相关生产资产，再调整分镜序列。",
+    });
+  }
+
+  const result = await tx<ShotRow>(
+    `delete from storyboard_shots
+     where project_id = $1 and id = $2
+     returning id, project_id, scene_id, package_id, shot_number, visual_description, shot_size,
+               action_expression, camera_movement, duration_seconds, sound_transition, notes,
+               character_refs, scene_refs, image_prompt, video_prompt, status, version, sort_order, updated_at`,
+    [input.projectId, input.shotId]
+  );
+  return result.rows[0] ? mapShot(result.rows[0]) : null;
 }
 
 export async function listStoryboardImages(projectId: string) {

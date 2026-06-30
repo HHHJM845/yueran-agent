@@ -46,6 +46,10 @@ const requirementJobInputSchema = z.object({
   requirementText: z.string().min(1),
 });
 
+const REQUIREMENT_STRUCTURING_INPUT_LIMIT = 14_000;
+const REQUIREMENT_STRUCTURING_HEAD_CHARS = 9_500;
+const REQUIREMENT_STRUCTURING_TAIL_CHARS = 4_500;
+
 export type StructuredRequirement = z.infer<typeof structuredRequirementSchema>;
 
 function normalizeTextValue(value: unknown): string {
@@ -54,6 +58,17 @@ function normalizeTextValue(value: unknown): string {
   if (Array.isArray(value)) return value.map((item) => normalizeTextValue(item)).filter(Boolean).join("、");
   if (typeof value === "object") return Object.values(value).map((item) => normalizeTextValue(item)).filter(Boolean).join("、");
   return String(value);
+}
+
+function prepareRequirementStructuringInput(value: string) {
+  const normalized = value.replace(/\n{3,}/g, "\n\n").trim();
+  if (normalized.length <= REQUIREMENT_STRUCTURING_INPUT_LIMIT) return normalized;
+
+  return [
+    normalized.slice(0, REQUIREMENT_STRUCTURING_HEAD_CHARS),
+    "【系统提示】原始材料过长，中间部分已省略。请优先抽取保留材料中的明确信息；无法确认的信息必须写入 openQuestions，不能猜测。",
+    normalized.slice(-REQUIREMENT_STRUCTURING_TAIL_CHARS),
+  ].join("\n\n");
 }
 
 export async function enqueueRequirementStructuring(input: {
@@ -95,6 +110,7 @@ export async function runRequirementStructuringJob(jobId: string, options: { wor
 
   const parsedInput = requirementJobInputSchema.parse(job.input);
   const cleanText = parsedInput.requirementText.trim();
+  const modelInputText = prepareRequirementStructuringInput(cleanText);
 
   await updateJobStatus(jobId, {
     status: "processing",
@@ -123,31 +139,36 @@ export async function runRequirementStructuringJob(jobId: string, options: { wor
         provider: env.TEXT_STRUCTURING_PROVIDER,
         model: env.ARK_TEXT_STRUCTURING_MODEL,
         inputChars: cleanText.length,
+        modelInputChars: modelInputText.length,
       },
       at: new Date().toISOString(),
     });
 
     const result = await callArkJson<StructuredRequirement>({
       model: env.ARK_TEXT_STRUCTURING_MODEL,
-      maxOutputTokens: 12000,
-      timeoutMs: 150_000,
+      maxOutputTokens: 5000,
+      timeoutMs: 180_000,
       telemetry: {
         projectId: job.projectId,
         jobId,
         callId: "ark_requirement_structuring",
         provider: env.TEXT_STRUCTURING_PROVIDER,
         operation: "requirement_structuring",
-        metadata: { inputChars: cleanText.length },
+        metadata: {
+          inputChars: cleanText.length,
+          modelInputChars: modelInputText.length,
+          inputTrimmed: modelInputText.length < cleanText.length,
+        },
       },
       messages: [
         {
           role: "system",
           content:
-            "你是 AIGC 视频商业项目的资深需求分析师。请把客户原始需求整理为严格 JSON，不要输出 Markdown。字段必须包括 brandInfo, productOrService, targetAudience, videoGoal, expectedStyle, referenceSamples, keySellingPoints, restrictions, deliverySpecs, timeline, budgetOrQuoteInfo, openQuestions, summary。数组字段输出字符串数组。内容要简洁，summary 控制在 80 字以内。",
+            "你是 AIGC 视频商业项目的需求结构化助手。只输出一个严格 JSON 对象，不要 Markdown、解释或代码块。字段必须包括 brandInfo, productOrService, targetAudience, videoGoal, expectedStyle, referenceSamples, keySellingPoints, restrictions, deliverySpecs, timeline, budgetOrQuoteInfo, openQuestions, summary。Brief 的最低推进标准是尽量抽取品牌/客户、项目内容、视频目标、交付形式、时间节点、敏感内容或授权风险；目标受众、风格参考、投放渠道、时长、核心卖点、预算、客户偏好、参考案例属于建议项；角色、场景、特效复杂度、画面细节、文件规格、审核人和反馈规则可后续补充。只根据材料明确出现的信息填写；缺失或不确定项写入 openQuestions，但 openQuestions 只作为待确认提示，不代表 Brief 不可进入下一环节。数组字段输出字符串数组。每个字段保持简洁，summary 控制在 80 字以内。",
         },
         {
           role: "user",
-          content: cleanText,
+          content: modelInputText,
         },
       ],
     });

@@ -111,6 +111,18 @@ export async function setProjectCurrentStage(input: {
   );
 }
 
+export function shouldUpdateProjectCurrentStage(input: {
+  existingCurrentStage: ProjectStage;
+  requestedCurrentStage: ProjectStage;
+}) {
+  return getStageIndex(input.requestedCurrentStage) >= getStageIndex(input.existingCurrentStage);
+}
+
+function getStageIndex(stage: ProjectStage) {
+  const index = projectStages.indexOf(stage);
+  return index >= 0 ? index : -1;
+}
+
 export async function updateProjectStageProgress(input: {
   projectId: string;
   stageKey: ProjectStage;
@@ -125,9 +137,21 @@ export async function updateProjectStageProgress(input: {
 }) {
   const stage = await upsertProjectStageState(input);
   if (input.currentStage || input.projectStatus) {
+    const requestedCurrentStage = input.currentStage ?? input.stageKey;
+    const existingProject = await query<{ current_stage: ProjectStage }>(
+      `select current_stage
+       from projects
+       where id = $1
+       limit 1`,
+      [input.projectId]
+    );
+    const existingCurrentStage = existingProject.rows[0]?.current_stage;
+    if (!existingCurrentStage || !shouldUpdateProjectCurrentStage({ existingCurrentStage, requestedCurrentStage })) {
+      return stage;
+    }
     await setProjectCurrentStage({
       projectId: input.projectId,
-      currentStage: input.currentStage ?? input.stageKey,
+      currentStage: requestedCurrentStage,
       status: input.projectStatus ?? input.status,
     });
   }

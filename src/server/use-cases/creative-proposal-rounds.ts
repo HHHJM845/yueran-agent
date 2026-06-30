@@ -13,6 +13,7 @@ import {
   type CreativeSceneConceptView,
 } from "@/server/repositories/creative-proposals";
 import { listProjectCreativeDirections } from "@/server/repositories/creative-directions";
+import { listProjectCreativeExpansions, type CreativeExpansionView } from "@/server/repositories/creative-expansions";
 import { listProjectGeneratedImages } from "@/server/repositories/generated-images";
 import { createWorkflowClientReview } from "@/server/use-cases/client-review";
 
@@ -42,6 +43,10 @@ export function getRequiredSceneCountForRound(roundNumber: 1 | 2) {
 
 export function getImageCandidateCountPerScene() {
   return 4;
+}
+
+export function getMaxSelectedImageCountPerScene() {
+  return 2;
 }
 
 export function normalizeCreativeDirections(input: unknown): CreativeDirectionDraft[] {
@@ -76,7 +81,7 @@ export async function createCreativeProposalRound(input: {
   const directions = await listProjectCreativeDirections(input.projectId);
   validateCreativeDirectionCount(directions);
 
-  const selectedDirections = input.roundNumber === 1 ? directions : directions.filter((direction) => input.directionIds.includes(direction.id));
+  const selectedDirections = directions.filter((direction) => input.directionIds.includes(direction.id));
   if (input.directionIds.length > 0 && input.directionIds.some((id) => !directions.some((direction) => direction.id === id))) {
     throw new AppError({
       status: 422,
@@ -85,28 +90,41 @@ export async function createCreativeProposalRound(input: {
     });
   }
 
-  if (input.roundNumber === 2 && selectedDirections.length === 0) {
+  if (selectedDirections.length === 0) {
     throw new AppError({
       status: 422,
       code: "creative_round_retained_direction_required",
-      userMessage: "第二轮提案至少需要保留一个创意方向。请先在第一轮反馈后选择要深化的方向。",
+      userMessage: input.roundNumber === 1 ? "第一轮提案至少需要选择一个创意方向。请先勾选要给甲方看的方向。" : "第二轮提案至少需要保留一个创意方向。请先在第一轮反馈后选择要深化的方向。",
+    });
+  }
+
+  const sceneCount = getRequiredSceneCountForRound(input.roundNumber);
+  const selectedDirectionIdsSet = new Set(selectedDirections.map((direction) => direction.id));
+  const expansions = (await listProjectCreativeExpansions(input.projectId)).filter((expansion) => selectedDirectionIdsSet.has(expansion.directionId));
+  const missingExpansionDirection = selectedDirections.find((direction) => expansions.filter((expansion) => expansion.directionId === direction.id).length < sceneCount);
+  if (missingExpansionDirection) {
+    throw new AppError({
+      status: 422,
+      code: "creative_round_story_cards_incomplete",
+      userMessage: `创意方向「${missingExpansionDirection.title}」还没有 ${sceneCount} 个故事卡。请先生成故事大纲和候选氛围图，再创建本轮提案包。`,
     });
   }
 
   const version = (await listCreativeProposalRounds(input.projectId)).rounds.filter((round) => round.roundNumber === input.roundNumber).length + 1;
-  const directionIds = input.roundNumber === 1 ? directions.map((direction) => direction.id) : selectedDirections.map((direction) => direction.id);
+  const directionIds = selectedDirections.map((direction) => direction.id);
   const round = await withTransaction(async (transactionQuery) => {
     const createdRound = await insertCreativeProposalRound({
       projectId: input.projectId,
       roundNumber: input.roundNumber,
       version,
-      directionIds: input.roundNumber === 1 ? directionIds : directions.map((direction) => direction.id),
+      directionIds,
       retainedDirectionIds: input.roundNumber === 1 ? [] : directionIds,
       actorId: input.actorId,
       transactionQuery,
       snapshot: {
         directionCount: directions.length,
-        retainedDirectionCount: selectedDirections.length,
+        selectedDirectionCount: selectedDirections.length,
+        retainedDirectionCount: input.roundNumber === 1 ? 0 : selectedDirections.length,
         requiredSceneCountPerDirection: getRequiredSceneCountForRound(input.roundNumber),
         imageCandidateCountPerScene: getImageCandidateCountPerScene(),
       },
@@ -120,6 +138,7 @@ export async function createCreativeProposalRound(input: {
       concepts: buildSceneConceptInputs({
         roundNumber: input.roundNumber,
         directions: selectedDirections,
+        expansions,
       }),
     });
 
@@ -143,11 +162,11 @@ export async function selectCreativeSceneImages(input: {
   imageIds: string[];
   actorId: string;
 }): Promise<CreativeSceneConceptView> {
-  if (input.imageIds.length === 0 || input.imageIds.length > getImageCandidateCountPerScene()) {
+  if (input.imageIds.length === 0 || input.imageIds.length > getMaxSelectedImageCountPerScene()) {
     throw new AppError({
       status: 422,
       code: "creative_scene_image_selection_invalid",
-      userMessage: "请选择 1 到 4 张候选氛围图。未生成成功的候选图不能被确认。",
+      userMessage: "请选择 1 到 2 张候选氛围图。未生成成功的候选图不能被确认。",
     });
   }
 
@@ -166,6 +185,14 @@ export async function createCreativeProposalRoundClientReview(input: {
       status: 404,
       code: "creative_proposal_round_not_found",
       userMessage: "没有找到这轮创意视觉提案。请刷新工作台后再试。",
+    });
+  }
+  const selectedDirectionIds = (await listProjectCreativeDirections(input.projectId)).filter((direction) => direction.isSelected).map((direction) => direction.id);
+  if (!isSameDirectionSet(round.directionIds, selectedDirectionIds)) {
+    throw new AppError({
+      status: 409,
+      code: "creative_round_selection_changed",
+      userMessage: "当前内部选择的创意方向已经变化。请先重新保存本轮提案包快照，再生成新的甲方审核链接。",
     });
   }
 
@@ -202,26 +229,33 @@ function buildSceneConceptInputs(input: {
     atmospherePrompt: string;
     detail: unknown;
   }>;
+  expansions: CreativeExpansionView[];
 }) {
   const sceneCount = getRequiredSceneCountForRound(input.roundNumber);
   return input.directions.flatMap((direction) =>
-    Array.from({ length: sceneCount }, (_, index) => {
-      const sceneIndex = index + 1;
+    input.expansions
+      .filter((expansion) => expansion.directionId === direction.id)
+      .sort((left, right) => left.sortOrder - right.sortOrder)
+      .slice(0, sceneCount)
+      .map((expansion, index) => {
+        const sceneIndex = index + 1;
       return {
         directionId: direction.id,
         sceneIndex,
-        title: `${direction.title} - 视觉场景 ${sceneIndex}`,
-        description: buildSceneDescription(direction, sceneIndex, input.roundNumber),
-        sourceText: [direction.coreIdea, direction.fitReason, direction.riskNotes].filter(Boolean).join("\n"),
-        imagePrompt: direction.atmospherePrompt || `${direction.title}，${direction.coreIdea}，商业 AIGC 视频视觉提案氛围图，场景 ${sceneIndex}`,
+        title: expansion.title,
+        description: buildSceneDescription(direction, expansion, sceneIndex, input.roundNumber),
+        sourceText: [direction.coreIdea, expansion.oneLiner, ...Object.values(expansion.storyArc), expansion.visualStyle, expansion.riskNotes].filter(Boolean).join("\n"),
+        imagePrompt: direction.atmospherePrompt || `${expansion.title}，${expansion.oneLiner}，商业 AIGC 视频视觉提案氛围图，场景 ${sceneIndex}`,
         requiredImageCount: getImageCandidateCountPerScene(),
         snapshot: {
           directionTitle: direction.title,
+          expansionId: expansion.id,
+          expansionTitle: expansion.title,
           roundNumber: input.roundNumber,
-          source: "derived_from_confirmed_direction",
+          source: "derived_from_selected_story_card",
         },
       };
-    })
+      })
   );
 }
 
@@ -230,17 +264,17 @@ function buildSceneDescription(
     coreIdea: string;
     fitReason: string;
   },
+  expansion: Pick<CreativeExpansionView, "oneLiner" | "storyArc" | "visualStyle" | "visualHighlights">,
   sceneIndex: number,
   roundNumber: 1 | 2
 ) {
   if (roundNumber === 1) {
-    return sceneIndex === 1
-      ? `用开场主视觉验证方向识别度：${direction.coreIdea}`
-      : `用核心卖点视觉验证商业适配度：${direction.fitReason}`;
+    return `故事卡 ${sceneIndex}：${expansion.oneLiner || direction.coreIdea}`;
   }
 
   const labels = ["开场吸引", "产品/服务亮点", "情绪转折", "收束记忆点"];
-  return `${labels[sceneIndex - 1] ?? "深化视觉"}：${sceneIndex % 2 === 0 ? direction.fitReason : direction.coreIdea}`;
+  const arcText = Object.values(expansion.storyArc).filter(Boolean).join("；");
+  return `${labels[sceneIndex - 1] ?? "深化视觉"}：${arcText || expansion.oneLiner || direction.fitReason}`;
 }
 
 async function createCandidateImageRows(input: {
@@ -253,8 +287,10 @@ async function createCandidateImageRows(input: {
   const generatedImages = await listProjectGeneratedImages(input.projectId);
 
   for (const concept of input.concepts) {
+    const expansionId = readStringField(concept.snapshot, "expansionId");
     const candidates = generatedImages
-      .filter((image) => image.directionId === concept.directionId && image.status === "succeeded")
+      .filter((image) => (expansionId ? image.expansionId === expansionId : image.directionId === concept.directionId) && image.status === "succeeded")
+      .sort((left, right) => Number(right.reviewStatus === "confirmed") - Number(left.reviewStatus === "confirmed"))
       .slice(0, getImageCandidateCountPerScene());
 
     for (let index = 0; index < getImageCandidateCountPerScene(); index += 1) {
@@ -273,4 +309,15 @@ async function createCandidateImageRows(input: {
       });
     }
   }
+}
+
+function readStringField(record: Record<string, unknown>, key: string) {
+  const value = record[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function isSameDirectionSet(left: string[], right: string[]) {
+  if (left.length !== right.length) return false;
+  const rightSet = new Set(right);
+  return left.every((id) => rightSet.has(id));
 }

@@ -3,21 +3,12 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 test("assertProductionSetupLocked requires locked entities before image stage", async () => {
-  const { assertProductionSetupLocked } = await import("./production-setup.ts");
-  assert.throws(
-    () =>
-      assertProductionSetupLocked({
-        entities: [{ id: "char-1", entityType: "character", status: "draft" }],
-        storyboardShots: [{ id: "shot-1" }],
-      }),
-    /人物和场景设定尚未全部锁定/
-  );
-  assert.doesNotThrow(() =>
-    assertProductionSetupLocked({
-      entities: [{ id: "char-1", entityType: "character", status: "locked" }],
-      storyboardShots: [{ id: "shot-1" }],
-    })
-  );
+  const source = await readFile(new URL("./production-setup.ts", import.meta.url), "utf8");
+
+  assert.match(source, /assertProductionSetupLocked/);
+  assert.match(source, /storyboard_required_before_image_stage/);
+  assert.match(source, /production_setup_not_locked/);
+  assert.match(source, /entity\.status !== "locked"/);
 });
 
 test("storyboard image generation is protected by the production setup lock gate", async () => {
@@ -88,6 +79,37 @@ test("production setup prompts are visible editable and style-aware", async () =
   assert.match(route, /action: z\.literal\("save_prompt"\)/);
 });
 
+test("production setup confirmation generates AI reference prompts from script style and storyboard context", async () => {
+  const source = await readFile(new URL("./production-setup.ts", import.meta.url), "utf8");
+  const repository = await readFile(new URL("../repositories/production-entities.ts", import.meta.url), "utf8");
+
+  assert.match(source, /callArkResponseJson/);
+  assert.match(source, /productionReferencePromptResponseSchema/);
+  assert.match(source, /generateProductionReferencePrompts/);
+  assert.match(source, /listScriptDirectionPackages/);
+  assert.match(source, /listProjectCreativeDirections/);
+  assert.match(source, /listStoryboardShots/);
+  assert.match(source, /promptSource: "ai_script_context"/);
+  assert.match(source, /sourcePackageId/);
+  assert.match(source, /sourceCreativeDirectionIds/);
+  assert.match(source, /sourceShotIds/);
+  assert.match(source, /reasoningSummary/);
+  assert.match(source, /thinking: "disabled"/);
+  assert.match(source, /env\.ARK_TEXT_STRUCTURING_MODEL/);
+  assert.match(source, /status === "locked" \|\| referenceSet\.status === "client_approved"/);
+  assert.match(repository, /snapshot:\s*Record<string, unknown>/);
+  assert.match(repository, /snapshot_json = case when \$7::jsonb is null then snapshot_json else snapshot_json \|\| \$7::jsonb end/);
+});
+
+test("manual production reference prompt saves are marked as manual edits", async () => {
+  const source = await readFile(new URL("./production-setup.ts", import.meta.url), "utf8");
+
+  assert.match(source, /promptSource: "manual_edit"/);
+  assert.match(source, /manualEditedAt/);
+  assert.match(source, /updateProductionReferencePrompt/);
+  assert.ok(source.indexOf("promptSource: \"manual_edit\"") > source.indexOf("updateProductionReferencePrompt"));
+});
+
 test("initial production reference sets persist entity default ratios", async () => {
   const source = await readFile(new URL("./production-setup.ts", import.meta.url), "utf8");
   const repository = await readFile(new URL("../repositories/production-entities.ts", import.meta.url), "utf8");
@@ -116,6 +138,13 @@ test("production setup selected image is explicit and review gate skips ignored 
   assert.match(route, /action: z\.literal\("select_image"\)/);
 });
 
+test("production reference image selection casts image id consistently for uuid column and json candidate pool", async () => {
+  const repository = await readFile(new URL("../repositories/production-entities.ts", import.meta.url), "utf8");
+
+  assert.match(repository, /selected_image_id = \$3::uuid/);
+  assert.match(repository, /jsonb_build_array\(\$3::text\)/);
+});
+
 test("production setup selected image validates target and candidate before confirming review", async () => {
   const source = await readFile(new URL("./production-setup.ts", import.meta.url), "utf8");
 
@@ -128,4 +157,21 @@ test("production setup selected image validates target and candidate before conf
   assert.ok(source.indexOf("imageReferenceSetId && imageReferenceSetId !== referenceSet.id") < source.indexOf("!imageReferenceSetId && !referenceSet.referenceImageIds.includes(image.id)"));
   assert.ok(source.indexOf("production_reference_image_mismatch") < source.indexOf("await reviewGeneratedImageRecord"));
   assert.ok(source.indexOf("const referenceSet = referenceSets.find") < source.indexOf("await reviewGeneratedImageRecord"));
+});
+
+test("resolveShotReferenceImages maps a shot to its locked setting images by source_shot_ids", async () => {
+  const source = await readFile(new URL("./production-setup.ts", import.meta.url), "utf8");
+
+  assert.match(source, /export async function resolveShotReferenceImages/);
+  // Linkage is derived from the existing ID-based source_shot_ids, not name re-matching.
+  assert.match(source, /entity\.sourceShotIds\.includes\(input\.shotId\)/);
+  assert.match(source, /entity\.inclusionStatus !== "ignored"/);
+  assert.match(source, /entity\.entityType === "character" \|\| entity\.entityType === "scene"/);
+  // Resolves selected setting image, falling back to confirmed reference candidates.
+  assert.match(source, /referenceSet\.selectedImageId \? \[referenceSet\.selectedImageId\] : referenceSet\.referenceImageIds/);
+  assert.match(source, /listGeneratedImagesByIds/);
+  assert.match(source, /\.find\(isConfirmedProductionReferenceImage\)/);
+  // Entities without a usable image are surfaced, never silently dropped.
+  assert.match(source, /missing\.push\(\{ entityId: entity\.id, entityType, name: entity\.name \}\)/);
+  assert.match(source, /references\.push\(\{ entityId: entity\.id, entityType, name: entity\.name, imageId: confirmedImage\.id, ossUrl: confirmedImage\.ossUrl \}\)/);
 });

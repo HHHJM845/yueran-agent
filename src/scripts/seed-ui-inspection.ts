@@ -877,8 +877,9 @@ async function seedCreativeAndCommercial(projectId: string, actorId: string): Pr
     await query(
       `delete from creative_scene_images
        where project_id = $1
-         and scene_concept_id = $2`,
-      [projectId, conceptId]
+         and scene_concept_id = $2
+         and prompt like $3`,
+      [projectId, conceptId, "UI 巡检样例视觉场景候选图 %"]
     );
 
     for (const [index, status] of ["selected", "generated"].entries()) {
@@ -1106,14 +1107,21 @@ async function seedCreativeAndCommercial(projectId: string, actorId: string): Pr
       [projectId, estimateId, "UI 巡检样例交付清单，用于 SOP 4 卡片巡检。", actorId]
     );
     const checklistId = checklistResult.rows[0].id;
-    await query(`delete from delivery_checklist_items where project_id = $1 and checklist_id = $2`, [projectId, checklistId]);
+    await query(
+      `delete from delivery_checklist_items
+       where project_id = $1
+         and checklist_id = $2
+         and metadata_json->>'marker' = $3
+         and title in ('创意提案 PDF', '报价单', '合同签署版本', '脚本与文字分镜', '客户确认记录')`,
+      [projectId, checklistId, UI_INSPECTION_MARKER]
+    );
 
     const checklistItems = [
-      ["proposal", "创意提案 PDF"],
-      ["quote", "报价单"],
-      ["contract", "合同签署版本"],
-      ["script", "脚本与文字分镜"],
-      ["review", "客户确认记录"],
+      ["project_file", "创意提案 PDF"],
+      ["other", "报价单"],
+      ["project_file", "合同签署版本"],
+      ["project_file", "脚本与文字分镜"],
+      ["other", "客户确认记录"],
     ] as const;
     for (const [index, [itemKind, title]] of checklistItems.entries()) {
       await query(
@@ -1128,7 +1136,7 @@ async function seedCreativeAndCommercial(projectId: string, actorId: string): Pr
           title,
           `UI 巡检样例交付项 ${index + 1}`,
           index + 1,
-          asJson({ marker: UI_INSPECTION_MARKER }),
+          asJson({ marker: UI_INSPECTION_MARKER, stage: "commercial" }),
           actorId,
         ]
       );
@@ -1310,8 +1318,6 @@ async function seedScriptSetupAndStoryboard(
     );
     const sceneId = sceneResult.rows[0].id;
 
-    await query(`delete from storyboard_shots where project_id = $1 and scene_id = $2`, [projectId, sceneId]);
-
     const shotIds: string[] = [];
     const shotDefs = [
       {
@@ -1341,38 +1347,81 @@ async function seedScriptSetupAndStoryboard(
     ] as const;
 
     for (const [index, shot] of shotDefs.entries()) {
-      const result = await query<{ id: string }>(
-        `insert into storyboard_shots (
-           project_id, scene_id, package_id, shot_number, visual_description, shot_size,
-           action_expression, camera_movement, duration_seconds, sound_transition, notes,
-           character_refs, scene_refs, image_prompt, video_prompt, status, version, sort_order, created_by, updated_by
-         )
-         values (
-           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-           $12::jsonb, $13::jsonb, $14, $15, 'image_ready', 1, $16, $17, $17
-         )
-         returning id`,
-        [
-          projectId,
-          sceneId,
-          packageId,
-          shot.shotNumber,
-          shot.visualDescription,
-          shot.shotSize,
-          shot.actionExpression,
-          shot.cameraMovement,
-          shot.durationSeconds,
-          "轻音乐持续",
-          "UI 巡检样例镜头备注",
-          asJson(["主角 A", "主角 B"]),
-          asJson(["门店主场景"]),
-          `${shot.visualDescription}，写实电影感，UI 巡检样例`,
-          `${shot.visualDescription}，视频生成沿用真实门店节奏`,
-          index + 1,
-          actorId,
-        ]
-      );
-      shotIds.push(result.rows[0].id);
+      const shotId =
+        (await findExistingId(
+          query,
+          `select id
+           from storyboard_shots
+           where project_id = $1
+             and scene_id = $2
+             and shot_number = $3
+             and notes = $4
+           limit 1`,
+          [projectId, sceneId, shot.shotNumber, "UI 巡检样例镜头备注"]
+        )) ?? randomUUID();
+      const shotExists = (await findExistingId(query, `select id from storyboard_shots where id = $1`, [shotId])) !== null;
+      const shotParams = [
+        shotId,
+        projectId,
+        sceneId,
+        packageId,
+        shot.shotNumber,
+        shot.visualDescription,
+        shot.shotSize,
+        shot.actionExpression,
+        shot.cameraMovement,
+        shot.durationSeconds,
+        "轻音乐持续",
+        "UI 巡检样例镜头备注",
+        asJson(["主角 A", "主角 B"]),
+        asJson(["门店主场景"]),
+        `${shot.visualDescription}，写实电影感，UI 巡检样例`,
+        `${shot.visualDescription}，视频生成沿用真实门店节奏`,
+        index + 1,
+        actorId,
+      ];
+
+      if (shotExists) {
+        await query(
+          `update storyboard_shots
+           set package_id = $4,
+               shot_number = $5,
+               visual_description = $6,
+               shot_size = $7,
+               action_expression = $8,
+               camera_movement = $9,
+               duration_seconds = $10,
+               sound_transition = $11,
+               notes = $12,
+               character_refs = $13::jsonb,
+               scene_refs = $14::jsonb,
+               image_prompt = $15,
+               video_prompt = $16,
+               status = 'image_ready',
+               version = 1,
+               sort_order = $17,
+               updated_by = $18,
+               updated_at = now()
+           where id = $1
+             and project_id = $2
+             and scene_id = $3`,
+          shotParams
+        );
+      } else {
+        await query(
+          `insert into storyboard_shots (
+             id, project_id, scene_id, package_id, shot_number, visual_description, shot_size,
+             action_expression, camera_movement, duration_seconds, sound_transition, notes,
+             character_refs, scene_refs, image_prompt, video_prompt, status, version, sort_order, created_by, updated_by
+           )
+           values (
+             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+             $13::jsonb, $14::jsonb, $15, $16, 'image_ready', 1, $17, $18, $18
+           )`,
+          shotParams
+        );
+      }
+      shotIds.push(shotId);
     }
 
     const entityDefinitions = [
@@ -1712,8 +1761,9 @@ async function seedStoryboardImageAndVideo(
       `delete from client_review_items
        where review_task_id = $1
          and project_id = $2
-         and item_type = 'storyboard_shot_image'`,
-      [reviewTaskId, projectId]
+         and item_type = 'storyboard_shot_image'
+         and metadata_json->>'marker' = $3`,
+      [reviewTaskId, projectId, UI_INSPECTION_MARKER]
     );
 
     for (const [index, shotId] of shotIds.entries()) {
@@ -1790,8 +1840,9 @@ async function seedStoryboardImageAndVideo(
         await query(
           `delete from storyboard_image_batch_items
            where batch_id = $1
-             and project_id = $2`,
-          [batchId, projectId]
+             and project_id = $2
+             and feedback_payload_json->>'marker' = $3`,
+          [batchId, projectId, UI_INSPECTION_MARKER]
         );
 
         for (const [index, shotId] of shotIds.entries()) {
@@ -1883,8 +1934,9 @@ async function seedStoryboardImageAndVideo(
       await query(
         `delete from storyboard_video_generation_inputs
          where storyboard_video_id = $1
-           and project_id = $2`,
-        [videoId, projectId]
+           and project_id = $2
+           and metadata_json->>'marker' = $3`,
+        [videoId, projectId, UI_INSPECTION_MARKER]
       );
 
       await query(
@@ -2044,8 +2096,9 @@ async function seedReviewCutsAndArchive(projectId: string, actorId: string) {
         `delete from client_review_items
          where review_task_id = $1
            and project_id = $2
-           and item_type = 'review_cut_video'`,
-        [reviewTaskId, projectId]
+           and item_type = 'review_cut_video'
+           and metadata_json->>'marker' = $3`,
+        [reviewTaskId, projectId, UI_INSPECTION_MARKER]
       );
       await query(
         `insert into client_review_items (
@@ -2066,7 +2119,18 @@ async function seedReviewCutsAndArchive(projectId: string, actorId: string) {
         ]
       );
 
-      await query(`delete from review_cut_annotations where project_id = $1 and review_cut_id = $2`, [projectId, reviewCutId]);
+      await query(
+        `delete from review_cut_annotations
+         where project_id = $1
+           and review_cut_id = $2
+           and created_by_name = $3
+           and feedback in (
+             '这里角色入镜偏慢，建议提前切入产品动作。',
+             '字幕与口播信息密度过高，需要拆分。',
+             '收尾品牌露出希望更坚定一点。'
+           )`,
+        [projectId, reviewCutId, "UI 巡检客户"]
+      );
       if (cut.cutType === "a_copy") {
         const annotations = [
           { timeSeconds: 12, feedback: "这里角色入镜偏慢，建议提前切入产品动作。", status: "mapped" },
@@ -2138,8 +2202,9 @@ async function seedReviewCutsAndArchive(projectId: string, actorId: string) {
         `delete from delivery_checklist_items
          where project_id = $1
            and checklist_id = $2
+           and metadata_json->>'marker' = $3
            and title in ('横版成片', '竖版成片', '无字幕版成片', '封面图', '项目过程文件', 'AI 生成资产归档', '其他补充资料')`,
-        [projectId, checklistId]
+        [projectId, checklistId, UI_INSPECTION_MARKER]
       );
 
       const archiveChecklistItems = [

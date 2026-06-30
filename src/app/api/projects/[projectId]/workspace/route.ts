@@ -1,6 +1,7 @@
 import { jsonError } from "@/lib/errors";
 import { requireProjectAccess } from "@/server/auth/rbac";
 import { requireUser } from "@/server/auth/session";
+import { createReadUrl, createReadUrlFromOssUrl } from "@/server/providers/oss";
 import { listProjectAssetAnalyses } from "@/server/repositories/asset-analyses";
 import { listProjectAssets } from "@/server/repositories/assets";
 import { listProjectArtifacts } from "@/server/repositories/artifacts";
@@ -106,8 +107,32 @@ export async function GET(request: Request, context: { params: Promise<{ project
         assetAnalyses,
         creativeDirections,
         creativeExpansions,
-        generatedImages,
-        creativeProposalRounds,
+        generatedImages: generatedImages.map((image) => ({
+          ...image,
+          ossUrl: image.ossKey
+            ? createReadUrl(image.ossKey, 60 * 60, {
+                disposition: "inline",
+                fileName: "atmosphere.png",
+              })
+            : image.ossUrl,
+        })),
+        creativeProposalRounds: {
+          rounds: creativeProposalRounds.rounds.map((round) => ({
+            ...round,
+            concepts: round.concepts.map((concept) => ({
+              ...concept,
+              images: concept.images.map((image) => ({
+                ...image,
+                ossUrl: image.ossUrl
+                  ? createReadUrlFromOssUrl(image.ossUrl, 60 * 60, {
+                      disposition: "inline",
+                      fileName: `creative-candidate-${image.sortOrder}.png`,
+                    })
+                  : null,
+              })),
+            })),
+          })),
+        },
         proposal,
         proposalSnapshots,
         quote,

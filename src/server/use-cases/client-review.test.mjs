@@ -148,6 +148,18 @@ test("b-copy approval advances into settlement delivery without completing the p
   assert.match(stage.userMessage, /结算交付与完整归档/);
 });
 
+test("setting-image (production_setup) approval advances into storyboard image production", async () => {
+  const { reviewSubmittedStage } = await import("./client-review.ts");
+
+  const approved = reviewSubmittedStage("script_package", "approved", "production_setup");
+  assert.equal(approved.currentStage, "storyboard_image_canvas");
+  assert.equal(approved.status, "approved");
+
+  // Rejection keeps the project in SOP5 for revision.
+  const rejected = reviewSubmittedStage("script_package", "rejected", "production_setup");
+  assert.equal(rejected.currentStage, "script_storyboard_confirmation");
+});
+
 test("timecode annotations map to storyboard shots by accumulated duration", async () => {
   const { mapTimecodeToStoryboard } = await import("../repositories/review-cuts.ts");
 

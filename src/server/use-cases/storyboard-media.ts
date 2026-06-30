@@ -1,10 +1,9 @@
 import { z } from "zod";
 import { env } from "@/lib/env";
 import { AppError } from "@/lib/errors";
-import { assertAtmosphereImageReady } from "@/server/providers/ai";
 import { assertArkVideoGenerationReady, generateArkImageToVideo } from "@/server/providers/ark-video";
-import { generateOpenAIImage } from "@/server/providers/openai-image";
-import { createGeneratedImageObjectKey, createReadUrl, createStoryboardVideoObjectKey, uploadOssObject } from "@/server/providers/oss";
+import { assertArkImageReady, generateArkSeedreamImage } from "@/server/providers/ark-image";
+import { createGeneratedImageObjectKey, createReadUrl, createReadUrlFromOssUrl, createStoryboardVideoObjectKey, uploadOssObject } from "@/server/providers/oss";
 import { createArtifact } from "@/server/repositories/artifacts";
 import { appendJobEvent, createJob, getJobInput, updateJobStatus } from "@/server/repositories/jobs";
 import { listProductionEntities } from "@/server/repositories/production-entities";
@@ -32,13 +31,14 @@ import {
   updateStoryboardVideoSourceJob,
   listStoryboardShots,
 } from "@/server/repositories/story-production";
-import { assertProductionSetupLocked } from "@/server/use-cases/production-setup";
+import { assertProductionSetupLocked, resolveShotReferenceImages, type ShotReferenceImage } from "@/server/use-cases/production-setup";
 import { recordStageProgress } from "@/server/use-cases/stage-progress";
 
 const storyboardImageJobInputSchema = z.object({
   shotId: z.string().uuid(),
   storyboardImageId: z.string().uuid(),
   requestedBy: z.string().uuid(),
+  size: z.string().optional(),
 });
 
 const storyboardVideoJobInputSchema = z.object({
@@ -108,12 +108,34 @@ export function resolveStoryboardVideoInputCandidate(input: {
   };
 }
 
+export type StoryboardImageRatio = "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
+
+const storyboardImageSizeByRatio: Record<StoryboardImageRatio, string> = {
+  "16:9": "2304x1296",
+  "9:16": "1296x2304",
+  "1:1": "2048x2048",
+  "4:3": "2304x1728",
+  "3:4": "1728x2304",
+};
+
+function resolveStoryboardImageSize(ratio?: StoryboardImageRatio) {
+  return storyboardImageSizeByRatio[ratio ?? "16:9"];
+}
+
+function clampStoryboardImageCount(count?: number): 1 | 2 | 4 {
+  if (count === 2) return 2;
+  if (count === 4) return 4;
+  return 1;
+}
+
 export async function enqueueStoryboardImageGeneration(input: {
   projectId: string;
   shotId: string;
   requestedBy: string;
+  ratio?: StoryboardImageRatio;
+  count?: number;
 }) {
-  const config = assertAtmosphereImageReady();
+  const config = assertArkImageReady();
   const shot = await getStoryboardShot({ projectId: input.projectId, shotId: input.shotId });
   if (!shot) {
     throw new AppError({
@@ -128,35 +150,59 @@ export async function enqueueStoryboardImageGeneration(input: {
   ]);
   assertProductionSetupLocked({ entities, storyboardShots });
 
-  const prompt = buildStoryboardImagePrompt(shot);
-  const image = await createStoryboardImageRecord({
-    projectId: input.projectId,
-    sceneId: shot.sceneId,
-    shotId: shot.id,
-    prompt,
-    provider: config.provider,
-    modelName: config.model,
-    reference: {
-      characterRefs: shot.characterRefs,
-      sceneRefs: shot.sceneRefs,
-    },
-    actorId: input.requestedBy,
-  });
-  const job = await createJob({
-    projectId: input.projectId,
-    type: "storyboard_image_generation",
-    title: `生成分镜图片：${shot.shotNumber}`,
-    provider: config.provider,
-    modelName: config.model,
-    inputJson: {
+  // Missing locked setting images are surfaced as a hint but never block generation: we generate
+  // with whatever references resolved, and the missing entities simply don't contribute a reference.
+  const { references, missing } = await resolveShotReferenceImages({ projectId: input.projectId, shotId: shot.id });
+
+  const ratio = input.ratio ?? "16:9";
+  const size = resolveStoryboardImageSize(ratio);
+  const count = clampStoryboardImageCount(input.count);
+  const prompt = buildStoryboardImagePrompt(shot, references);
+  const referenceSnapshot = {
+    referenceImageIds: references.map((reference) => reference.imageId),
+    referenceEntityIds: references.map((reference) => reference.entityId),
+    references: references.map((reference) => ({
+      entityId: reference.entityId,
+      entityType: reference.entityType,
+      name: reference.name,
+      imageId: reference.imageId,
+    })),
+    ratio,
+    size,
+  };
+
+  const created: Array<{ jobId: string; storyboardImageId: string }> = [];
+  for (let index = 0; index < count; index += 1) {
+    const image = await createStoryboardImageRecord({
+      projectId: input.projectId,
+      sceneId: shot.sceneId,
       shotId: shot.id,
-      storyboardImageId: image.id,
-      requestedBy: input.requestedBy,
-    },
-    createdBy: input.requestedBy,
-    maxAttempts: 2,
-  });
-  await updateStoryboardImageSourceJob({ id: image.id, sourceJobId: job.jobId });
+      prompt,
+      provider: config.provider,
+      modelName: config.model,
+      reference: referenceSnapshot,
+      actorId: input.requestedBy,
+    });
+    const job = await createJob({
+      projectId: input.projectId,
+      type: "storyboard_image_generation",
+      title: `生成分镜图片：${shot.shotNumber}`,
+      provider: config.provider,
+      modelName: config.model,
+      inputJson: {
+        shotId: shot.id,
+        storyboardImageId: image.id,
+        requestedBy: input.requestedBy,
+        size,
+      },
+      createdBy: input.requestedBy,
+      maxAttempts: 2,
+    });
+    await updateStoryboardImageSourceJob({ id: image.id, sourceJobId: job.jobId });
+    created.push({ jobId: job.jobId, storyboardImageId: image.id });
+  }
+
+  const missingNote = missing.length > 0 ? `（注意：${missing.map((item) => item.name).join("、")} 暂无锁定设定图，本次未作为参考图）` : "";
 
   await recordStageProgress({
     projectId: input.projectId,
@@ -164,16 +210,24 @@ export async function enqueueStoryboardImageGeneration(input: {
     status: "in_progress",
     currentStage: "storyboard_image_canvas",
     projectStatus: "in_progress",
-    userMessage: "分镜图片生成任务已创建，后台会调用真实图片模型并保存结果。",
+    userMessage: `已创建 ${count} 张分镜图片生成任务（${ratio}），后台会调用真实图片模型并保存结果。${missingNote}`,
     inputRefs: [{ type: "storyboard_shot", id: shot.id }],
-    outputRefs: [{ type: "storyboard_image", id: image.id }],
-    snapshot: { shotId: shot.id, storyboardImageId: image.id },
+    outputRefs: created.map((item) => ({ type: "storyboard_image", id: item.storyboardImageId })),
+    snapshot: {
+      shotId: shot.id,
+      storyboardImageIds: created.map((item) => item.storyboardImageId),
+      ratio,
+      size,
+      count,
+      missingReferenceNames: missing.map((item) => item.name),
+    },
   });
 
   return {
-    jobId: job.jobId,
-    storyboardImageId: image.id,
-    message: "分镜图片生成任务已创建。系统会写入后端任务日志，完成后刷新工作台即可查看结果。",
+    jobs: created,
+    jobId: created[0]?.jobId ?? "",
+    storyboardImageId: created[0]?.storyboardImageId ?? "",
+    message: `已创建 ${count} 张分镜图片生成任务（比例 ${ratio}）。完成后刷新工作台即可查看候选图。${missingNote}`,
   };
 }
 
@@ -213,17 +267,21 @@ export async function runStoryboardImageGenerationJob(jobId: string) {
   });
 
   try {
-    const image = await generateOpenAIImage({
-      model: env.OPENAI_IMAGE_MODEL,
-      prompt: buildStoryboardImagePrompt(shot),
+    const { references } = await resolveShotReferenceImages({ projectId: job.projectId, shotId: shot.id });
+    const referenceImageUrls = references.map((reference) => createReadUrlFromOssUrl(reference.ossUrl, 3600));
+    const image = await generateArkSeedreamImage({
+      model: env.ARK_IMAGE_GENERATION_MODEL,
+      prompt: buildStoryboardImagePrompt(shot, references),
+      referenceImageUrls,
+      size: input.size,
       timeoutMs: 180_000,
       telemetry: {
         projectId: job.projectId,
         jobId,
-        callId: "openai_storyboard_image_generation",
-        provider: env.ATMOSPHERE_IMAGE_PROVIDER,
+        callId: "ark_storyboard_image_generation",
+        provider: env.STORYBOARD_IMAGE_PROVIDER,
         operation: "storyboard_image_generation",
-        metadata: { shotId: shot.id, storyboardImageId: input.storyboardImageId },
+        metadata: { shotId: shot.id, storyboardImageId: input.storyboardImageId, referenceCount: references.length },
       },
     });
     const objectKey = createGeneratedImageObjectKey(job.projectId, input.storyboardImageId, image.extension);
@@ -673,15 +731,16 @@ export async function confirmStoryboardVideo(input: {
   };
 }
 
-function buildStoryboardImagePrompt(shot: {
-  visualDescription: string;
-  shotSize: string;
-  actionExpression: string;
-  cameraMovement: string;
-  imagePrompt: string;
-  characterRefs: unknown[];
-  sceneRefs: unknown[];
-}) {
+function buildStoryboardImagePrompt(
+  shot: {
+    visualDescription: string;
+    shotSize: string;
+    actionExpression: string;
+    cameraMovement: string;
+    imagePrompt: string;
+  },
+  references: ShotReferenceImage[] = []
+) {
   return [
     "生成一张横版正式分镜图片，用于 AIGC 广告片创作。",
     "画面需要具备商业广告质感、构图清晰、主体明确、真实光影，不要出现字幕、UI、水印、Logo。",
@@ -690,11 +749,22 @@ function buildStoryboardImagePrompt(shot: {
     shot.actionExpression ? `动作与表情：${shot.actionExpression}` : "",
     shot.cameraMovement ? `机位与运镜：${shot.cameraMovement}` : "",
     shot.imagePrompt ? `分镜 Prompt：${shot.imagePrompt}` : "",
-    shot.characterRefs.length ? `人物参考：${JSON.stringify(shot.characterRefs).slice(0, 1000)}` : "",
-    shot.sceneRefs.length ? `场景参考：${JSON.stringify(shot.sceneRefs).slice(0, 1000)}` : "",
+    buildReferenceInstruction(references),
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function buildReferenceInstruction(references: ShotReferenceImage[]) {
+  if (references.length === 0) return "";
+  const lines = references.map((reference, index) => {
+    const label = reference.entityType === "character" ? "人物" : "场景";
+    return `第 ${index + 1} 张参考图为${label}【${reference.name}】的设定图`;
+  });
+  return [
+    "参考图说明：以下参考图按顺序提供，请严格保持其外观、服饰、材质与空间特征一致。",
+    ...lines,
+  ].join("\n");
 }
 
 function buildStoryboardVideoPrompt(shot: {

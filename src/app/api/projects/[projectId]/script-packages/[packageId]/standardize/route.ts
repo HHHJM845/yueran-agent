@@ -1,0 +1,26 @@
+import { jsonError } from "@/lib/errors";
+import { requireProjectAccess, requireRole } from "@/server/auth/rbac";
+import { requireUser } from "@/server/auth/session";
+import { standardizeScriptPackage } from "@/server/use-cases/script-standardization";
+
+export async function POST(
+  request: Request,
+  context: { params: Promise<{ projectId: string; packageId: string }> }
+) {
+  try {
+    const user = await requireUser(request);
+    const { projectId, packageId } = await context.params;
+    await requireProjectAccess(user, projectId);
+    requireRole(user, ["creative", "admin"]);
+
+    const result = await standardizeScriptPackage({
+      projectId,
+      packageId,
+      actorId: user.id,
+    });
+
+    return Response.json({ ok: true, data: result });
+  } catch (error) {
+    return jsonError(error);
+  }
+}

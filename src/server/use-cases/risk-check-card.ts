@@ -2,6 +2,7 @@ import { z } from "zod";
 import { AppError } from "@/lib/errors";
 import { listProjectArtifacts } from "@/server/repositories/artifacts";
 import { getProjectRiskCheck, updateRiskCheckDecision, upsertRiskCheckDraft } from "@/server/repositories/risk-checks";
+import { recordStageProgress } from "@/server/use-cases/stage-progress";
 import type { StructuredRequirement } from "@/server/use-cases/structure-requirement";
 
 export type RiskLevel = "low" | "medium" | "high";
@@ -238,11 +239,92 @@ export async function saveRiskCheckDecision(input: {
     });
   }
 
+  await recordRiskDecisionStageProgress({
+    projectId: parsed.projectId,
+    cardId: card.id,
+    decision: parsed.decision,
+    reason: parsed.reason,
+    overallAlert: card.overallAlert,
+  });
+
   return card;
 }
 
 export async function getRiskCheckForProject(projectId: string) {
   return getProjectRiskCheck(projectId);
+}
+
+async function recordRiskDecisionStageProgress(input: {
+  projectId: string;
+  cardId: string;
+  decision: RiskCheckDecision;
+  reason: string;
+  overallAlert: OverallRiskAlert;
+}) {
+  const decisionLabel =
+    input.decision === "accept" ? "可以接" : input.decision === "conditional_accept" ? "条件接" : "暂不接";
+  const reason = input.reason.trim();
+
+  if (input.decision === "reject") {
+    await recordStageProgress({
+      projectId: input.projectId,
+      stageKey: "technical_feasibility",
+      status: "blocked",
+      currentStage: "technical_feasibility",
+      projectStatus: "blocked",
+      title: "风险体检人工判断为暂不接",
+      userMessage: `已记录风险体检人工判断：${decisionLabel}。项目已停留在风险体检卡环节，等待补充条件或管理复核。`,
+      errorMessage: reason || "风险体检人工判断为暂不接。",
+      outputRefs: [{ type: "risk_check_card", id: input.cardId }],
+      snapshot: {
+        riskCheckCardId: input.cardId,
+        decision: input.decision,
+        decisionLabel,
+        reason: reason || null,
+        overallAlert: input.overallAlert,
+        decidedAt: new Date().toISOString(),
+      },
+    });
+    return;
+  }
+
+  await recordStageProgress({
+    projectId: input.projectId,
+    stageKey: "technical_feasibility",
+    status: "approved",
+    currentStage: "creative_direction_proposal",
+    projectStatus: "in_progress",
+    title: "风险体检人工判断已通过",
+    userMessage: `已记录风险体检人工判断：${decisionLabel}。项目已进入两轮创意视觉提案。`,
+    errorMessage: null,
+    outputRefs: [{ type: "risk_check_card", id: input.cardId }],
+    snapshot: {
+      riskCheckCardId: input.cardId,
+      decision: input.decision,
+      decisionLabel,
+      reason: reason || null,
+      overallAlert: input.overallAlert,
+      decidedAt: new Date().toISOString(),
+    },
+  });
+
+  await recordStageProgress({
+    projectId: input.projectId,
+    stageKey: "creative_direction_proposal",
+    status: "in_progress",
+    currentStage: "creative_direction_proposal",
+    projectStatus: "in_progress",
+    title: "创意视觉提案可开始",
+    userMessage: "风险体检已由人工确认通过，创意团队可以开始生成 4 个创意方向。",
+    errorMessage: null,
+    inputRefs: [{ type: "risk_check_card", id: input.cardId }],
+    snapshot: {
+      sourceStage: "technical_feasibility",
+      sourceRiskCheckCardId: input.cardId,
+      decision: input.decision,
+      overallAlert: input.overallAlert,
+    },
+  });
 }
 
 function buildDraftFromStructuredBrief(brief: NormalizedStructuredRequirement): RiskCheckDraft {

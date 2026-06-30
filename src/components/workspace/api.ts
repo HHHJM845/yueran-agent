@@ -1208,6 +1208,14 @@ export async function structureRequirement(projectId: string, requirementText: s
   );
 }
 
+export async function confirmRequirementBrief(projectId: string) {
+  return readApi<{ stageState: ProjectStageStateView; message: string }>(
+    await fetch(`/api/projects/${projectId}/requirements/confirm`, {
+      method: "POST",
+    })
+  );
+}
+
 export async function analyzeAsset(projectId: string, assetId: string) {
   return readApi<{ jobId: string; message: string }>(
     await fetch(`/api/projects/${projectId}/assets/${assetId}/analyze`, {
@@ -1370,6 +1378,45 @@ export async function splitScriptPackage(projectId: string, packageId: string) {
   );
 }
 
+export type ScriptFormatIssueView = {
+  severity: "error" | "warning";
+  code: string;
+  message: string;
+  suggestion?: string;
+  line?: number;
+};
+
+export type ScriptFormatValidationView = {
+  issues: ScriptFormatIssueView[];
+  hasBlockingIssues: boolean;
+};
+
+export async function standardizeScriptPackage(projectId: string, packageId: string) {
+  return readApi<{
+    package: ScriptDirectionPackageView;
+    artifact: ArtifactView;
+    validation: ScriptFormatValidationView;
+    message: string;
+  }>(
+    await fetch(`/api/projects/${projectId}/script-packages/${packageId}/standardize`, {
+      method: "POST",
+    })
+  );
+}
+
+export async function checkScriptPackageFormat(projectId: string, packageId: string) {
+  return readApi<{
+    package: ScriptDirectionPackageView;
+    artifact: ArtifactView;
+    validation: ScriptFormatValidationView;
+    message: string;
+  }>(
+    await fetch(`/api/projects/${projectId}/script-packages/${packageId}/check-format`, {
+      method: "POST",
+    })
+  );
+}
+
 export async function updateProductionEntityReferenceDepth(
   projectId: string,
   entityId: string,
@@ -1449,11 +1496,21 @@ export async function restoreProductionEntity(projectId: string, entityId: strin
 }
 
 export async function confirmProductionEntityList(projectId: string) {
-  return readApi<{ entities: ProductionEntityView[]; message: string }>(
+  return readApi<{ entities: ProductionEntityView[]; referenceSets: ProductionReferenceSetView[]; message: string }>(
     await fetch(`/api/projects/${projectId}/production-entities`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "confirm_list" }),
+    })
+  );
+}
+
+export async function regenerateProductionReferencePrompts(projectId: string) {
+  return readApi<{ referenceSets: ProductionReferenceSetView[]; message: string }>(
+    await fetch(`/api/projects/${projectId}/production-entities`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "regenerate_prompts" }),
     })
   );
 }
@@ -1510,12 +1567,51 @@ export async function generateProductionReferenceImages(
   );
 }
 
-export async function generateStoryboardImage(projectId: string, shotId: string) {
-  return readApi<{ jobId: string; storyboardImageId: string; message: string }>(
+export type StoryboardSequenceShotInput = {
+  id?: string;
+  shotNumber: string;
+  visualDescription: string;
+  shotSize?: string;
+  actionExpression?: string;
+  cameraMovement?: string;
+  durationSeconds?: number | null;
+  soundTransition?: string;
+  notes?: string;
+  characterRefs?: unknown[];
+  sceneRefs?: unknown[];
+  imagePrompt?: string;
+  videoPrompt?: string;
+};
+
+export async function saveStoryboardSequence(
+  projectId: string,
+  sceneId: string,
+  input: { shots: StoryboardSequenceShotInput[]; deletedShotIds: string[] }
+) {
+  return readApi<{
+    shots: StoryboardShotView[];
+    productionEntities: ProductionEntityView[];
+    productionReferenceSets: ProductionReferenceSetView[];
+    message: string;
+  }>(
+    await fetch(`/api/projects/${projectId}/storyboard-scenes/${sceneId}/sequence`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    })
+  );
+}
+
+export async function generateStoryboardImage(
+  projectId: string,
+  shotId: string,
+  options?: { ratio?: "16:9" | "9:16" | "1:1" | "4:3" | "3:4"; count?: 1 | 2 | 4 }
+) {
+  return readApi<{ jobs: Array<{ jobId: string; storyboardImageId: string }>; jobId: string; storyboardImageId: string; message: string }>(
     await fetch(`/api/projects/${projectId}/storyboard-images/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ shotId }),
+      body: JSON.stringify({ shotId, ...options }),
     })
   );
 }
@@ -2037,6 +2133,12 @@ export async function retryJob(jobId: string) {
     await fetch(`/api/jobs/${jobId}/retry`, {
       method: "POST",
     })
+  );
+}
+
+export async function fetchJob(jobId: string) {
+  return readApi<{ job: JobSummary; events: Array<{ id: string; event: JobEvent }> }>(
+    await fetch(`/api/jobs/${jobId}`, { cache: "no-store" })
   );
 }
 

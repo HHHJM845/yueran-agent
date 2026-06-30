@@ -279,6 +279,30 @@ export async function upsertReferenceSet(input: UpsertReferenceSetInput): Promis
   return mapReferenceSet(result.rows[0]);
 }
 
+export async function appendProductionReferenceImage(input: {
+  projectId: string;
+  referenceSetId: string;
+  generatedImageId: string;
+  actorId?: string | null;
+}): Promise<ProductionReferenceSetView | null> {
+  const result = await query<ProductionReferenceSetRow>(
+    `update production_reference_sets
+     set reference_image_ids = coalesce((
+           select jsonb_agg(distinct value)
+           from jsonb_array_elements_text(reference_image_ids || $3::jsonb) as value
+         ), '[]'::jsonb),
+         status = 'generating',
+         updated_by = coalesce($4, updated_by),
+         updated_at = now()
+     where project_id = $1 and id = $2
+     returning id, project_id, entity_id, depth, status, prompt, reference_image_ids,
+               current_prompt, selected_image_id, default_ratio, last_generation_count,
+               snapshot_json, version, updated_at`,
+    [input.projectId, input.referenceSetId, JSON.stringify([input.generatedImageId]), input.actorId ?? null]
+  );
+  return result.rows[0] ? mapReferenceSet(result.rows[0]) : null;
+}
+
 export async function selectProductionReferenceImage(input: {
   projectId: string;
   referenceSetId: string;
@@ -287,7 +311,7 @@ export async function selectProductionReferenceImage(input: {
 }): Promise<ProductionReferenceSetView | null> {
   const result = await query<ProductionReferenceSetRow>(
     `update production_reference_sets
-     set selected_image_id = $3,
+     set selected_image_id = $3::uuid,
          reference_image_ids = coalesce((
            select jsonb_agg(distinct value)
            from jsonb_array_elements_text(reference_image_ids || jsonb_build_array($3::text)) as value
@@ -310,6 +334,8 @@ export async function saveProductionReferencePrompt(input: {
   prompt: string;
   ratio: ProductionImageRatio;
   generationCount: number;
+  snapshot?: Record<string, unknown>;
+  status?: ProductionEntityStatus;
   actorId?: string | null;
 }): Promise<ProductionReferenceSetView | null> {
   const result = await query<ProductionReferenceSetRow>(
@@ -318,13 +344,43 @@ export async function saveProductionReferencePrompt(input: {
          current_prompt = $3,
          default_ratio = $4,
          last_generation_count = $5,
+         snapshot_json = case when $7::jsonb is null then snapshot_json else snapshot_json || $7::jsonb end,
+         status = coalesce($8, status),
          updated_by = coalesce($6, updated_by),
          updated_at = now()
      where project_id = $1 and id = $2
      returning id, project_id, entity_id, depth, status, prompt, current_prompt,
                reference_image_ids, selected_image_id, default_ratio, last_generation_count,
                snapshot_json, version, updated_at`,
-    [input.projectId, input.referenceSetId, input.prompt.trim(), input.ratio, input.generationCount, input.actorId ?? null]
+    [
+      input.projectId,
+      input.referenceSetId,
+      input.prompt.trim(),
+      input.ratio,
+      input.generationCount,
+      input.actorId ?? null,
+      input.snapshot ? JSON.stringify(input.snapshot) : null,
+      input.status ?? null,
+    ]
+  );
+  return result.rows[0] ? mapReferenceSet(result.rows[0]) : null;
+}
+
+export async function markProductionReferenceSetReady(input: {
+  projectId: string;
+  referenceSetId: string;
+  actorId?: string | null;
+}): Promise<ProductionReferenceSetView | null> {
+  const result = await query<ProductionReferenceSetRow>(
+    `update production_reference_sets
+     set status = 'internal_confirmed',
+         updated_by = coalesce($3, updated_by),
+         updated_at = now()
+     where project_id = $1 and id = $2
+     returning id, project_id, entity_id, depth, status, prompt, reference_image_ids,
+               current_prompt, selected_image_id, default_ratio, last_generation_count,
+               snapshot_json, version, updated_at`,
+    [input.projectId, input.referenceSetId, input.actorId ?? null]
   );
   return result.rows[0] ? mapReferenceSet(result.rows[0]) : null;
 }

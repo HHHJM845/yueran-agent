@@ -11,6 +11,8 @@ import {
   updateScriptDirectionPackageStatus,
 } from "@/server/repositories/story-production";
 import { createProductionSetupFromStoryboard } from "@/server/use-cases/production-setup";
+import { assertScriptPackageStandardized } from "@/server/use-cases/script-standardization";
+import { normalizeStoryboardSplitResponse } from "@/server/use-cases/script-storyboard-normalization";
 import { recordStageProgress } from "@/server/use-cases/stage-progress";
 
 const storyboardSplitResponseSchema = z.object({
@@ -81,7 +83,7 @@ export async function saveScriptDirectionPackage(input: {
     status: "in_progress",
     currentStage: "script_storyboard_confirmation",
     projectStatus: "in_progress",
-    userMessage: "脚本创意方向包已保存，人物参考与场景参考会并行挂在该方向下。",
+    userMessage: "完整剧本已保存。请继续确认剧本格式，确认后再抽取人物和场景清单并生成设定图。",
     outputRefs: [{ type: "script_direction_package", id: pkg.id }],
     snapshot: { packageId: pkg.id, referenceCount: references.length },
   });
@@ -89,7 +91,7 @@ export async function saveScriptDirectionPackage(input: {
   return {
     package: pkg,
     references,
-    message: "脚本方向包已保存。人物参考图和场景参考图已作为并行参考挂到该方向下。",
+    message: "完整剧本已保存。下一步请确认格式并抽取人物、场景清单。",
   };
 }
 
@@ -103,7 +105,7 @@ export async function splitScriptIntoStoryboard(input: {
     throw new AppError({
       status: 404,
       code: "script_package_not_found",
-      userMessage: "没有找到脚本方向包。请先保存完整剧本，再拆分文字分镜。",
+      userMessage: "没有找到完整剧本记录。请先保存完整剧本，再拆分文字分镜。",
     });
   }
   if (!pkg.fullScript.trim()) {
@@ -111,6 +113,14 @@ export async function splitScriptIntoStoryboard(input: {
       status: 422,
       code: "script_package_empty_script",
       userMessage: "完整剧本为空，暂时不能拆分文字分镜。请先补全剧本内容。",
+    });
+  }
+  await assertScriptPackageStandardized({ projectId: input.projectId, packageId: input.packageId });
+  if (pkg.status !== "client_approved" && pkg.status !== "locked") {
+    throw new AppError({
+      status: 422,
+      code: "script_package_client_approval_required",
+      userMessage: "标准剧本还没有通过甲方确认，暂时不能拆分文字分镜。请先生成甲方审核链接并等待确认。",
     });
   }
   if (!env.ARK_API_KEY) {
@@ -144,7 +154,7 @@ export async function splitScriptIntoStoryboard(input: {
         },
         {
           role: "user",
-          content: `脚本方向：${pkg.title}\n方向概念：${pkg.concept}\n完整剧本：\n${pkg.fullScript}`,
+          content: `完整剧本标题：${pkg.title}\n导入说明：${pkg.concept}\n完整剧本：\n${pkg.fullScript}`,
         },
       ],
     });
@@ -236,103 +246,4 @@ export async function splitScriptIntoStoryboard(input: {
     productionReferenceSets: productionSetup.referenceSets,
     message: "文字分镜已自动拆分并保存。人物和场景设定已生成，请先提交甲方审核，通过后再进入分镜图片阶段。",
   };
-}
-
-function normalizeStoryboardSplitResponse(value: unknown) {
-  const record = asRecord(value);
-  const rawScenes =
-    asArray(record.scenes) ??
-    asArray(record.storyboardScenes) ??
-    asArray(record.storyboard_scenes) ??
-    asArray(record.分镜场次) ??
-    asArray(record.场次) ??
-    [];
-
-  return {
-    scenes: rawScenes.map((scene, sceneIndex) => {
-      const sceneRecord = asRecord(scene);
-      const rawShots =
-        asArray(sceneRecord.shots) ??
-        asArray(sceneRecord.storyboardShots) ??
-        asArray(sceneRecord.storyboard_shots) ??
-        asArray(sceneRecord.分镜) ??
-        asArray(sceneRecord.镜头) ??
-        [];
-      return {
-        sceneNumber: firstValue(sceneRecord.sceneNumber, sceneRecord.scene_number, sceneRecord.number, sceneRecord.场次编号, sceneIndex + 1),
-        title: firstString(sceneRecord.title, sceneRecord.name, sceneRecord.标题, sceneRecord.场次标题) ?? `场次 ${sceneIndex + 1}`,
-        description: firstString(sceneRecord.description, sceneRecord.desc, sceneRecord.场次描述, sceneRecord.描述) ?? "",
-        shots: rawShots.map((shot, shotIndex) => {
-          const shotRecord = asRecord(shot);
-          const shotNumber =
-            firstString(shotRecord.shotNumber, shotRecord.shot_number, shotRecord.number, shotRecord.分镜编号, shotRecord.镜号) ??
-            `${sceneIndex + 1}-${shotIndex + 1}`;
-          const visualDescription =
-            firstString(
-              shotRecord.visualDescription,
-              shotRecord.visual_description,
-              shotRecord.picture,
-              shotRecord.frame,
-              shotRecord.画面内容,
-              shotRecord.画面描述,
-              shotRecord.description,
-              shotRecord.desc
-            ) ?? `分镜 ${shotNumber}`;
-          return {
-            shotNumber,
-            visualDescription,
-            shotSize: firstString(shotRecord.shotSize, shotRecord.shot_size, shotRecord.景别) ?? "",
-            actionExpression:
-              firstString(shotRecord.actionExpression, shotRecord.action_expression, shotRecord.action, shotRecord.动作与表情) ?? "",
-            cameraMovement:
-              firstString(shotRecord.cameraMovement, shotRecord.camera_movement, shotRecord.camera, shotRecord.机位与运镜) ?? "",
-            durationSeconds: normalizeDuration(firstValue(shotRecord.durationSeconds, shotRecord.duration_seconds, shotRecord.duration, shotRecord.时长)),
-            soundTransition:
-              firstString(shotRecord.soundTransition, shotRecord.sound_transition, shotRecord.sound, shotRecord.声音与转场) ?? "",
-            notes: firstString(shotRecord.notes, shotRecord.remark, shotRecord.备注) ?? "",
-            characterRefs: normalizeArray(shotRecord.characterRefs, shotRecord.character_refs, shotRecord.characters, shotRecord.涉及人物),
-            sceneRefs: normalizeArray(shotRecord.sceneRefs, shotRecord.scene_refs, shotRecord.scenes, shotRecord.涉及场景),
-            imagePrompt: firstString(shotRecord.imagePrompt, shotRecord.image_prompt, shotRecord.prompt, shotRecord.图片Prompt) ?? "",
-            videoPrompt: firstString(shotRecord.videoPrompt, shotRecord.video_prompt, shotRecord.video, shotRecord.视频Prompt) ?? "",
-          };
-        }),
-      };
-    }),
-  };
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-}
-
-function asArray(value: unknown) {
-  return Array.isArray(value) ? value : null;
-}
-
-function firstValue(...values: unknown[]) {
-  return values.find((value) => value !== undefined && value !== null && value !== "");
-}
-
-function firstString(...values: unknown[]) {
-  const value = firstValue(...values);
-  if (typeof value === "string") return value.trim();
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  return null;
-}
-
-function normalizeDuration(value: unknown) {
-  if (value === undefined || value === null || value === "") return null;
-  if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
-  if (typeof value === "string") {
-    const parsed = Number(value.replace(/[^\d.]+/g, ""));
-    if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  }
-  return null;
-}
-
-function normalizeArray(...values: unknown[]) {
-  const value = firstValue(...values);
-  if (Array.isArray(value)) return value;
-  if (typeof value === "string" && value.trim()) return [value.trim()];
-  return [];
 }

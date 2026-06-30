@@ -128,7 +128,7 @@ export async function runCreativeExpansionGenerationJob(jobId: string, options: 
   await updateJobStatus(jobId, {
     status: "processing",
     currentStep: "creative_expansion_generation",
-    userMessage: "正在基于已选创意方向生成 4-5 个故事大纲或梗概。",
+    userMessage: "正在基于已选创意方向生成 4 个故事大纲或梗概。",
   });
 
   await appendJobEvent(jobId, {
@@ -156,10 +156,11 @@ export async function runCreativeExpansionGenerationJob(jobId: string, options: 
       at: new Date().toISOString(),
     });
 
-    const response = await callArkJson({
+    const response = await callArkJson<z.infer<typeof creativeExpansionResponseSchema>>({
       model: env.ARK_TEXT_STRUCTURING_MODEL,
-      timeoutMs: 75_000,
-      maxOutputTokens: 1600,
+      timeoutMs: 180_000,
+      maxOutputTokens: 1200,
+      temperature: 0.1,
       telemetry: {
         projectId: job.projectId,
         jobId,
@@ -172,7 +173,7 @@ export async function runCreativeExpansionGenerationJob(jobId: string, options: 
         {
           role: "system",
           content:
-            "你是 AIGC 视频创意策划。基于已选创意方向生成 4-5 个故事大纲或梗概。只输出严格 JSON：{ expansions: [...] }。每个 expansion 只需要包含 title, oneLiner, storyArc。storyArc 用 beginning, development, turn, ending 四个短字段。每个字段必须简短，不要 Markdown。",
+            "你是 AIGC 视频创意策划。请快速生成恰好 4 个短故事大纲。只输出严格 JSON，不要 Markdown。格式：{\"expansions\":[{\"title\":\"\",\"oneLiner\":\"\",\"storyArc\":{\"beginning\":\"\",\"development\":\"\",\"turn\":\"\",\"ending\":\"\"},\"visualHighlights\":[\"\"],\"visualStyle\":\"\",\"productionDifficulty\":\"\",\"riskNotes\":\"\"}]}。每个字段使用短句。",
         },
         {
           role: "user",
@@ -188,7 +189,7 @@ export async function runCreativeExpansionGenerationJob(jobId: string, options: 
       throw new AppError({
         status: 502,
         code: "creative_expansion_count_too_low",
-        userMessage: "模型没有返回足够的故事大纲。请稍后重试，或调整创意方向后再生成。",
+        userMessage: "模型没有返回恰好 4 个故事大纲。请稍后重试，或调整创意方向后再生成。",
       });
     }
 
@@ -198,7 +199,7 @@ export async function runCreativeExpansionGenerationJob(jobId: string, options: 
       directionId: direction.id,
       sourceJobId: jobId,
       createdBy: parsedInput.requestedBy ?? null,
-      expansions: normalized.slice(0, 5).map((expansion, index) => ({
+      expansions: normalized.slice(0, 4).map((expansion, index) => ({
         ...expansion,
         sortOrder: index + 1,
       })),
@@ -257,7 +258,7 @@ export async function runCreativeExpansionGenerationJob(jobId: string, options: 
       jobId,
       projectId: job.projectId,
       title: "创意深化完成",
-      userMessage: "已生成 4-5 个故事大纲或梗概。",
+      userMessage: "已生成 4 个故事大纲或梗概。",
       at: new Date().toISOString(),
     });
 
@@ -314,13 +315,19 @@ type DirectionForExpansion = NonNullable<Awaited<ReturnType<typeof getProjectCre
 
 function buildExpansionPrompt(direction: DirectionForExpansion) {
   return [
-    "请把下面已选创意方向深化成 4-5 个故事大纲或梗概，用于后续提案和氛围图生成。",
-    "输出只保留故事核心，不要解释，不要长段落。",
-    `方向标题：${direction.title}`,
-    `核心创意：${direction.coreIdea}`,
-    `参考标签：${direction.referenceTags.slice(0, 5).join("、")}`,
-    "每个梗概必须包含：标题、一句话概念、起、承、转、合。",
+    "基于这个已选创意方向，生成恰好 4 个可用于氛围图的故事大纲。",
+    `标题：${compactText(direction.title, 80)}`,
+    `核心：${compactText(direction.coreIdea, 220)}`,
+    `适配：${compactText(direction.fitReason, 160)}`,
+    `风险：${compactText(direction.riskNotes, 120)}`,
+    `标签：${direction.referenceTags.slice(0, 5).map((tag) => compactText(tag, 18)).join("、")}`,
+    "要求：每个大纲都要有不同的视觉画面；字段简短；不要解释；不要输出 JSON 以外的内容。",
   ].join("\n");
+}
+
+function compactText(value: string, maxLength: number) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length > maxLength ? normalized.slice(0, maxLength) : normalized;
 }
 
 function normalizeExpansions(expansions: Array<z.infer<typeof creativeExpansionSchema>>, direction: DirectionForExpansion) {

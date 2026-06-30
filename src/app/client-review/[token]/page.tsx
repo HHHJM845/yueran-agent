@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, Clock3, Loader2, Plus, XCircle } from "lucide-react";
+import { CheckCircle2, Clock3, FileClock, Loader2, Plus, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -13,6 +13,19 @@ type ClientReviewTask = {
   summary: string;
   status: string;
   reviewType: string;
+  targetScopeType?: string;
+  targetScopeId?: string;
+  version?: number;
+  submittedAt?: string | null;
+  reviewedAt?: string | null;
+  sopKey?: string | null;
+  reviewScene?: string | null;
+  roundNumber?: number | null;
+  batchNumber?: number | null;
+  reviewerName?: string | null;
+  reviewerContact?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
   payload: Record<string, unknown>;
   feedback: string | null;
 };
@@ -28,10 +41,36 @@ type ClientReviewItem = {
   metadata: Record<string, unknown>;
 };
 
-export default function ClientReviewPage({ params }: { params: Promise<{ token: string }> }) {
+type ReviewCandidateImage = {
+  id: string;
+  imageUrl: string;
+  prompt: string;
+  status: string;
+  isSelected: boolean;
+  sortOrder: number;
+};
+
+type QuoteReviewLine = {
+  name: string;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+};
+
+type ClientReviewHistoryEntry = {
+  task: ClientReviewTask;
+  items: ClientReviewItem[];
+  isCurrent: boolean;
+};
+
+type ClientReviewPageParams = { token: string } | Promise<{ token: string }>;
+
+export default function ClientReviewPage({ params }: { params: ClientReviewPageParams }) {
   const [token, setToken] = useState<string | null>(null);
   const [task, setTask] = useState<ClientReviewTask | null>(null);
   const [items, setItems] = useState<ClientReviewItem[]>([]);
+  const [history, setHistory] = useState<ClientReviewHistoryEntry[]>([]);
+  const [selectedReviewId, setSelectedReviewId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -40,7 +79,19 @@ export default function ClientReviewPage({ params }: { params: Promise<{ token: 
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
-    void params.then((value) => setToken(value.token));
+    let cancelled = false;
+    void Promise.resolve(params)
+      .then((value) => {
+        if (!cancelled) setToken(value.token);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setError("审核链接参数读取失败。请确认链接完整后重新打开，或联系项目团队重新发送。");
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [params]);
 
   useEffect(() => {
@@ -48,17 +99,25 @@ export default function ClientReviewPage({ params }: { params: Promise<{ token: 
     let cancelled = false;
     async function load() {
       setLoading(true);
-      const response = await fetch(`/api/client-review/${token}`, { cache: "no-store" });
-      const payload = (await response.json()) as ApiResult<{ task: ClientReviewTask; items: ClientReviewItem[] }>;
-      if (cancelled) return;
-      if (payload.ok) {
-        setTask(payload.data.task);
-        setItems(payload.data.items);
-        setError(null);
-      } else {
-        setError(payload.error.message);
+      setError(null);
+      try {
+        const payload = await fetchReviewPayload<{ task: ClientReviewTask; items: ClientReviewItem[]; history: ClientReviewHistoryEntry[] }>(`/api/client-review/${token}`);
+        if (cancelled) return;
+        if (payload.ok) {
+          setTask(payload.data.task);
+          setItems(payload.data.items);
+          setHistory(payload.data.history ?? []);
+          setSelectedReviewId(payload.data.task.id);
+          setError(null);
+        } else {
+          setError(payload.error.message);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        setError(toReviewPageError(error, "暂时无法读取审核任务。请刷新页面重试，或联系项目团队重新发送审核链接。"));
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-      setLoading(false);
     }
     void load();
     return () => {
@@ -68,58 +127,79 @@ export default function ClientReviewPage({ params }: { params: Promise<{ token: 
 
   const canSubmit = task?.status === "active";
   const reviewItems = useMemo(() => items, [items]);
-  const videoItem = reviewItems.find((item) => item.itemType === "review_cut_video");
-  const videoUrl = typeof videoItem?.metadata.videoUrl === "string" ? videoItem.metadata.videoUrl : null;
-  const isVideoReview = Boolean(videoItem && videoUrl);
-
   async function submit(formData: FormData) {
     if (!token) return;
     setSubmitting(true);
     setError(null);
     setMessage(null);
-    const decision = String(formData.get("decision") ?? "approved") as "approved" | "rejected";
-    const itemPayload = reviewItems
-      .map((item) => {
-        const itemDecision = String(formData.get(`decision-${item.itemId}`) ?? "");
-        const scoreValue = String(formData.get(`score-${item.itemId}`) ?? "");
-        const feedback = String(formData.get(`feedback-${item.itemId}`) ?? "");
-        if (!itemDecision && !scoreValue && !feedback) return null;
-        return {
-          itemId: item.itemId,
-          decision: (itemDecision || decision) as "approved" | "rejected",
-          score: scoreValue ? Number(scoreValue) : null,
-          feedback,
-        };
-      })
-      .filter((item): item is { itemId: string; decision: "approved" | "rejected"; score: number | null; feedback: string } => Boolean(item));
-    const response = await fetch(`/api/client-review/${token}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        verificationCode: String(formData.get("verificationCode") ?? ""),
-        decision,
-        reviewerName: String(formData.get("reviewerName") ?? ""),
-        reviewerContact: String(formData.get("reviewerContact") ?? ""),
-        feedback: String(formData.get("feedback") ?? ""),
-        items: itemPayload,
-        timecodeAnnotations: timecodeNotes
-          .filter((note) => note.feedback.trim())
-          .map((note) => ({
-            timeSeconds: note.timeSeconds,
-            feedback: note.feedback.trim(),
-          })),
-      }),
-    });
-    const payload = (await response.json()) as ApiResult<{ message: string; task: ClientReviewTask; items: ClientReviewItem[] }>;
-    if (payload.ok) {
-      setMessage(payload.data.message);
-      setTask(payload.data.task);
-      setItems(payload.data.items);
-    } else {
-      setError(payload.error.message);
+    try {
+      const decision = String(formData.get("decision") ?? "approved") as "approved" | "rejected";
+      const itemPayload = reviewItems
+        .map((item) => {
+          const itemDecision = String(formData.get(`decision-${item.itemId}`) ?? "");
+          const scoreValue = String(formData.get(`score-${item.itemId}`) ?? "");
+          const feedback = String(formData.get(`feedback-${item.itemId}`) ?? "");
+          if (!itemDecision && !scoreValue && !feedback) return null;
+          return {
+            itemId: item.itemId,
+            decision: (itemDecision || decision) as "approved" | "rejected",
+            score: scoreValue ? Number(scoreValue) : null,
+            feedback,
+          };
+        })
+        .filter((item): item is { itemId: string; decision: "approved" | "rejected"; score: number | null; feedback: string } => Boolean(item));
+      const payload = await fetchReviewPayload<{ message: string; task: ClientReviewTask; items: ClientReviewItem[] }>(`/api/client-review/${token}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          verificationCode: String(formData.get("verificationCode") ?? ""),
+          decision,
+          reviewerName: String(formData.get("reviewerName") ?? ""),
+          reviewerContact: String(formData.get("reviewerContact") ?? ""),
+          feedback: String(formData.get("feedback") ?? ""),
+          items: itemPayload,
+          timecodeAnnotations: timecodeNotes
+            .filter((note) => note.feedback.trim())
+            .map((note) => ({
+              timeSeconds: note.timeSeconds,
+              feedback: note.feedback.trim(),
+            })),
+        }),
+      });
+      if (payload.ok) {
+        setMessage(payload.data.message);
+        setTask(payload.data.task);
+        setItems(payload.data.items);
+        setSelectedReviewId(payload.data.task.id);
+        setHistory((currentHistory) =>
+          currentHistory.map((entry) =>
+            entry.task.id === payload.data.task.id
+              ? {
+                  ...entry,
+                  task: { ...entry.task, ...payload.data.task },
+                  items: payload.data.items.length > 0 ? payload.data.items : entry.items,
+                }
+              : entry
+          )
+        );
+      } else {
+        setError(payload.error.message);
+      }
+    } catch (error) {
+      setError(toReviewPageError(error, "暂时无法提交审核意见。请稍后重试，或联系项目团队确认审核链接是否仍有效。"));
+    } finally {
+      setSubmitting(false);
     }
-    setSubmitting(false);
   }
+
+  const selectedHistoryEntry = history.find((entry) => entry.task.id === selectedReviewId) ?? null;
+  const viewingCurrentTask = !selectedHistoryEntry || selectedHistoryEntry.task.id === task?.id;
+  const displayedTask = viewingCurrentTask ? task : selectedHistoryEntry.task;
+  const displayedItems = viewingCurrentTask ? reviewItems : selectedHistoryEntry.items;
+  const displayedCreativeProposalItems = useMemo(() => groupCreativeProposalItems(displayedItems ?? []), [displayedItems]);
+  const displayedVideoItem = displayedItems?.find((item) => item.itemType === "review_cut_video");
+  const displayedVideoUrl = typeof displayedVideoItem?.metadata.videoUrl === "string" ? displayedVideoItem.metadata.videoUrl : null;
+  const displayedIsVideoReview = Boolean(displayedVideoItem && displayedVideoUrl);
 
   function addTimecodeNote() {
     const current = Math.max(0, Math.floor(videoRef.current?.currentTime ?? 0));
@@ -143,51 +223,65 @@ export default function ClientReviewPage({ params }: { params: Promise<{ token: 
           </div>
         ) : error ? (
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">{error}</div>
-        ) : task ? (
+        ) : task && displayedTask ? (
           <>
             <div className="flex flex-wrap items-start justify-between gap-4 border-b border-black/10 pb-5">
               <div>
-                <p className="text-sm text-black/50">甲方外部审核 · {reviewTypeLabel(task.reviewType)}</p>
-                <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em]">{task.title}</h1>
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-black/60">{task.summary}</p>
+                <p className="text-sm text-black/50">甲方外部审核 · {reviewTypeLabel(displayedTask.reviewType)}</p>
+                <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em]">{displayedTask.title}</h1>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-black/60">{displayedTask.summary}</p>
               </div>
-              <span className="rounded-full border border-black/10 px-3 py-1 text-xs">{reviewStatusLabel(task.status)}</span>
+              <span className="rounded-full border border-black/10 px-3 py-1 text-xs">{reviewStatusLabel(displayedTask.status)}</span>
             </div>
+            <ReviewNodeNavigator
+              history={history}
+              currentTaskId={task.id}
+              selectedTaskId={displayedTask.id}
+              onSelect={setSelectedReviewId}
+            />
             {message && <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">{message}</div>}
             {error && <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">{error}</div>}
+            {!viewingCurrentTask && (
+              <HistoricalReviewSummary task={displayedTask} items={displayedItems ?? []} />
+            )}
             <form action={submit} className="mt-6 grid gap-6">
-              <div className="grid gap-3 rounded-2xl bg-black p-4 text-white md:grid-cols-3">
-                <label className="grid gap-1 text-xs">
-                  验证码 / 密钥
-                  <Input name="verificationCode" required disabled={!canSubmit || submitting} className="bg-white text-black" />
-                </label>
-                <label className="grid gap-1 text-xs">
-                  审核人姓名
-                  <Input name="reviewerName" disabled={!canSubmit || submitting} className="bg-white text-black" />
-                </label>
-                <label className="grid gap-1 text-xs">
-                  联系方式
-                  <Input name="reviewerContact" disabled={!canSubmit || submitting} className="bg-white text-black" />
-                </label>
-              </div>
-              {isVideoReview && videoUrl && videoItem ? (
+              {viewingCurrentTask ? (
+                <div className="grid gap-3 rounded-2xl bg-black p-4 text-white md:grid-cols-3">
+                  <label className="grid gap-1 text-xs">
+                    验证码 / 密钥
+                    <Input name="verificationCode" required disabled={!canSubmit || submitting} className="bg-white text-black" />
+                  </label>
+                  <label className="grid gap-1 text-xs">
+                    审核人姓名
+                    <Input name="reviewerName" disabled={!canSubmit || submitting} className="bg-white text-black" />
+                  </label>
+                  <label className="grid gap-1 text-xs">
+                    联系方式
+                    <Input name="reviewerContact" disabled={!canSubmit || submitting} className="bg-white text-black" />
+                  </label>
+                </div>
+              ) : null}
+              {displayedIsVideoReview && displayedVideoUrl && displayedVideoItem ? (
                 <div className="grid gap-4 rounded-[20px] border border-black/10 bg-[#111] p-3 text-white lg:grid-cols-[minmax(0,1fr)_340px]">
                   <div>
                     <div className="overflow-hidden rounded-2xl bg-black">
-                      <video ref={videoRef} src={videoUrl} controls className="aspect-video w-full bg-black" />
+                      <video ref={viewingCurrentTask ? videoRef : undefined} src={displayedVideoUrl} controls className="aspect-video w-full bg-black" />
                     </div>
                     <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        <p className="text-sm font-semibold">{videoItem.itemLabel}</p>
-                        <p className="mt-1 text-xs leading-5 text-white/60">{reviewItemPreview(videoItem)}</p>
+                        <p className="text-sm font-semibold">{displayedVideoItem.itemLabel}</p>
+                        <p className="mt-1 text-xs leading-5 text-white/60">{reviewItemPreview(displayedVideoItem)}</p>
                       </div>
-                      <Button type="button" variant="outline" disabled={!canSubmit || submitting} onClick={addTimecodeNote} className="border-white/20 bg-white text-black hover:bg-white/90">
-                        <Plus size={15} />
-                        添加当前时间批注
-                      </Button>
+                      {viewingCurrentTask && (
+                        <Button type="button" variant="outline" disabled={!canSubmit || submitting} onClick={addTimecodeNote} className="border-white/20 bg-white text-black hover:bg-white/90">
+                          <Plus size={15} />
+                          添加当前时间批注
+                        </Button>
+                      )}
                     </div>
                   </div>
-                  <div className="rounded-2xl border border-white/10 bg-white/8 p-3">
+                  {viewingCurrentTask && (
+                    <div className="rounded-2xl border border-white/10 bg-white/8 p-3">
                     <div className="flex items-center gap-2">
                       <Clock3 size={15} />
                       <p className="text-sm font-semibold">时间戳批注</p>
@@ -226,72 +320,36 @@ export default function ClientReviewPage({ params }: { params: Promise<{ token: 
                       )}
                     </div>
                   </div>
+                  )}
                 </div>
               ) : null}
-              <div className="grid gap-4">
-                {reviewItems.filter((item) => item.itemType !== "review_cut_video").map((item) => {
-                  const imageUrl = typeof item.metadata.imageUrl === "string" ? item.metadata.imageUrl : null;
-                  const isImageReview = item.itemType === "storyboard_shot_image" || Boolean(imageUrl);
-                  return (
-                    <div key={item.id} className="grid gap-4 rounded-2xl border border-black/10 p-4 md:grid-cols-[260px_minmax(0,1fr)]">
-                      <div className="overflow-hidden rounded-xl bg-black/5">
-                        {imageUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={imageUrl} alt={item.itemLabel} className="h-48 w-full object-cover" />
-                        ) : (
-                          <div className="flex h-48 flex-col justify-center gap-2 p-4 text-sm text-black/50">
-                            <span className="text-xs uppercase tracking-[0.18em] text-black/35">{itemTypeLabel(item.itemType)}</span>
-                            <span className="line-clamp-5 leading-6">{reviewItemPreview(item)}</span>
-                          </div>
-                        )}
-                      </div>
-                      <div>
-                        <p className="font-semibold">{item.itemLabel}</p>
-                        <p className="mt-2 text-sm leading-6 text-black/60">{reviewItemPreview(item)}</p>
-                        <div className="mt-4 grid gap-3 md:grid-cols-3">
-                          <label className="grid gap-1 text-xs">
-                            单条结论（可选）
-                            <select name={`decision-${item.itemId}`} disabled={!canSubmit || submitting} className="h-10 rounded-xl border border-black/10 bg-white px-3 text-sm">
-                              <option value="">跟随整体结论</option>
-                              <option value="approved">OK</option>
-                              <option value="rejected">不 OK</option>
-                            </select>
-                          </label>
-                          {isImageReview && (
-                            <label className="grid gap-1 text-xs">
-                              评分
-                              <select name={`score-${item.itemId}`} disabled={!canSubmit || submitting} className="h-10 rounded-xl border border-black/10 bg-white px-3 text-sm">
-                                <option value="">不单独评分</option>
-                                {[5, 4, 3, 2, 1].map((score) => (
-                                  <option key={score} value={score}>{score} 分</option>
-                                ))}
-                              </select>
-                            </label>
-                          )}
-                          <label className="grid gap-1 text-xs md:col-span-3">
-                            修改意见
-                            <textarea name={`feedback-${item.itemId}`} disabled={!canSubmit || submitting} className="min-h-20 rounded-xl border border-black/10 p-3 text-sm leading-6" />
-                          </label>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              <label className="grid gap-1 text-xs">
-                整体意见
-                <textarea name="feedback" disabled={!canSubmit || submitting} className="min-h-24 rounded-2xl border border-black/10 p-3 text-sm leading-6" />
-              </label>
-              <div className="flex flex-wrap gap-3">
-                <Button type="submit" name="decision" value="approved" disabled={!canSubmit || submitting}>
-                  {submitting ? <Loader2 className="animate-spin" size={15} /> : <CheckCircle2 size={15} />}
-                  整体通过
-                </Button>
-                <Button type="submit" name="decision" value="rejected" variant="outline" disabled={!canSubmit || submitting}>
-                  <XCircle size={15} />
-                  整体打回
-                </Button>
-              </div>
+              {displayedTask.reviewType === "project_proposal" && displayedCreativeProposalItems.length > 0 ? (
+                <CreativeProposalReviewItems groups={displayedCreativeProposalItems} canSubmit={viewingCurrentTask && canSubmit} submitting={submitting} />
+              ) : (
+                <div className="grid gap-4">
+                  {(displayedItems ?? []).filter((item) => item.itemType !== "review_cut_video").map((item) => (
+                    <GenericReviewItemCard key={item.id} item={item} canSubmit={viewingCurrentTask && canSubmit} submitting={submitting} />
+                  ))}
+                </div>
+              )}
+              {viewingCurrentTask ? (
+                <>
+                  <label className="grid gap-1 text-xs">
+                    整体意见
+                    <textarea name="feedback" disabled={!canSubmit || submitting} className="min-h-24 rounded-2xl border border-black/10 p-3 text-sm leading-6" />
+                  </label>
+                  <div className="flex flex-wrap gap-3">
+                    <Button type="submit" name="decision" value="approved" disabled={!canSubmit || submitting}>
+                      {submitting ? <Loader2 className="animate-spin" size={15} /> : <CheckCircle2 size={15} />}
+                      整体通过
+                    </Button>
+                    <Button type="submit" name="decision" value="rejected" variant="outline" disabled={!canSubmit || submitting}>
+                      <XCircle size={15} />
+                      整体打回
+                    </Button>
+                  </div>
+                </>
+              ) : null}
             </form>
           </>
         ) : null}
@@ -313,10 +371,215 @@ function reviewStatusLabel(status: string) {
   return labels[status] ?? status;
 }
 
+function ReviewNodeNavigator({
+  history,
+  currentTaskId,
+  selectedTaskId,
+  onSelect,
+}: {
+  history: ClientReviewHistoryEntry[];
+  currentTaskId: string;
+  selectedTaskId: string;
+  onSelect: (taskId: string) => void;
+}) {
+  const nodes = buildReviewNodeList(history, currentTaskId);
+
+  return (
+    <section className="mt-5 rounded-[24px] border border-black/10 bg-[#f7f5f0] p-3">
+      <div className="flex items-center justify-between gap-3 px-1">
+        <div>
+          <p className="text-sm font-semibold">审核节点</p>
+          <p className="mt-1 text-xs leading-5 text-black/50">当前节点之前的记录可回溯查看；后续节点会在项目团队发起后开放。</p>
+        </div>
+        <FileClock size={18} className="text-black/45" />
+      </div>
+      <div className="mt-3 grid gap-2 md:grid-cols-4">
+        {nodes.map((node) => {
+          const isSelected = node.task?.id === selectedTaskId;
+          return (
+            <button
+              key={node.key}
+              type="button"
+              onClick={() => node.task && onSelect(node.task.id)}
+              disabled={!node.task}
+              className={[
+                "min-h-24 rounded-2xl border p-3 text-left transition",
+                !node.task
+                  ? "cursor-not-allowed border-black/5 bg-white/45 text-black/30"
+                  : isSelected
+                    ? "border-[#93bdf8] bg-[#eef5ff] text-black shadow-[0_0_0_2px_rgba(32,127,236,0.18)]"
+                    : "border-black/10 bg-white hover:border-black/25",
+              ].join(" ")}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <span className={["text-xs", isSelected ? "text-[#207fec]" : "text-black/45"].join(" ")}>{node.stepLabel}</span>
+                {node.task?.id === currentTaskId ? (
+                  <span className={["rounded-full px-2 py-0.5 text-[10px]", isSelected ? "bg-[#207fec] text-white" : "bg-black text-white"].join(" ")}>
+                    当前
+                  </span>
+                ) : null}
+              </div>
+              <p className="mt-2 line-clamp-2 text-sm font-semibold text-black">{node.title}</p>
+              <p className={["mt-2 text-xs", isSelected ? "text-black/55" : "text-black/50"].join(" ")}>
+                {node.task ? `${reviewStatusLabel(node.task.status)} · ${formatReviewDate(node.task.reviewedAt ?? node.task.submittedAt ?? node.task.updatedAt ?? node.task.createdAt)}` : "未开放"}
+              </p>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function HistoricalReviewSummary({ task, items }: { task: ClientReviewTask; items: ClientReviewItem[] }) {
+  const approvedCount = items.filter((item) => item.decision === "approved").length;
+  const rejectedCount = items.filter((item) => item.decision === "rejected").length;
+  const scoredItems = items.filter((item) => typeof item.score === "number");
+  const averageScore = scoredItems.length > 0 ? scoredItems.reduce((total, item) => total + (item.score ?? 0), 0) / scoredItems.length : null;
+
+  return (
+    <section className="mt-5 rounded-[20px] border border-black/10 bg-white p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold">历史审核记录</p>
+          <p className="mt-1 text-sm leading-6 text-black/55">
+            {task.reviewerName ? `${task.reviewerName} · ` : ""}
+            {reviewStatusLabel(task.status)} · {formatReviewDate(task.reviewedAt ?? task.submittedAt ?? task.updatedAt ?? task.createdAt)}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs">
+          <span className="rounded-full border border-black/10 px-3 py-1">通过 {approvedCount}</span>
+          <span className="rounded-full border border-black/10 px-3 py-1">打回 {rejectedCount}</span>
+          {averageScore !== null && <span className="rounded-full border border-black/10 px-3 py-1">均分 {averageScore.toFixed(1)}</span>}
+        </div>
+      </div>
+      {task.feedback ? (
+        <div className="mt-3 rounded-2xl bg-[#f7f5f0] p-3 text-sm leading-6 text-black/65">
+          {task.feedback}
+        </div>
+      ) : (
+        <div className="mt-3 rounded-2xl bg-[#f7f5f0] p-3 text-sm leading-6 text-black/45">本轮没有填写整体意见。</div>
+      )}
+    </section>
+  );
+}
+
+function buildReviewNodeList(history: ClientReviewHistoryEntry[], currentTaskId: string) {
+  const taskByKey = new Map<string, ClientReviewTask>();
+  const currentEntry = history.find((entry) => entry.task.id === currentTaskId);
+  for (const entry of history) {
+    const key = reviewNodeKey(entry.task);
+    const existing = taskByKey.get(key);
+    const shouldReplace =
+      entry.task.id === currentTaskId ||
+      !existing ||
+      (existing.id !== currentTaskId && isPreferredHistoryTask(entry.task, existing));
+    if (shouldReplace) {
+      taskByKey.set(key, entry.task);
+    }
+  }
+
+  const currentOrder = currentEntry ? reviewNodeOrder(reviewNodeKey(currentEntry.task)) : Number.MAX_SAFE_INTEGER;
+
+  return reviewNodeDefinitions.map((definition) => {
+    const task = taskByKey.get(definition.key) ?? null;
+    const isPastOrCurrent = definition.order <= currentOrder;
+    return {
+      ...definition,
+      task: isPastOrCurrent ? task : null,
+      title: task ? reviewNodeTitle(task) : definition.title,
+    };
+  });
+}
+
+function isPreferredHistoryTask(candidate: ClientReviewTask, existing: ClientReviewTask) {
+  const candidateCompleted = isCompletedReviewStatus(candidate.status);
+  const existingCompleted = isCompletedReviewStatus(existing.status);
+  if (candidateCompleted !== existingCompleted) return candidateCompleted;
+  return new Date(candidate.updatedAt ?? candidate.createdAt ?? 0).getTime() > new Date(existing.updatedAt ?? existing.createdAt ?? 0).getTime();
+}
+
+function isCompletedReviewStatus(status: string) {
+  return status === "approved" || status === "rejected" || status === "submitted";
+}
+
+const reviewNodeDefinitions = [
+  { key: "brief_confirmation", order: 1, stepLabel: "01", title: "Brief 确认" },
+  { key: "creative_round_1", order: 2, stepLabel: "02", title: "Round 1 创意初选" },
+  { key: "creative_round_2", order: 3, stepLabel: "03", title: "Round 2 最终确认" },
+  { key: "quote_confirmation", order: 4, stepLabel: "04", title: "报价确认" },
+  { key: "production_setup", order: 5, stepLabel: "05", title: "脚本/设定确认" },
+  { key: "storyboard_image_batch", order: 6, stepLabel: "06", title: "分镜图片审核" },
+  { key: "a_copy_round", order: 7, stepLabel: "07", title: "A-copy 审核" },
+  { key: "b_copy_final", order: 8, stepLabel: "08", title: "B-copy 定稿确认" },
+];
+
+function reviewNodeKey(task: ClientReviewTask) {
+  if (typeof task.reviewScene === "string" && task.reviewScene) return task.reviewScene;
+  if (task.reviewType === "quote_confirmation") return "quote_confirmation";
+  if (task.reviewType === "contract_confirmation") return "quote_confirmation";
+  if (task.reviewType === "brief_confirmation") return "brief_confirmation";
+  if (task.reviewType === "storyboard_image_batch" || task.reviewType === "storyboard_scene_images") return "storyboard_image_batch";
+  if (task.reviewType === "a_copy_review") return "a_copy_round";
+  if (task.reviewType === "b_copy_review") return "b_copy_final";
+  if (task.reviewType === "script_package") return "production_setup";
+  return task.reviewType;
+}
+
+function reviewNodeOrder(key: string) {
+  return reviewNodeDefinitions.find((definition) => definition.key === key)?.order ?? Number.MAX_SAFE_INTEGER;
+}
+
+function reviewNodeTitle(task: ClientReviewTask) {
+  const definition = reviewNodeDefinitions.find((item) => item.key === reviewNodeKey(task));
+  const version = task.version ? ` v${task.version}` : "";
+  return `${definition?.title ?? reviewTypeLabel(task.reviewType)}${version}`;
+}
+
+function formatReviewDate(value?: string | null) {
+  if (!value) return "未记录时间";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "未记录时间";
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+async function fetchReviewPayload<T>(url: string, init?: RequestInit): Promise<ApiResult<T>> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 20000);
+  try {
+    const response = await fetch(url, {
+      ...init,
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    return (await response.json()) as ApiResult<T>;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+function toReviewPageError(error: unknown, fallback: string) {
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return "审核任务读取超时。请刷新页面重试；如果仍然很慢，请联系项目团队检查后台服务和素材链接。";
+  }
+  if (error instanceof SyntaxError) {
+    return "审核页面收到了异常响应。请刷新页面重试，或联系项目团队检查审核链接是否正确。";
+  }
+  if (error instanceof TypeError) {
+    return "暂时无法连接审核服务。请确认本地服务仍在运行后刷新页面。";
+  }
+  return fallback;
+}
+
 function reviewTypeLabel(type: string) {
   const labels: Record<string, string> = {
     brief_confirmation: "Brief 确认",
-    project_proposal: "完整项目提案",
+    project_proposal: "创意视觉提案",
     quote_confirmation: "报价确认",
     contract_confirmation: "合同确认",
     script_package: "脚本方向确认",
@@ -325,6 +588,244 @@ function reviewTypeLabel(type: string) {
     b_copy_review: "B copy 最终确认",
   };
   return labels[type] ?? type;
+}
+
+function CreativeProposalReviewItems({
+  groups,
+  canSubmit,
+  submitting,
+}: {
+  groups: Array<{ directionTitle: string; items: ClientReviewItem[] }>;
+  canSubmit: boolean;
+  submitting: boolean;
+}) {
+  return (
+    <div className="grid gap-5">
+      {groups.map((group, groupIndex) => (
+        <section key={`${group.directionTitle}-${groupIndex}`} className="rounded-[20px] border border-black/10 bg-[#faf8f3] p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-xs text-black/45">方向 {groupIndex + 1}</p>
+              <h2 className="mt-1 text-xl font-semibold">{group.directionTitle || "未命名创意方向"}</h2>
+            </div>
+            <span className="rounded-full border border-black/10 bg-white px-3 py-1 text-xs text-black/55">
+              {group.items.length} 个故事场景
+            </span>
+          </div>
+          <div className="mt-4 grid gap-4 xl:grid-cols-2">
+            {group.items.map((item) => (
+              <CreativeProposalReviewItem key={item.id} item={item} canSubmit={canSubmit} submitting={submitting} />
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function CreativeProposalReviewItem({
+  item,
+  canSubmit,
+  submitting,
+}: {
+  item: ClientReviewItem;
+  canSubmit: boolean;
+  submitting: boolean;
+}) {
+  const candidateImages = getCandidateImages(item.metadata.candidateImages);
+  const sceneIndex = readMetadataNumber(item.metadata, "sceneIndex");
+
+  return (
+    <article className="rounded-2xl border border-black/10 bg-white p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs text-black/45">{sceneIndex ? `故事场景 ${sceneIndex}` : itemTypeLabel(item.itemType)}</p>
+          <h3 className="mt-1 text-base font-semibold">{item.itemLabel}</h3>
+        </div>
+        <span className="rounded-full bg-black px-2.5 py-1 text-xs text-white">{candidateImages.length}/4 图</span>
+      </div>
+      <p className="mt-2 line-clamp-3 text-sm leading-6 text-black/60">{reviewItemPreview(item)}</p>
+      <CandidateImageGallery images={candidateImages} title={item.itemLabel} />
+      <ReviewDecisionFields item={item} canSubmit={canSubmit} submitting={submitting} showScore />
+    </article>
+  );
+}
+
+function CandidateImageGallery({ images, title, compact = false }: { images: ReviewCandidateImage[]; title: string; compact?: boolean }) {
+  if (images.length === 0) {
+    return (
+      <div className={[compact ? "" : "mt-3", "flex aspect-[2/1] items-center justify-center rounded-2xl border border-dashed border-black/10 bg-black/[0.03] p-4 text-sm text-black/45"].join(" ")}>
+        本场景还没有可展示的氛围图候选。
+      </div>
+    );
+  }
+
+  return (
+    <div className={[compact ? "" : "mt-3", "grid grid-cols-2 gap-2"].join(" ")}>
+      {images.slice(0, 4).map((image, index) => (
+        <figure key={image.id} className="overflow-hidden rounded-xl border border-black/10 bg-black/[0.03]">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={image.imageUrl} alt={`${title} 候选图 ${index + 1}`} className="aspect-[3/2] w-full object-cover" />
+          <figcaption className="flex items-center justify-between gap-2 px-2 py-1.5 text-[11px] text-black/50">
+            <span>图 {index + 1}</span>
+            {image.isSelected && <span className="font-medium text-emerald-700">内部已选</span>}
+          </figcaption>
+        </figure>
+      ))}
+    </div>
+  );
+}
+
+function GenericReviewItemCard({
+  item,
+  canSubmit,
+  submitting,
+}: {
+  item: ClientReviewItem;
+  canSubmit: boolean;
+  submitting: boolean;
+}) {
+  if (item.itemType === "quote") {
+    return <QuoteReviewItemCard item={item} canSubmit={canSubmit} submitting={submitting} />;
+  }
+
+  const imageUrl = typeof item.metadata.imageUrl === "string" ? item.metadata.imageUrl : null;
+  const candidateImages = getCandidateImages(item.metadata.candidateImages);
+  const isImageReview = item.itemType === "storyboard_shot_image" || Boolean(imageUrl);
+  return (
+    <div className="grid gap-4 rounded-2xl border border-black/10 p-4 md:grid-cols-[260px_minmax(0,1fr)]">
+      <div className="overflow-hidden rounded-xl bg-black/5">
+        {imageUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={imageUrl} alt={item.itemLabel} className="h-48 w-full object-cover" />
+        ) : candidateImages.length > 0 ? (
+          <CandidateImageGallery images={candidateImages} title={item.itemLabel} compact />
+        ) : (
+          <div className="flex h-48 flex-col justify-center gap-2 p-4 text-sm text-black/50">
+            <span className="text-xs uppercase tracking-[0.18em] text-black/35">{itemTypeLabel(item.itemType)}</span>
+            <span className="line-clamp-5 leading-6">{reviewItemPreview(item)}</span>
+          </div>
+        )}
+      </div>
+      <div>
+        <p className="font-semibold">{item.itemLabel}</p>
+        <p className="mt-2 text-sm leading-6 text-black/60">{reviewItemPreview(item)}</p>
+        <ReviewDecisionFields item={item} canSubmit={canSubmit} submitting={submitting} showScore={isImageReview || candidateImages.length > 0} />
+      </div>
+    </div>
+  );
+}
+
+function QuoteReviewItemCard({
+  item,
+  canSubmit,
+  submitting,
+}: {
+  item: ClientReviewItem;
+  canSubmit: boolean;
+  submitting: boolean;
+}) {
+  const quote = readQuoteReviewData(item);
+
+  return (
+    <article className="rounded-2xl border border-black/10 bg-white p-4">
+      <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
+        <aside className="rounded-2xl bg-black/[0.035] p-4">
+          <p className="text-xs text-black/45">报价总额</p>
+          <p className="mt-2 text-2xl font-semibold tracking-[-0.03em]">{formatReviewMoney(quote.totalAmount, quote.currency)}</p>
+          <div className="mt-4 grid gap-2 text-sm text-black/60">
+            <div className="flex items-center justify-between gap-3">
+              <span>版本</span>
+              <span className="font-medium text-black">v{quote.version || readMetadataNumber(item.metadata, "version") || 1}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span>状态</span>
+              <span className="font-medium text-black">{quote.status ? quoteStatusLabel(quote.status) : "待确认"}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span>币种</span>
+              <span className="font-medium text-black">{quote.currency}</span>
+            </div>
+          </div>
+        </aside>
+        <div className="min-w-0">
+          <p className="text-xs text-black/45">报价</p>
+          <h2 className="mt-1 text-xl font-semibold tracking-[-0.02em]">{item.itemLabel}</h2>
+          {quote.items.length > 0 ? (
+            <div className="mt-4 overflow-hidden rounded-2xl border border-black/10">
+              <div className="grid grid-cols-[minmax(0,1fr)_72px_110px] bg-black/[0.04] px-3 py-2 text-xs font-medium text-black/55">
+                <span>项目与说明</span>
+                <span className="text-right">数量</span>
+                <span className="text-right">小计</span>
+              </div>
+              {quote.items.map((line, index) => (
+                <div key={`${line.name}-${index}`} className="grid grid-cols-[minmax(0,1fr)_72px_110px] gap-3 border-t border-black/10 px-3 py-3 text-sm">
+                  <div className="min-w-0">
+                    <p className="font-medium">{line.name || `报价项 ${index + 1}`}</p>
+                    {line.description && <p className="mt-1 leading-5 text-black/55">{line.description}</p>}
+                    <p className="mt-1 text-xs text-black/40">单价 {formatReviewMoney(line.unitPrice, quote.currency)}</p>
+                  </div>
+                  <span className="text-right text-black/60">{line.quantity}</span>
+                  <span className="text-right font-medium">{formatReviewMoney(line.quantity * line.unitPrice, quote.currency)}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-4 rounded-2xl bg-black/[0.035] p-4 text-sm leading-6 text-black/55">
+              {quote.preview || "当前报价没有结构化明细，请结合整体说明进行确认。"}
+            </p>
+          )}
+          {quote.notes && (
+            <div className="mt-3 rounded-2xl bg-[#f7f5f0] p-3 text-sm leading-6 text-black/60">
+              <span className="font-medium text-black">备注：</span>
+              {quote.notes}
+            </div>
+          )}
+          <ReviewDecisionFields item={item} canSubmit={canSubmit} submitting={submitting} showScore={false} />
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function ReviewDecisionFields({
+  item,
+  canSubmit,
+  submitting,
+  showScore,
+}: {
+  item: ClientReviewItem;
+  canSubmit: boolean;
+  submitting: boolean;
+  showScore: boolean;
+}) {
+  return (
+    <div className="mt-4 grid gap-3 md:grid-cols-3">
+      <label className="grid gap-1 text-xs">
+        单条结论（可选）
+        <select name={`decision-${item.itemId}`} disabled={!canSubmit || submitting} className="h-10 rounded-xl border border-black/10 bg-white px-3 text-sm">
+          <option value="">跟随整体结论</option>
+          <option value="approved">OK</option>
+          <option value="rejected">不 OK</option>
+        </select>
+      </label>
+      {showScore && (
+        <label className="grid gap-1 text-xs">
+          评分
+          <select name={`score-${item.itemId}`} disabled={!canSubmit || submitting} className="h-10 rounded-xl border border-black/10 bg-white px-3 text-sm">
+            <option value="">不单独评分</option>
+            {[5, 4, 3, 2, 1].map((score) => (
+              <option key={score} value={score}>{score} 分</option>
+            ))}
+          </select>
+        </label>
+      )}
+      <label className="grid gap-1 text-xs md:col-span-3">
+        修改意见
+        <textarea name={`feedback-${item.itemId}`} disabled={!canSubmit || submitting} className="min-h-20 rounded-xl border border-black/10 p-3 text-sm leading-6" />
+      </label>
+    </div>
+  );
 }
 
 function itemTypeLabel(type: string) {
@@ -339,6 +840,143 @@ function itemTypeLabel(type: string) {
     review_cut_video: "完整视频",
   };
   return labels[type] ?? type;
+}
+
+function groupCreativeProposalItems(items: ClientReviewItem[]) {
+  const groups = new Map<string, ClientReviewItem[]>();
+  const creativeItems = items.filter(
+    (candidate) =>
+      candidate.itemType === "proposal" &&
+      (readMetadataString(candidate.metadata, "directionTitle") ||
+        readMetadataNumber(candidate.metadata, "sceneIndex") > 0 ||
+        Array.isArray(candidate.metadata.candidateImages))
+  );
+  for (const item of creativeItems) {
+    const directionTitle = readMetadataString(item.metadata, "directionTitle") || "未命名创意方向";
+    groups.set(directionTitle, [...(groups.get(directionTitle) ?? []), item]);
+  }
+
+  return Array.from(groups.entries()).map(([directionTitle, groupItems]) => ({
+    directionTitle,
+    items: groupItems.sort((left, right) => readMetadataNumber(left.metadata, "sceneIndex") - readMetadataNumber(right.metadata, "sceneIndex")),
+  }));
+}
+
+function getCandidateImages(value: unknown): ReviewCandidateImage[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => (item && typeof item === "object" ? (item as Record<string, unknown>) : null))
+    .filter((item): item is Record<string, unknown> => Boolean(item))
+    .map((item, index) => ({
+      id: readMetadataString(item, "id") || `candidate-${index}`,
+      imageUrl: readMetadataString(item, "imageUrl"),
+      prompt: readMetadataString(item, "prompt"),
+      status: readMetadataString(item, "status"),
+      isSelected: item.isSelected === true,
+      sortOrder: readMetadataNumber(item, "sortOrder") || index + 1,
+    }))
+    .filter((item) => item.imageUrl)
+    .sort((left, right) => left.sortOrder - right.sortOrder);
+}
+
+function readMetadataString(metadata: Record<string, unknown>, key: string) {
+  const value = metadata[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function readMetadataNumber(metadata: Record<string, unknown>, key: string) {
+  const value = metadata[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function readQuoteReviewData(item: ClientReviewItem) {
+  const structuredItems = readQuoteItems(item.metadata.quoteItems);
+  const legacyQuote = readLegacyQuoteFromPreview(item.metadata.previewText);
+  const items = structuredItems.length > 0 ? structuredItems : legacyQuote.items;
+  const currency = readMetadataString(item.metadata, "currency") || legacyQuote.currency || "CNY";
+  const totalAmount =
+    readFlexibleNumber(item.metadata.totalAmount, 0) ||
+    legacyQuote.totalAmount ||
+    items.reduce((total, line) => total + line.quantity * line.unitPrice, 0);
+
+  return {
+    currency,
+    totalAmount,
+    items,
+    notes: readMetadataString(item.metadata, "notes") || legacyQuote.notes,
+    status: readMetadataString(item.metadata, "status") || legacyQuote.status,
+    version: readFlexibleNumber(item.metadata.version, 0) || legacyQuote.version,
+    preview: legacyQuote.preview || readMetadataString(item.metadata, "previewText"),
+  };
+}
+
+function readQuoteItems(value: unknown): QuoteReviewLine[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => (entry && typeof entry === "object" ? (entry as Record<string, unknown>) : null))
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry))
+    .map((entry) => ({
+      name: readMetadataString(entry, "name"),
+      description: readMetadataString(entry, "description"),
+      quantity: readFlexibleNumber(entry.quantity, 1),
+      unitPrice: readFlexibleNumber(entry.unitPrice, 0),
+    }))
+    .filter((line) => line.name || line.description || line.unitPrice > 0);
+}
+
+function readLegacyQuoteFromPreview(value: unknown) {
+  const fallback = {
+    currency: "",
+    totalAmount: 0,
+    items: [] as QuoteReviewLine[],
+    notes: "",
+    status: "",
+    version: 0,
+    preview: "",
+  };
+  if (typeof value !== "string") return fallback;
+  const text = value.trim();
+  if (!text.startsWith("{")) return { ...fallback, preview: text };
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    return {
+      currency: typeof parsed.currency === "string" ? parsed.currency : "",
+      totalAmount: readFlexibleNumber(parsed.totalAmount, 0),
+      items: readQuoteItems(parsed.items),
+      notes: typeof parsed.notes === "string" ? parsed.notes : "",
+      status: typeof parsed.status === "string" ? parsed.status : "",
+      version: readFlexibleNumber(parsed.version, 0),
+      preview: "",
+    };
+  } catch {
+    return { ...fallback, preview: text };
+  }
+}
+
+function readFlexibleNumber(value: unknown, fallback = 0) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value.replace(/[^\d.-]/g, ""));
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+  return fallback;
+}
+
+function formatReviewMoney(amount: number, currency: string) {
+  return `${currency || "CNY"} ${amount.toLocaleString("zh-CN", { maximumFractionDigits: 2 })}`;
+}
+
+function quoteStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    draft: "草稿",
+    waiting_review: "等待审核",
+    needs_revision: "需要修改",
+    confirmed: "已确认",
+    sent: "已发送",
+    signed: "已签约",
+    terminated: "已终止",
+  };
+  return labels[status] ?? status;
 }
 
 function formatTimecode(seconds: number) {

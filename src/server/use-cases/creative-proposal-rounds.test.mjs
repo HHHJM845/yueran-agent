@@ -10,11 +10,23 @@ test("validateCreativeDirectionCount requires exactly four directions", async ()
 });
 
 test("creative proposal rounds use confirmed scene and candidate counts", async () => {
-  const { getRequiredSceneCountForRound, getImageCandidateCountPerScene } = await import("./creative-proposal-rounds.ts");
+  const { getRequiredSceneCountForRound, getImageCandidateCountPerScene, getMaxSelectedImageCountPerScene } = await import("./creative-proposal-rounds.ts");
 
   assert.equal(getRequiredSceneCountForRound(1), 2);
   assert.equal(getRequiredSceneCountForRound(2), 4);
   assert.equal(getImageCandidateCountPerScene(), 4);
+  assert.equal(getMaxSelectedImageCountPerScene(), 2);
+});
+
+test("creative proposal round copy uses package semantics", async () => {
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync(new URL("./creative-proposal-rounds.ts", import.meta.url), "utf8");
+
+  assert.match(source, /第一轮提案至少需要选择一个创意方向/);
+  assert.match(source, /第二轮提案至少需要保留一个创意方向/);
+  assert.match(source, /requiredSceneCountPerDirection/);
+  assert.match(source, /derived_from_selected_story_card/);
+  assert.doesNotMatch(source, /Top 5/);
 });
 
 test("creative review payload summarizes direction priority by direction while keeping scene notes", async () => {

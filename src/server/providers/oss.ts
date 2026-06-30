@@ -59,6 +59,21 @@ export function createReadUrl(objectKey: string, expiresInSeconds = 900, options
   return url.toString();
 }
 
+export function createReadUrlFromOssUrl(ossUrl: string, expiresInSeconds = 900, options: ReadUrlOptions = {}) {
+  const objectKey = getOssObjectKeyFromUrl(ossUrl);
+  return objectKey ? createReadUrl(objectKey, expiresInSeconds, options) : ossUrl;
+}
+
+export function getOssObjectKeyFromUrl(ossUrl: string) {
+  try {
+    const url = new URL(ossUrl);
+    const objectKey = decodeURIComponent(url.pathname.replace(/^\/+/, ""));
+    return objectKey || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function downloadOssObject(objectKey: string) {
   const readUrl = createReadUrl(objectKey, 300);
   const response = await fetch(readUrl);

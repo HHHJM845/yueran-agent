@@ -1,23 +1,29 @@
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import { AppError } from "@/lib/errors";
+import { createReadUrlFromOssUrl } from "@/server/providers/oss";
 import {
   createClientReviewTask,
   getNextClientReviewVersion,
   getClientReviewSecretByTaskId,
   getClientReviewTaskByTokenHash,
   listClientReviewItems,
+  listProjectClientReviewTasks,
   submitClientReviewTaskRecord,
+  type ClientReviewItemView,
   type ClientReviewItemDecision,
   type ClientReviewItemType,
+  type ClientReviewTaskView,
   type ClientReviewTargetScopeType,
   type ClientReviewType,
 } from "@/server/repositories/client-reviews";
 import { listProjectArtifacts } from "@/server/repositories/artifacts";
 import { getProjectById } from "@/server/repositories/projects";
 import { getCreativeProposalRound, updateCreativeProposalRoundClientDecision } from "@/server/repositories/creative-proposals";
+import { listProjectCreativeExpansions, type CreativeExpansionView } from "@/server/repositories/creative-expansions";
+import { listGeneratedImagesByIds, listProjectGeneratedImages } from "@/server/repositories/generated-images";
 import { getProjectProposal, updateProposalStatus } from "@/server/repositories/proposals";
-import { getProjectQuote, updateQuoteStatus } from "@/server/repositories/quotes";
+import { getProjectQuote, updateQuoteStatus, type QuoteView } from "@/server/repositories/quotes";
 import { getProjectContract, updateContractStatus } from "@/server/repositories/contracts";
 import {
   applyReviewCutClientDecision,
@@ -35,7 +41,6 @@ import {
 } from "@/server/repositories/storyboard-image-batches";
 import {
   getScriptDirectionPackage,
-  listScriptReferenceAssets,
   listStoryboardImages,
   listStoryboardScenes,
   listStoryboardShots,
@@ -49,6 +54,7 @@ import {
   updateProjectProductionSetupStatus,
 } from "@/server/repositories/production-entities";
 import { recordStageProgress } from "@/server/use-cases/stage-progress";
+import { assertScriptPackageStandardized } from "@/server/use-cases/script-standardization";
 import { assertAllStoryboardImageBatchesApproved, latestStoryboardImageBatches } from "@/server/use-cases/storyboard-image-batches";
 
 const submitItemSchema = z.object({
@@ -433,6 +439,10 @@ async function buildWorkflowReviewSpec(input: {
     const creativeRound = await getCreativeProposalRound({ projectId: input.projectId, roundId: input.targetScopeId });
     if (creativeRound) {
       const sceneLabel = creativeRound.roundNumber === 1 ? "第一轮" : "第二轮";
+      const imageSource = buildCreativeReviewImageSource({
+        generatedImages: await listProjectGeneratedImages(input.projectId),
+        expansions: await listProjectCreativeExpansions(input.projectId),
+      });
       return {
         moduleKey: "creative_visual_proposal",
         reviewType: "project_proposal",
@@ -454,9 +464,10 @@ async function buildWorkflowReviewSpec(input: {
           metadata: {
             roundNumber: creativeRound.roundNumber,
             directionId: concept.directionId,
+            directionTitle: readStringField(concept.snapshot, "directionTitle"),
             sceneIndex: concept.sceneIndex,
             requiredImageCount: concept.requiredImageCount,
-            candidateImageCount: concept.images.filter((image) => image.status === "generated" || image.status === "selected").length,
+            candidateImages: buildCreativeReviewCandidateImages(getConceptReviewImages(concept, imageSource)),
             previewText: summarizeText(`${concept.description}\n${concept.imagePrompt}`, 800),
           },
         })),
@@ -523,7 +534,9 @@ async function buildWorkflowReviewSpec(input: {
             status: quote.status,
             currency: quote.currency,
             totalAmount: quote.totalAmount,
-            previewText: summarizeUnknown(quote),
+            quoteItems: quote.items,
+            notes: quote.notes,
+            previewText: formatQuoteReviewSummary(quote),
           },
         },
       ],
@@ -711,6 +724,11 @@ async function buildWorkflowReviewSpec(input: {
         userMessage: "人物和场景设定还没有生成。请先拆分文字分镜，再提交人物场景设定审核。",
       });
     }
+    const referenceImages = await listGeneratedImagesByIds({
+      projectId: input.projectId,
+      imageIds: referenceSets.flatMap((set) => set.referenceImageIds),
+    });
+    const referenceImageById = new Map(referenceImages.map((image) => [image.id, image]));
     return {
       moduleKey: "script_storyboard_confirmation",
       reviewType: "script_package",
@@ -729,6 +747,12 @@ async function buildWorkflowReviewSpec(input: {
           status: entity.status,
           sourceShotIds: entity.sourceShotIds,
           referenceSetCount: referenceSets.filter((set) => set.entityId === entity.id).length,
+          candidateImages: buildProductionSetupCandidateImages({
+            entityId: entity.id,
+            depth: entity.referenceDepth,
+            referenceSets,
+            referenceImageById,
+          }),
           previewText: summarizeText(entity.description || entity.name, 800),
         },
       })),
@@ -740,29 +764,26 @@ async function buildWorkflowReviewSpec(input: {
     throw new AppError({
       status: 400,
       code: "script_package_required",
-      userMessage: "请先选择一个脚本方向包，再生成甲方审核链接。",
+      userMessage: "请先保存完整剧本，再生成甲方审核链接。",
     });
   }
-  const [pkg, references] = await Promise.all([
-    getScriptDirectionPackage({ projectId: input.projectId, packageId }),
-    listScriptReferenceAssets(input.projectId),
-  ]);
+  const pkg = await getScriptDirectionPackage({ projectId: input.projectId, packageId });
   if (!pkg) {
     throw new AppError({
       status: 404,
       code: "script_package_not_found",
-      userMessage: "没有找到脚本方向包。请先保存脚本创意方向、人物参考和场景参考后再提交甲方审核。",
+      userMessage: "没有找到完整剧本记录。请先保存完整剧本后再提交甲方审核。",
     });
   }
-  const packageReferences = references.filter((item) => item.packageId === pkg.id);
+  await assertScriptPackageStandardized({ projectId: input.projectId, packageId: pkg.id });
   return {
     moduleKey: "script_storyboard_confirmation",
     reviewType: "script_package",
     targetScopeType: "script_package",
     targetScopeId: pkg.id,
-    title: "脚本创意方向与人物场景设定确认",
-    summary: "请确认脚本方向、人物参考、场景参考和完整剧本；如需修改，请打回并说明调整意见。",
-    payload: { project, package: pkg, references: packageReferences },
+    title: "完整剧本确认",
+    summary: "请确认当前完整剧本是否可以进入文字分镜拆解；如需修改，请打回并说明调整意见。",
+    payload: { project, package: pkg, references: [] },
     items: [
       {
         itemType: "script_direction",
@@ -774,18 +795,6 @@ async function buildWorkflowReviewSpec(input: {
           previewText: summarizeText(pkg.fullScript, 1200),
         },
       },
-      ...packageReferences.map((reference) => ({
-        itemType: "reference_asset" as ClientReviewItemType,
-        itemId: reference.id,
-        itemLabel: `${reference.referenceType === "character" ? "人物参考" : "场景参考"}｜${reference.title}`,
-        metadata: {
-          referenceType: reference.referenceType,
-          styleLabel: reference.styleLabel,
-          prompt: reference.prompt,
-          imageUrl: reference.ossUrl,
-          previewText: reference.prompt,
-        },
-      })),
     ],
   };
 }
@@ -800,7 +809,287 @@ export async function loadClientReviewByToken(token: string) {
     });
   }
   const items = await listClientReviewItems(task.id);
-  return { task, items };
+  const creativeImageSource = await buildProjectCreativeReviewImageSource(task.projectId);
+  return {
+    task,
+    items: await hydrateClientReviewItems(task, items, creativeImageSource),
+    history: await buildClientReviewHistory(task, creativeImageSource),
+  };
+}
+
+async function buildClientReviewHistory(currentTask: ClientReviewTaskView, creativeImageSource: CreativeReviewImageSource) {
+  const tasks = await listProjectClientReviewTasks(currentTask.projectId);
+  const relevantTasks = tasks
+    .filter((task) => isExternallyVisibleReviewTask(task))
+    .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
+
+  return Promise.all(
+    relevantTasks.map(async (task) => {
+      const items = await listClientReviewItems(task.id);
+      const hydratedItems = await hydrateClientReviewItems(task, items, creativeImageSource);
+      return {
+        task: sanitizeClientReviewTaskForExternal(task),
+        items: summarizeClientReviewItemsForExternal(hydratedItems),
+        isCurrent: task.id === currentTask.id,
+      };
+    })
+  );
+}
+
+function isExternallyVisibleReviewTask(task: ClientReviewTaskView) {
+  return task.status !== "draft" && task.status !== "revoked";
+}
+
+function sanitizeClientReviewTaskForExternal(task: ClientReviewTaskView) {
+  return {
+    id: task.id,
+    title: task.title,
+    summary: task.summary,
+    status: task.status,
+    reviewType: task.reviewType,
+    targetScopeType: task.targetScopeType,
+    targetScopeId: task.targetScopeId,
+    version: task.version,
+    submittedAt: task.submittedAt,
+    reviewedAt: task.reviewedAt,
+    sopKey: task.sopKey,
+    reviewScene: task.reviewScene,
+    roundNumber: task.roundNumber,
+    batchNumber: task.batchNumber,
+    feedback: task.feedback,
+    reviewerName: task.reviewerName,
+    reviewerContact: task.reviewerContact,
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
+  };
+}
+
+function summarizeClientReviewItemsForExternal(items: ClientReviewItemView[]) {
+  return items.map((item) => ({
+    id: item.id,
+    itemId: item.itemId,
+    itemType: item.itemType,
+    itemLabel: item.itemLabel,
+    decision: item.decision,
+    score: item.score,
+    feedback: item.feedback,
+    metadata: summarizeClientReviewItemMetadata(item.metadata),
+    updatedAt: item.updatedAt,
+  }));
+}
+
+function summarizeClientReviewItemMetadata(metadata: Record<string, unknown>) {
+  const summary: Record<string, unknown> = {};
+  for (const key of [
+    "directionTitle",
+    "sceneIndex",
+    "sortOrder",
+    "previewText",
+    "visualDescription",
+    "concept",
+    "styleLabel",
+    "imageUrl",
+    "videoUrl",
+    "durationSeconds",
+    "candidateImages",
+    "quoteItems",
+    "notes",
+    "currency",
+    "totalAmount",
+    "status",
+    "version",
+  ]) {
+    if (metadata[key] !== undefined) summary[key] = metadata[key];
+  }
+  return summary;
+}
+
+async function hydrateClientReviewItems(task: {
+  reviewType: ClientReviewType;
+  reviewScene: string | null;
+  targetScopeType: ClientReviewTargetScopeType;
+  targetScopeId: string;
+  projectId: string;
+}, items: Awaited<ReturnType<typeof listClientReviewItems>>, imageSource?: CreativeReviewImageSource) {
+  if (
+    task.reviewType !== "project_proposal" ||
+    task.targetScopeType !== "proposal" ||
+    (task.reviewScene !== "creative_round_1" && task.reviewScene !== "creative_round_2")
+  ) {
+    return items;
+  }
+
+  const round = await getCreativeProposalRound({ projectId: task.projectId, roundId: task.targetScopeId });
+  if (!round) return items;
+
+  const resolvedImageSource = imageSource ?? (await buildProjectCreativeReviewImageSource(task.projectId));
+  const conceptsById = new Map(round.concepts.map((concept) => [concept.id, concept]));
+  return items.map((item) => {
+    if (item.itemType !== "proposal") return item;
+    const concept = conceptsById.get(item.itemId);
+    if (!concept) return item;
+    const existingImages = readCandidateImages(item.metadata.candidateImages);
+    const freshImages = buildCreativeReviewCandidateImages(getConceptReviewImages(concept, resolvedImageSource));
+    const candidateImages = freshImages.length > 0 ? freshImages : existingImages;
+    return {
+      ...item,
+      metadata: {
+        ...item.metadata,
+        directionTitle: item.metadata.directionTitle ?? readStringField(concept.snapshot, "directionTitle"),
+        candidateImageCount: candidateImages.length,
+        candidateImages,
+      },
+    };
+  });
+}
+
+async function buildProjectCreativeReviewImageSource(projectId: string) {
+  const [generatedImages, expansions] = await Promise.all([
+    listProjectGeneratedImages(projectId),
+    listProjectCreativeExpansions(projectId),
+  ]);
+  return buildCreativeReviewImageSource({ generatedImages, expansions });
+}
+
+function getConceptReviewImages(
+  concept: {
+    directionId: string | null;
+    sceneIndex: number;
+    images: Array<{ id: string; ossUrl: string | null; prompt: string; status: string; isSelected: boolean; sortOrder: number }>;
+    snapshot: Record<string, unknown>;
+  },
+  imageSource: CreativeReviewImageSource
+) {
+  const expansionId = readStringField(concept.snapshot, "expansionId");
+  const fallbackExpansionId = concept.directionId ? imageSource.expansionIdByDirectionScene.get(`${concept.directionId}:${concept.sceneIndex}`) : "";
+  const matchedExpansionId = expansionId || fallbackExpansionId;
+  const generatedImages = matchedExpansionId ? imageSource.generatedImagesByExpansion.get(matchedExpansionId) ?? [] : [];
+  return generatedImages.length > 0 ? generatedImages : concept.images;
+}
+
+type CreativeReviewGeneratedImage = {
+  id: string;
+  directionId: string | null;
+  expansionId: string | null;
+  ossUrl: string | null;
+  prompt: string;
+  status: string;
+  reviewStatus: string | null;
+  updatedAt: string;
+};
+
+type CreativeReviewImageSource = {
+  generatedImagesByExpansion: Map<string, CreativeReviewGeneratedImage[]>;
+  expansionIdByDirectionScene: Map<string, string>;
+};
+
+function buildCreativeReviewImageSource(input: {
+  generatedImages: CreativeReviewGeneratedImage[];
+  expansions: CreativeExpansionView[];
+}): CreativeReviewImageSource {
+  return {
+    generatedImagesByExpansion: groupGeneratedImagesByExpansion(input.generatedImages),
+    expansionIdByDirectionScene: groupExpansionIdsByDirectionScene(input.expansions),
+  };
+}
+
+function groupGeneratedImagesByExpansion(
+  images: CreativeReviewGeneratedImage[]
+) {
+  const grouped = new Map<string, CreativeReviewGeneratedImage[]>();
+  for (const image of images) {
+    if (!image.expansionId) continue;
+    grouped.set(image.expansionId, [...(grouped.get(image.expansionId) ?? []), image]);
+  }
+  return grouped;
+}
+
+function groupExpansionIdsByDirectionScene(expansions: CreativeExpansionView[]) {
+  const grouped = new Map<string, string>();
+  const seenByDirection = new Map<string, number>();
+  for (const expansion of expansions) {
+    const sceneIndex = (seenByDirection.get(expansion.directionId) ?? 0) + 1;
+    seenByDirection.set(expansion.directionId, sceneIndex);
+    grouped.set(`${expansion.directionId}:${sceneIndex}`, expansion.id);
+  }
+  return grouped;
+}
+
+function buildCreativeReviewCandidateImages(
+  images: Array<{
+    id: string;
+    ossUrl: string | null;
+    prompt: string;
+    status: string;
+    isSelected?: boolean;
+    sortOrder?: number | null;
+    reviewStatus?: string | null;
+  }>
+) {
+  return images
+    .filter((image) => image.ossUrl && (image.status === "generated" || image.status === "selected" || image.status === "succeeded"))
+    .slice(0, 4)
+    .map((image, index) => ({
+      id: image.id,
+      imageUrl: createReadUrlFromOssUrl(image.ossUrl ?? "", 60 * 60, {
+        disposition: "inline",
+        fileName: `creative-candidate-${image.sortOrder ?? index + 1}.png`,
+      }),
+      prompt: image.prompt,
+      status: image.status,
+      isSelected: image.isSelected ?? image.reviewStatus === "confirmed",
+      sortOrder: image.sortOrder ?? index + 1,
+    }));
+}
+
+function buildProductionSetupCandidateImages(input: {
+  entityId: string;
+  depth: string;
+  referenceSets: Array<{ entityId: string; depth: string; referenceImageIds: string[] }>;
+  referenceImageById: Map<
+    string,
+    {
+      id: string;
+      ossUrl: string | null;
+      prompt: string;
+      status: string;
+      reviewStatus: string | null;
+      updatedAt: string;
+    }
+  >;
+}) {
+  const activeReference =
+    input.referenceSets.find((set) => set.entityId === input.entityId && set.depth === input.depth) ??
+    input.referenceSets.find((set) => set.entityId === input.entityId);
+
+  return (activeReference?.referenceImageIds ?? [])
+    .map((imageId) => input.referenceImageById.get(imageId))
+    .filter((image): image is NonNullable<typeof image> => Boolean(image?.ossUrl && image.status === "succeeded"))
+    .slice(0, 4)
+    .map((image, index) => ({
+      id: image.id,
+      imageUrl: createReadUrlFromOssUrl(image.ossUrl ?? "", 60 * 60, {
+        disposition: "inline",
+        fileName: `production-reference-${index + 1}.png`,
+      }),
+      prompt: image.prompt,
+      status: image.status,
+      isSelected: image.reviewStatus === "confirmed",
+      sortOrder: index + 1,
+    }));
+}
+
+function readCandidateImages(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => (item && typeof item === "object" ? (item as Record<string, unknown>) : null))
+    .filter((item): item is Record<string, unknown> => Boolean(item))
+    .filter((item) => typeof item.imageUrl === "string" && item.imageUrl.trim());
+}
+
+function readStringField(record: Record<string, unknown>, key: string) {
+  const value = record[key];
+  return typeof value === "string" ? value.trim() : "";
 }
 
 export async function submitClientReviewByToken(token: string, rawInput: unknown) {
@@ -1349,7 +1638,7 @@ function reviewCreatedStage(reviewType: ClientReviewType, reviewScene?: ClientRe
     }
     return {
       stageKey: "script_storyboard_confirmation" as const,
-      userMessage: "脚本方向、人物参考、场景参考和完整剧本已提交甲方审核。",
+      userMessage: "完整剧本已提交甲方审核，等待甲方确认后再拆解详细文字分镜。",
     };
   }
   if (reviewType === "storyboard_image_batch") {
@@ -1410,10 +1699,12 @@ export function reviewSubmittedStage(reviewType: ClientReviewType, decision: "ap
       return {
         stageKey: "script_storyboard_confirmation" as const,
         status: approved ? ("approved" as const) : ("needs_revision" as const),
-        currentStage: "script_storyboard_confirmation" as const,
+        // On approval the setting images are locked and the project moves into storyboard image
+        // production; otherwise it stays in SOP5 for revision.
+        currentStage: approved ? ("storyboard_image_canvas" as const) : ("script_storyboard_confirmation" as const),
         projectStatus: approved ? ("in_progress" as const) : ("needs_revision" as const),
         userMessage: approved
-          ? "甲方已确认人物和场景设定，生产设定已锁定。后续图片阶段可以使用这些设定作为门禁依据。"
+          ? "甲方已确认人物和场景设定，生产设定已锁定，项目进入分镜图片生产阶段。"
           : "甲方已打回人物和场景设定，修改意见已回写内部端。",
       };
     }
@@ -1476,6 +1767,25 @@ function summarizeUnknown(value: unknown) {
   } catch {
     return "";
   }
+}
+
+function formatQuoteReviewSummary(quote: QuoteView) {
+  const items = quote.items.map((item) => {
+    const subtotal = item.quantity * item.unitPrice;
+    const description = item.description ? `：${item.description}` : "";
+    return `${item.name}${description}，${item.quantity} 项，${formatCommercialMoney(subtotal, quote.currency)}`;
+  });
+  return [
+    `报价总额：${formatCommercialMoney(quote.totalAmount, quote.currency)}`,
+    items.length > 0 ? `报价明细：${items.join("；")}` : "",
+    quote.notes ? `备注：${quote.notes}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function formatCommercialMoney(amount: number, currency: string) {
+  return `${currency} ${amount.toLocaleString("zh-CN", { maximumFractionDigits: 2 })}`;
 }
 
 function summarizeText(value: string, maxLength: number) {

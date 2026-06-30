@@ -37,3 +37,23 @@ test("production reference image generation uses current prompt count and ratio"
   assert.match(useCase, /size: input\.size/);
   assert.doesNotMatch(useCase, /function buildProductionReferencePrompt/);
 });
+
+test("production reference image worker backfills legacy job inputs from generated image records", async () => {
+  const useCase = await readFile(new URL("./production-reference-images.ts", import.meta.url), "utf8");
+
+  assert.match(useCase, /\.passthrough\(\)/);
+  assert.match(useCase, /resolveReferenceImageJobInput/);
+  assert.match(useCase, /getGeneratedImageById/);
+  assert.match(useCase, /fallbackPrompt = legacyImage\?\.prompt/);
+  assert.match(useCase, /fallbackRatio = normalizeProductionImageRatio/);
+  assert.match(useCase, /fallbackSize = ratioToOpenAIImageSize\(fallbackRatio\)/);
+});
+
+test("production reference image worker marks candidate image failed when job cannot be processed", async () => {
+  const useCase = await readFile(new URL("./production-reference-images.ts", import.meta.url), "utf8");
+
+  assert.match(useCase, /let resolvedInput/);
+  assert.match(useCase, /inputForFailure = resolvedInput \?\? extractFailureImageInput/);
+  assert.match(useCase, /markGeneratedImageFailed\(\{ id: inputForFailure\.generatedImageId, failureReason: userMessage \}\)/);
+  assert.match(useCase, /production_reference_image_failed/);
+});

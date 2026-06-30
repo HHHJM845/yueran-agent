@@ -62,6 +62,24 @@ export async function listProjectGeneratedImages(projectId: string) {
   return result.rows.map(mapGeneratedImage);
 }
 
+export async function listGeneratedImagesByIds(input: { projectId: string; imageIds: string[] }) {
+  const uniqueIds = [...new Set(input.imageIds)].filter(Boolean);
+  if (uniqueIds.length === 0) return [];
+
+  const result = await query<GeneratedImageRow>(
+    `select id, project_id, direction_id, expansion_id, prompt, provider, model_name,
+            status, oss_key, oss_url, failure_reason, retry_count, review_status, review_note,
+            reviewed_by, reviewed_at, source_job_id, metadata_json, updated_at
+     from generated_images
+     where project_id = $1
+       and id = any($2::uuid[])
+     order by updated_at desc`,
+    [input.projectId, uniqueIds]
+  );
+
+  return result.rows.map(mapGeneratedImage);
+}
+
 export async function createGeneratedImage(input: {
   projectId: string;
   directionId?: string | null;

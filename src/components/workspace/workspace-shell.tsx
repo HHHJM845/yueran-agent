@@ -10,7 +10,9 @@ import {
   ChevronDown,
   ChevronUp,
   CircleDashed,
+  Copy,
   ClipboardList,
+  GripVertical,
   Download,
   ExternalLink,
   FileText,
@@ -25,15 +27,17 @@ import {
   Pilcrow,
   Plus,
   RefreshCcw,
+  Save,
   Send,
   Sparkles,
+  Trash2,
   Upload,
   UserPlus,
   Video,
   WandSparkles,
   XCircle,
 } from "lucide-react";
-import type { ProjectStage, ProjectSummary, Role } from "@/domain/types";
+import type { JobSummary, ProjectStage, ProjectSummary, Role } from "@/domain/types";
 import { projectStages } from "@/domain/types";
 import { stageLabels, stageStepLabels, statusLabels, workflowModules } from "@/domain/stage-machine";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -65,6 +69,10 @@ import {
   createCreativeProposalRound,
   createCreativeProposalRoundClientReview,
   createDocumentExportAccess,
+  checkScriptPackageFormat,
+  confirmProductionEntityList,
+  confirmRequirementBrief,
+  createProductionEntity,
   createDeliveryChecklistFromEstimate,
   createChangeRequest,
   createProject,
@@ -77,10 +85,12 @@ import {
   deliverToFeishu,
   deleteProject,
   exportContract,
+  editProductionEntityDetails,
   fetchBootstrapStatus,
   fetchConfig,
   fetchCurrentUser,
   fetchGovernance,
+  fetchJob,
   fetchProjects,
   fetchRoleDashboard,
   fetchStoryboardSceneVideoBundle,
@@ -92,12 +102,12 @@ import {
   generateDocumentDrafts,
   login,
   logout,
+  ignoreProductionEntity,
   registerExternalAsset,
   registerUploadedAsset,
   approveReviewCut,
   confirmStoryboardVideo,
   reviewGeneratedImage,
-  reviewCreativeDirection,
   reviewContract,
   reviewQuote,
   reviewTechnicalFeasibility,
@@ -111,21 +121,21 @@ import {
   saveRiskCheckDecision,
   saveWorkloadEstimate,
   saveScriptPackage,
-  selectCreativeSceneImages,
+  saveProductionReferencePrompt,
+  regenerateProductionReferencePrompts,
+  standardizeScriptPackage,
   updateChangeRequestStatus,
   updateDeliveryChecklistItemStatus,
   submitProductionSetupClientReview,
+  selectProductionReferenceImage,
   structureRequirement,
   type AssetAnalysisView,
   type ArchiveRecordView,
   type AssetView,
   type ArtifactView,
   type CreativeDirectionView,
-  type CreativeDirectionReviewAction,
   type CreativeExpansionView,
   type CreativeProposalRoundView,
-  type CreativeSceneConceptView,
-  type CreativeSceneImageView,
   type ContractExportFormat,
   type ContractExportView,
   type ContractView,
@@ -159,7 +169,8 @@ import {
   type ReviewCutAnnotationView,
   type ReviewCutView,
   type ScriptDirectionPackageView,
-  type ScriptReferenceAssetView,
+  type ScriptFormatIssueView,
+  type ScriptFormatValidationView,
   type StoryboardImageView,
   type StoryboardImageBatchView,
   type StoryboardSceneView,
@@ -173,8 +184,12 @@ import {
   updateCreativeDirectionContent,
   updateCreativeDirectionSelection,
   updateProductionEntityReferenceDepth,
+  restoreProductionEntity,
+  generateProductionReferenceImages,
   generateStoryboardImage,
   generateStoryboardVideo,
+  saveStoryboardSequence,
+  type StoryboardSequenceShotInput,
   splitScriptPackage,
 } from "@/components/workspace/api";
 import { cn } from "@/lib/utils";
@@ -787,13 +802,13 @@ export function WorkspaceShell() {
           dashboard={dashboard}
           dashboardError={dashboardError}
           assets={selectedWorkspaceData?.assets ?? []}
+          jobs={selectedWorkspaceData?.jobs ?? []}
           assetAnalyses={selectedWorkspaceData?.assetAnalyses ?? []}
           creativeDirections={selectedWorkspaceData?.creativeDirections ?? []}
           creativeExpansions={selectedWorkspaceData?.creativeExpansions ?? []}
           generatedImages={selectedWorkspaceData?.generatedImages ?? []}
           creativeProposalRounds={selectedWorkspaceData?.creativeProposalRounds?.rounds ?? []}
           scriptPackages={selectedWorkspaceData?.scriptPackages ?? []}
-          scriptReferences={selectedWorkspaceData?.scriptReferences ?? []}
           storyboardScenes={selectedWorkspaceData?.storyboardScenes ?? []}
           storyboardShots={selectedWorkspaceData?.storyboardShots ?? []}
           productionEntities={selectedWorkspaceData?.productionEntities ?? []}
@@ -954,7 +969,7 @@ function ProjectSidebar({
             onClick={onToggleSidebar}
             aria-label="隐藏左侧项目菜单"
             title="隐藏左侧项目菜单"
-            className="shrink-0 border border-[var(--border-soft)] bg-[var(--accent-subtle)] text-[var(--accent)] shadow-none hover:bg-[var(--accent-soft)]"
+            className="shrink-0 border border-[var(--border-soft)] bg-[var(--surface-card)] text-[var(--accent)] shadow-none hover:bg-[var(--accent-subtle)]"
           >
             <PanelLeftClose size={16} />
           </Button>
@@ -980,7 +995,7 @@ function ProjectSidebar({
         ) : projects.length === 0 ? (
           <StateLine icon={<CircleDashed size={16} />} text="数据库中还没有项目。创建后会出现在这里。" />
         ) : (
-          <div className="grid gap-1.5">
+          <div className="grid min-w-0 gap-1.5 overflow-hidden">
             {projects.map((project) => (
               <button
                 key={project.id}
@@ -992,9 +1007,9 @@ function ProjectSidebar({
                 }}
                 title={`${project.brandName} / ${project.projectName} · ${stageLabels[project.currentStage]} · ${project.ownerName} · ${project.dueDate ?? "未设截止"}`}
                 className={cn(
-                  "group w-full max-w-full min-w-0 overflow-hidden rounded-[0.95rem] border text-left transition-all",
+                  "group w-full min-w-0 overflow-hidden rounded-[0.95rem] border text-left transition-all",
                   selectedProjectId === project.id
-                    ? "border-transparent bg-[linear-gradient(115deg,var(--nav-selected-start),var(--nav-selected-end))] px-3 py-2 shadow-[0_12px_24px_-22px_rgb(105_72_124/0.5)]"
+                    ? "border-[var(--accent)] bg-[var(--accent)] px-3 py-2 text-[var(--accent-foreground)] shadow-[0_14px_30px_-26px_color-mix(in_oklch,var(--accent)_70%,black)]"
                     : "border-transparent bg-transparent px-3 py-2 hover:bg-[var(--surface-card)]/65"
                 )}
               >
@@ -1002,11 +1017,11 @@ function ProjectSidebar({
                   <div className="min-w-0 flex-1">
                     <p className={cn(
                       "truncate text-[0.86rem] font-semibold leading-5",
-                      selectedProjectId === project.id ? "text-[var(--text-inverse)]" : "text-[var(--text-primary)]"
+                      selectedProjectId === project.id ? "text-[var(--accent-foreground)]" : "text-[var(--text-primary)]"
                     )}>{project.projectName}</p>
                     <p className={cn(
                       "mt-0.5 truncate text-[0.72rem] leading-4",
-                      selectedProjectId === project.id ? "text-[color-mix(in_oklch,var(--text-inverse)_74%,transparent)]" : "text-[var(--text-secondary)]"
+                      selectedProjectId === project.id ? "text-[var(--accent-foreground)]/80" : "text-[var(--text-secondary)]"
                     )}>
                       {selectedProjectId === project.id
                         ? `${project.brandName} · ${stageLabels[project.currentStage]} · ${project.ownerName}`
@@ -1014,8 +1029,8 @@ function ProjectSidebar({
                     </p>
                   </div>
                   <span className={cn(
-                    "max-w-[3.4rem] shrink-0 truncate whitespace-nowrap rounded-full px-2 py-0.5 text-[0.68rem] font-medium leading-4",
-                    selectedProjectId === project.id ? "bg-[var(--surface-card)]/62 text-[var(--text-primary)]" : "bg-transparent px-0 text-[var(--text-tertiary)]"
+                    "shrink-0 rounded-full px-2 py-0.5 text-[0.68rem] font-medium leading-4",
+                    selectedProjectId === project.id ? "bg-white/20 text-[var(--accent-foreground)]" : "bg-transparent px-0 text-[var(--text-tertiary)]"
                   )}>
                     {statusLabels[project.status]}
                   </span>
@@ -1469,13 +1484,13 @@ function WorkspaceCenter({
   dashboard,
   dashboardError,
   assets,
+  jobs,
   assetAnalyses,
   creativeDirections,
   creativeExpansions,
   generatedImages,
   creativeProposalRounds,
   scriptPackages,
-  scriptReferences,
   storyboardScenes,
   storyboardShots,
   productionEntities,
@@ -1518,13 +1533,13 @@ function WorkspaceCenter({
   dashboard: RoleDashboardView | null;
   dashboardError: ApiError | null;
   assets: AssetView[];
+  jobs: JobSummary[];
   assetAnalyses: AssetAnalysisView[];
   creativeDirections: CreativeDirectionView[];
   creativeExpansions: CreativeExpansionView[];
   generatedImages: GeneratedImageView[];
   creativeProposalRounds: CreativeProposalRoundView[];
   scriptPackages: ScriptDirectionPackageView[];
-  scriptReferences: ScriptReferenceAssetView[];
   storyboardScenes: StoryboardSceneView[];
   storyboardShots: StoryboardShotView[];
   productionEntities: ProductionEntityView[];
@@ -1631,8 +1646,6 @@ function WorkspaceCenter({
         </div>
       )}
 
-      <ProjectWorkspaceHeader project={project} />
-
       <div className="workspace-module-sticky">
         <StageNavigator
           currentStage={project.currentStage}
@@ -1649,6 +1662,7 @@ function WorkspaceCenter({
                   project={project}
                   user={user}
                   assets={assets}
+                  jobs={jobs}
                   assetAnalyses={assetAnalyses}
                   artifacts={artifacts}
                   clientReviewTasks={clientReviewTasks}
@@ -1697,6 +1711,7 @@ function WorkspaceCenter({
                   <CreativeDirectionsCard
                     project={project}
                     user={user}
+                    jobs={jobs}
                     directions={creativeDirections}
                     expansions={creativeExpansions}
                     generatedImages={generatedImages}
@@ -1708,8 +1723,8 @@ function WorkspaceCenter({
                 </StageWorkCard>
                 <StageWorkCard
                   icon={<BriefcaseBusiness size={18} />}
-                  title="完整提案编辑与甲方审核"
-                  detail="把确认后的创意方向、脚本方向和视觉风格整理成完整提案，保存快照后提交甲方确认。"
+                  title="最终提案整理与版本快照"
+                  detail="把 Round 2 已确认的创意方向、脚本倾向和视觉风格整理成正式提案快照；特殊情况再重新发起完整提案确认。"
                   badges={["富文本", `v${proposal?.version ?? 0}`, proposalStatusLabel(proposal?.status ?? "draft")]}
                   className="lg:col-span-2"
                 >
@@ -1719,14 +1734,20 @@ function WorkspaceCenter({
             </StagePanel>
             <StagePanel stage="selection_quote_contract" selectedStage={selectedStage}>
               <div className="grid gap-5">
+                <Sop4CommercialFlowOverview
+                  workloadEstimate={workloadEstimate}
+                  quote={quote}
+                  contract={contract}
+                  deliveryChecklist={deliveryChecklist}
+                />
                 <StageWorkCard
                   icon={<ClipboardList size={18} />}
-                  title="工作量估算与报价建议"
-                  detail="SOP 4 在第二轮创意确认后估算角色、场景、镜头、图片、视频和修改轮次；报价仍由人工在报价编辑器里确认。"
+                  title="1. 工作量估算"
+                  detail="AI/系统先给工作量和建议报价区间；商务人工核对、修改并保存，作为正式报价和交付清单输入。"
                   badges={[
                     workloadEstimate ? formatMoney(workloadEstimate.priceRange.minCny, "CNY") : "待估算",
                     workloadEstimate ? `${workloadEstimate.shotCount} 镜头` : "人工保存",
-                    "非自动接单",
+                    "报价依据",
                   ]}
                   className="lg:col-span-2"
                 >
@@ -1741,17 +1762,17 @@ function WorkspaceCenter({
                 </StageWorkCard>
                 <StageWorkCard
                   icon={<WandSparkles size={18} />}
-                  title="商务文档草稿生成"
-                  detail="基于已选方向、工作量估算和阶段产物生成报价与合同草稿；提案已在 SOP 3 管理。"
-                  badges={["报价草稿", "合同草稿", "版本快照"]}
+                  title="2. 生成商务草稿"
+                  detail="可选辅助动作：基于已确认提案和工作量估算生成报价、合同草稿，不替代人工确认。"
+                  badges={["可选动作", "报价草稿", "合同草稿"]}
                   className="lg:col-span-2"
                 >
                   <BusinessDocumentDraftCard project={project} user={user} onRefresh={onWorkspaceRefresh} />
                 </StageWorkCard>
                 <StageWorkCard
                   icon={<BriefcaseBusiness size={18} />}
-                  title="报价编辑与甲方确认"
-                  detail="维护报价明细、合计金额、审核状态和快照记录；确认后进入合同处理。"
+                  title="3. 报价编辑与甲方确认"
+                  detail="人工编辑正式报价，保存历史版本；甲方确认后作为合同金额和付款条款依据。"
                   badges={[`v${quote?.version ?? 0}`, quoteStatusLabel(quote?.status ?? "draft"), quote ? formatMoney(quote.totalAmount, quote.currency) : "待保存"]}
                   className="lg:col-span-2"
                 >
@@ -1759,8 +1780,8 @@ function WorkspaceCenter({
                 </StageWorkCard>
                 <StageWorkCard
                   icon={<FileText size={18} />}
-                  title="合同模板填充与签约确认"
-                  detail="填写合同字段、绑定甲方资产、保存快照并导出正式文件；签约状态会写入项目阶段。"
+                  title="4. 合同编辑与签署确认"
+                  detail="引用已确认报价填充合同，人工修改条款并保存历史版本；签署后推进后续生产。"
                   badges={[`v${contract?.version ?? 0}`, quoteStatusLabel(contract?.status ?? "draft"), "PDF / Word"]}
                   className="lg:col-span-2"
                 >
@@ -1779,8 +1800,8 @@ function WorkspaceCenter({
                 </StageWorkCard>
                 <StageWorkCard
                   icon={<List size={18} />}
-                  title="交付清单核对"
-                  detail="根据估算生成交付物清单，签约前核对和草拟；最终交付确认在 SOP 9 / SOP 10 完成。"
+                  title="5. 交付清单锁定"
+                  detail="从工作量和合同范围生成交付清单，在签约前核对锁定；SOP 9/10 完成最终交付和归档。"
                   badges={[
                     deliveryChecklist ? `v${deliveryChecklist.version}` : "待生成",
                     deliveryChecklist ? deliveryChecklistStatusLabel(deliveryChecklist.status) : "未保存",
@@ -1798,9 +1819,9 @@ function WorkspaceCenter({
                 </StageWorkCard>
                 <StageWorkCard
                   icon={<Send size={18} />}
-                  title="飞书发送与回写闭环"
-                  detail="选择报价、合同或提案版本和收件人，发送后回写链接、对象、时间与状态。"
-                  badges={["飞书文档", "发送记录", "失败可重试"]}
+                  title="发送给甲方与记录回写"
+                  detail="横切能力：选择报价、合同或提案版本和收件人，发送后回写链接、对象、时间与状态。"
+                  badges={["飞书文档", "发送记录", "横切能力"]}
                   className="lg:col-span-2"
                 >
                   <FeishuDeliveryCard
@@ -1830,8 +1851,9 @@ function WorkspaceCenter({
                   project={project}
                   user={user}
                   creativeDirections={creativeDirections}
+                  artifacts={artifacts}
+                  generatedImages={generatedImages}
                   scriptPackages={scriptPackages}
-                  scriptReferences={scriptReferences}
                   storyboardScenes={storyboardScenes}
                   storyboardShots={storyboardShots}
                   productionEntities={productionEntities}
@@ -1855,6 +1877,9 @@ function WorkspaceCenter({
                   shots={storyboardShots}
                   images={storyboardImages}
                   batches={storyboardImageBatches}
+                  productionEntities={productionEntities}
+                  productionReferenceSets={productionReferenceSets}
+                  generatedImages={generatedImages}
                   clientReviewTasks={clientReviewTasks}
                   clientReviewItems={clientReviewItems}
                   onRefresh={onWorkspaceRefresh}
@@ -1955,34 +1980,6 @@ function WorkspaceCenter({
   );
 }
 
-function ProjectWorkspaceHeader({ project }: { project: ProjectSummary }) {
-  return (
-    <section className="project-info-line" aria-label="当前项目信息">
-      <h2 className="min-w-0 truncate text-[1.35rem] font-semibold leading-7 tracking-[-0.03em] text-[var(--text-primary)]">
-        {project.projectName}
-      </h2>
-      <dl className="project-info-meta">
-        <ProjectInfoTerm label="甲方" value={project.brandName} />
-        <ProjectInfoTerm label="阶段" value={stageLabels[project.currentStage]} />
-        <ProjectInfoTerm label="负责人" value={project.ownerName} />
-        <ProjectInfoTerm label="截止" value={project.dueDate ?? "未设"} />
-        <ProjectInfoTerm label="状态" value={statusLabels[project.status]} />
-      </dl>
-    </section>
-  );
-}
-
-function ProjectInfoTerm({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex min-w-0 items-center gap-1.5">
-      <dt className="shrink-0 text-[0.72rem] font-medium text-[var(--text-tertiary)]">{label}</dt>
-      <dd className="min-w-0 truncate text-[0.78rem] font-semibold text-[var(--text-secondary)]" title={value}>
-        {value}
-      </dd>
-    </div>
-  );
-}
-
 function StagePanel({
   stage,
   selectedStage,
@@ -2004,7 +2001,6 @@ function StageWorkCard({
   title,
   detail,
   badges = [],
-  defaultOpen = false,
   className,
   children,
 }: {
@@ -2016,38 +2012,94 @@ function StageWorkCard({
   className?: string;
   children: ReactNode;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <TaskCard
+      icon={icon}
+      title={title}
+      description={detail}
+      className={className}
+      status={
+        badges.length > 0 ? (
+          <div className="flex flex-wrap justify-end gap-2">
+            {badges.map((badge, index) => (
+              <TaskStatusPill key={`${badge}-${index}`}>{badge}</TaskStatusPill>
+            ))}
+          </div>
+        ) : undefined
+      }
+    >
+      {children}
+    </TaskCard>
+  );
+}
+
+function Sop4CommercialFlowOverview({
+  workloadEstimate,
+  quote,
+  contract,
+  deliveryChecklist,
+}: {
+  workloadEstimate: WorkloadEstimateView | null;
+  quote: QuoteView | null;
+  contract: ContractView | null;
+  deliveryChecklist: DeliveryChecklistView | null;
+}) {
+  const steps = [
+    {
+      title: "工作量估算",
+      detail: workloadEstimate ? `${workloadEstimate.shotCount} 镜头 · ${formatShortCny(workloadEstimate.priceRange.minCny)} 起` : "待人工保存",
+      done: Boolean(workloadEstimate),
+    },
+    {
+      title: "商务草稿",
+      detail: "可选生成",
+      done: Boolean(quote || contract),
+    },
+    {
+      title: "报价确认",
+      detail: quote ? `v${quote.version} · ${quoteStatusLabel(quote.status)}` : "待保存报价",
+      done: quote?.status === "confirmed" || quote?.status === "sent" || quote?.status === "signed",
+    },
+    {
+      title: "合同签署",
+      detail: contract ? `v${contract.version} · ${quoteStatusLabel(contract.status)}` : "待创建合同",
+      done: contract?.status === "signed" || contract?.status === "confirmed",
+    },
+    {
+      title: "交付清单",
+      detail: deliveryChecklist ? `${deliveryChecklist.items.length} 项 · ${deliveryChecklistStatusLabel(deliveryChecklist.status)}` : "待生成清单",
+      done: Boolean(deliveryChecklist),
+    },
+  ];
+
+  const currentIndex = steps.findIndex((step) => !step.done);
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <TaskCard
-        icon={icon}
-        title={title}
-        description={detail}
-        className={className}
-        status={
-          badges.length > 0 ? (
-            <div className="flex flex-wrap justify-end gap-2">
-              {badges.map((badge, index) => (
-                <TaskStatusPill key={`${badge}-${index}`}>{badge}</TaskStatusPill>
-              ))}
+    <section className="sop4-flow-card" aria-label="SOP 4 商务流转概览">
+      <div className="sop4-flow-card-header">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-[var(--text-primary)]">SOP 4 · 报价合同流转</p>
+          <p className="mt-1 text-sm leading-6 text-[var(--text-secondary)]">
+            这一步把已确认创意转成工作量、报价、合同和交付范围；真正的最终交付与费用回收在 SOP 9 / SOP 10 完成。
+          </p>
+        </div>
+        <span className="ds-pill bg-[var(--surface-card)] text-[var(--text-secondary)]">5 个主步骤</span>
+      </div>
+      <div className="sop4-flow-strip">
+        {steps.map((step, index) => {
+          const isCurrent = currentIndex === -1 ? index === steps.length - 1 : index === currentIndex;
+          return (
+            <div key={step.title} className={cn("sop4-flow-step", step.done && "is-done", isCurrent && "is-current")}>
+              <span className="sop4-flow-step-index">{step.done ? <CheckCircle2 size={13} /> : index + 1}</span>
+              <span className="sop4-flow-step-copy">
+                <span className="sop4-flow-step-title">{step.title}</span>
+                <span className="sop4-flow-step-detail">{step.detail}</span>
+              </span>
             </div>
-          ) : undefined
-        }
-        action={
-          <CollapsibleTrigger render={<Button type="button" variant={open ? "default" : "outline"} size="sm" className="shrink-0" />}>
-              {open ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
-              {open ? "收起" : "展开"}
-          </CollapsibleTrigger>
-        }
-      >
-        <CollapsibleContent>
-          <div className="border-t border-[var(--border-soft)] pt-5">
-            {children}
-          </div>
-        </CollapsibleContent>
-      </TaskCard>
-    </Collapsible>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -2330,8 +2382,9 @@ function ScriptStoryboardModule({
   project,
   user,
   creativeDirections,
+  artifacts,
+  generatedImages,
   scriptPackages,
-  scriptReferences,
   storyboardScenes,
   storyboardShots,
   productionEntities,
@@ -2342,8 +2395,9 @@ function ScriptStoryboardModule({
   project: ProjectSummary;
   user: CurrentUser;
   creativeDirections: CreativeDirectionView[];
+  artifacts: ArtifactView[];
+  generatedImages: GeneratedImageView[];
   scriptPackages: ScriptDirectionPackageView[];
-  scriptReferences: ScriptReferenceAssetView[];
   storyboardScenes: StoryboardSceneView[];
   storyboardShots: StoryboardShotView[];
   productionEntities: ProductionEntityView[];
@@ -2352,60 +2406,135 @@ function ScriptStoryboardModule({
   onRefresh: () => Promise<void>;
 }) {
   const [saving, setSaving] = useState(false);
+  const [standardizingPackageId, setStandardizingPackageId] = useState<string | null>(null);
   const [splittingPackageId, setSplittingPackageId] = useState<string | null>(null);
+  const [editingSceneId, setEditingSceneId] = useState<string | null>(null);
+  const [editingShots, setEditingShots] = useState<Record<string, StoryboardSequenceShotInput[]>>({});
+  const [deletedShotIds, setDeletedShotIds] = useState<Record<string, string[]>>({});
+  const [draggingShotId, setDraggingShotId] = useState<string | null>(null);
+  const [savingSceneId, setSavingSceneId] = useState<string | null>(null);
   const [savingEntityId, setSavingEntityId] = useState<string | null>(null);
+  const [reviewingReferenceImageId, setReviewingReferenceImageId] = useState<string | null>(null);
+  const [referenceCanvasIndexes, setReferenceCanvasIndexes] = useState<Record<string, number>>({});
+  const [referenceImagePreview, setReferenceImagePreview] = useState<{
+    entityName: string;
+    referenceSetId: string;
+    selectedImageId: string | null;
+    images: GeneratedImageView[];
+    index: number;
+  } | null>(null);
+  const referenceImageJobPollRef = useRef(0);
+  const [generatingReferenceEntityId, setGeneratingReferenceEntityId] = useState<string | "all" | null>(null);
   const [submittingSetupReview, setSubmittingSetupReview] = useState(false);
   const [createdSetupReview, setCreatedSetupReview] = useState<{ url: string; code: string } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [referenceImageMessage, setReferenceImageMessage] = useState<string | null>(null);
+  const [referenceImageError, setReferenceImageError] = useState<string | null>(null);
+  const [entityListMessage, setEntityListMessage] = useState<string | null>(null);
+  const [entityListError, setEntityListError] = useState<string | null>(null);
+  const [editingEntityId, setEditingEntityId] = useState<string | null>(null);
+  const [entityDrafts, setEntityDrafts] = useState<Record<string, { name: string; description: string }>>({});
+  const [newEntityType, setNewEntityType] = useState<"character" | "scene">("character");
+  const [newEntityName, setNewEntityName] = useState("");
+  const [newEntityDescription, setNewEntityDescription] = useState("");
+  const [promptDrafts, setPromptDrafts] = useState<Record<string, string>>({});
+  const [ratioDrafts, setRatioDrafts] = useState<Record<string, ProductionReferenceSetView["defaultRatio"]>>({});
+  const [countDrafts, setCountDrafts] = useState<Record<string, number>>({});
+  const [savingReferenceSetId, setSavingReferenceSetId] = useState<string | null>(null);
+  const [regeneratingReferencePrompts, setRegeneratingReferencePrompts] = useState(false);
+  const [splitMessage, setSplitMessage] = useState<string | null>(null);
+  const [splitError, setSplitError] = useState<string | null>(null);
   const canEdit = user.role === "creative" || user.role === "admin";
   const selectedDirection = creativeDirections.find((direction) => direction.isSelected) ?? creativeDirections[0] ?? null;
   const latestPackage = scriptPackages[0] ?? null;
+  const latestStandardizationArtifact = latestPackage
+    ? artifacts.find((artifact) => isScriptStandardizationArtifact(artifact, latestPackage.id)) ?? null
+    : null;
+  const standardization = getScriptStandardizationSnapshot(latestStandardizationArtifact);
+  const standardizedReady = Boolean(latestPackage && standardization && !standardization.validation.hasBlockingIssues);
+  const latestScriptReview = latestPackage
+    ? clientReviewTasks.find(
+        (task) => task.reviewType === "script_package" && task.targetScopeId === latestPackage.id && task.reviewScene !== "production_setup"
+      ) ?? null
+    : null;
+  const scriptReviewApproved =
+    latestPackage?.status === "client_approved" || latestPackage?.status === "locked" || latestScriptReview?.status === "approved";
+  const canSplitStoryboard = Boolean(latestPackage && canEdit && standardizedReady && scriptReviewApproved && !splittingPackageId);
+  const splitDisabledReason = !latestPackage
+    ? "请先导入完整剧本并检查格式。"
+    : !canEdit
+      ? "当前账号没有创意或管理员权限，不能拆分文字分镜。"
+    : !standardizedReady
+      ? "请先完成剧本格式检查，并确认没有必填格式问题。"
+      : !scriptReviewApproved
+        ? "请先让甲方确认标准剧本，再拆解文字分镜。"
+        : null;
 
-  async function handleSave(formData: FormData) {
-    setSaving(true);
-    setMessage(null);
-    setError(null);
-    const characterReferences = [1, 2, 3].map((index) => ({
-      title: String(formData.get(`characterTitle${index}`) ?? "").trim() || `人物参考 ${index}`,
-      styleLabel: String(formData.get(`characterStyle${index}`) ?? "").trim(),
-      prompt: String(formData.get(`characterPrompt${index}`) ?? "").trim(),
-    }));
-    const sceneReferences = [1, 2].map((index) => ({
-      title: String(formData.get(`sceneTitle${index}`) ?? "").trim() || `场景参考 ${index}`,
-      styleLabel: String(formData.get(`sceneStyle${index}`) ?? "").trim(),
-      prompt: String(formData.get(`scenePrompt${index}`) ?? "").trim(),
-    }));
-
-    const result = await saveScriptPackage(project.id, {
+  async function saveScriptFromForm(formData: FormData) {
+    return saveScriptPackage(project.id, {
       directionId: selectedDirection?.id ?? null,
       title: String(formData.get("title") ?? ""),
       concept: String(formData.get("concept") ?? ""),
       fullScript: String(formData.get("fullScript") ?? ""),
-      characterReferences,
-      sceneReferences,
     });
-    if (result.ok) {
-      setMessage(result.data.message);
+  }
+
+  async function handleCheck(formData: FormData) {
+    setSaving(true);
+    setMessage(null);
+    setError(null);
+    setSplitMessage(null);
+    setSplitError(null);
+    const saved = await saveScriptFromForm(formData);
+    if (!saved.ok) {
+      setError(saved.error.message);
+      setSaving(false);
+      return;
+    }
+    const checked = await checkScriptPackageFormat(project.id, saved.data.package.id);
+    if (checked.ok) {
+      setMessage(checked.data.message);
       await onRefresh();
     } else {
-      setError(result.error.message);
+      setError(checked.error.message);
     }
     setSaving(false);
   }
 
   async function handleSplit(packageId: string) {
     setSplittingPackageId(packageId);
+    setSplitMessage(null);
+    setSplitError(null);
+    try {
+      const result = await splitScriptPackage(project.id, packageId);
+      if (result.ok) {
+        setSplitMessage(result.data.message);
+        await onRefresh();
+      } else {
+        setSplitError(result.error.message);
+      }
+    } catch {
+      setSplitError("文字分镜拆分请求没有完成。请检查网络或服务端日志后重试。");
+    } finally {
+      setSplittingPackageId(null);
+    }
+  }
+
+  async function handleStandardize(packageId: string) {
+    setStandardizingPackageId(packageId);
     setMessage(null);
     setError(null);
-    const result = await splitScriptPackage(project.id, packageId);
+    setSplitMessage(null);
+    setSplitError(null);
+    const result = await standardizeScriptPackage(project.id, packageId);
     if (result.ok) {
       setMessage(result.data.message);
       await onRefresh();
     } else {
       setError(result.error.message);
     }
-    setSplittingPackageId(null);
+    setStandardizingPackageId(null);
   }
 
   async function handleDepthChange(entityId: string, depth: "basic" | "full") {
@@ -2438,61 +2567,351 @@ function ScriptStoryboardModule({
     setSubmittingSetupReview(false);
   }
 
-  const hasRequiredReferences =
-    productionEntities.length > 0 &&
-    productionEntities.every((entity) =>
-      productionReferenceSets.some((referenceSet) => referenceSet.entityId === entity.id && referenceSet.depth === entity.referenceDepth)
-    );
   const latestSetupReview =
     clientReviewTasks.find((task) => task.reviewType === "script_package" && task.reviewScene === "production_setup") ?? null;
+  const referenceImageMap = new Map(generatedImages.map((image) => [image.id, image]));
+  const activeProductionEntities = productionEntities.filter((entity) => entity.inclusionStatus !== "ignored");
+  const ignoredProductionEntities = productionEntities.filter((entity) => entity.inclusionStatus === "ignored");
+  const isEntityListConfirmed =
+    activeProductionEntities.length > 0 && activeProductionEntities.every((entity) => Boolean(entity.confirmedAt));
+  const hasRequiredReferences =
+    activeProductionEntities.length > 0 &&
+    activeProductionEntities.every((entity) => {
+      const activeReference = productionReferenceSets.find(
+        (referenceSet) => referenceSet.entityId === entity.id && referenceSet.depth === entity.referenceDepth
+      );
+      const selectedImage = activeReference?.selectedImageId ? referenceImageMap.get(activeReference.selectedImageId) : undefined;
+      return isConfirmedProductionReferenceImage(selectedImage);
+    });
+  const isGeneratingReferenceImages = generatingReferenceEntityId !== null;
+
+  function startSceneEdit(scene: StoryboardSceneView) {
+    setEditingSceneId(scene.id);
+    setDeletedShotIds((current) => ({ ...current, [scene.id]: [] }));
+    setEditingShots((current) => ({
+      ...current,
+      [scene.id]: storyboardShots
+        .filter((shot) => shot.sceneId === scene.id)
+        .sort((a, b) => a.sortOrder - b.sortOrder || a.shotNumber.localeCompare(b.shotNumber, "zh-Hans-CN"))
+        .map(toStoryboardSequenceInput),
+    }));
+  }
+
+  function updateEditingShot(sceneId: string, index: number, patch: Partial<StoryboardSequenceShotInput>) {
+    setEditingShots((current) => ({
+      ...current,
+      [sceneId]: (current[sceneId] ?? []).map((shot, shotIndex) => (shotIndex === index ? { ...shot, ...patch } : shot)),
+    }));
+  }
+
+  function moveEditingShot(sceneId: string, fromIndex: number, toIndex: number) {
+    setEditingShots((current) => {
+      const shots = [...(current[sceneId] ?? [])];
+      if (fromIndex < 0 || fromIndex >= shots.length || toIndex < 0 || toIndex >= shots.length) return current;
+      const [shot] = shots.splice(fromIndex, 1);
+      shots.splice(toIndex, 0, shot);
+      return { ...current, [sceneId]: shots };
+    });
+  }
+
+  function addEditingShot(scene: StoryboardSceneView) {
+    const currentShots = editingShots[scene.id] ?? [];
+    const nextIndex = currentShots.length + 1;
+    setEditingShots((current) => ({
+      ...current,
+      [scene.id]: [
+        ...currentShots,
+        {
+          shotNumber: `${scene.sceneNumber}-${nextIndex}`,
+          visualDescription: "",
+          characterRefs: [],
+          sceneRefs: [],
+          imagePrompt: "",
+          videoPrompt: "",
+        },
+      ],
+    }));
+  }
+
+  function removeEditingShot(sceneId: string, index: number) {
+    setEditingShots((current) => {
+      const target = current[sceneId]?.[index];
+      const nextShots = (current[sceneId] ?? []).filter((_, shotIndex) => shotIndex !== index);
+      if (target?.id) {
+        setDeletedShotIds((deleted) => ({ ...deleted, [sceneId]: [...(deleted[sceneId] ?? []), target.id as string] }));
+      }
+      return { ...current, [sceneId]: nextShots };
+    });
+  }
+
+  async function handleSaveStoryboardSequence(sceneId: string) {
+    const shots = editingShots[sceneId] ?? [];
+    setSavingSceneId(sceneId);
+    setSplitMessage(null);
+    setSplitError(null);
+    const result = await saveStoryboardSequence(project.id, sceneId, {
+      shots,
+      deletedShotIds: deletedShotIds[sceneId] ?? [],
+    });
+    if (result.ok) {
+      setSplitMessage(result.data.message);
+      setEditingSceneId(null);
+      await onRefresh();
+    } else {
+      setSplitError(result.error.message);
+    }
+    setSavingSceneId(null);
+  }
+
+  async function handleCreateEntity() {
+    setEntityListMessage(null);
+    setEntityListError(null);
+    const result = await createProductionEntity(project.id, {
+      entityType: newEntityType,
+      name: newEntityName,
+      description: newEntityDescription,
+    });
+    if (result.ok) {
+      setEntityListMessage(result.data.message);
+      setNewEntityName("");
+      setNewEntityDescription("");
+      await onRefresh();
+    } else {
+      setEntityListError(result.error.message);
+    }
+  }
+
+  async function handleEditEntity(entityId: string) {
+    const draft = entityDrafts[entityId];
+    if (!draft) return;
+    setEntityListMessage(null);
+    setEntityListError(null);
+    const result = await editProductionEntityDetails(project.id, { entityId, ...draft });
+    if (result.ok) {
+      setEntityListMessage(result.data.message);
+      setEditingEntityId(null);
+      await onRefresh();
+    } else {
+      setEntityListError(result.error.message);
+    }
+  }
+
+  async function handleIgnoreEntity(entityId: string) {
+    setEntityListMessage(null);
+    setEntityListError(null);
+    const result = await ignoreProductionEntity(project.id, { entityId, reason: "用户手动移入忽略列表" });
+    if (result.ok) {
+      setEntityListMessage(result.data.message);
+      await onRefresh();
+    } else {
+      setEntityListError(result.error.message);
+    }
+  }
+
+  async function handleRestoreEntity(entityId: string) {
+    setEntityListMessage(null);
+    setEntityListError(null);
+    const result = await restoreProductionEntity(project.id, entityId);
+    if (result.ok) {
+      setEntityListMessage(result.data.message);
+      await onRefresh();
+    } else {
+      setEntityListError(result.error.message);
+    }
+  }
+
+  async function handleConfirmEntityList() {
+    setEntityListMessage(null);
+    setEntityListError(null);
+    setReferenceImageMessage("正在根据剧本和已确认风格生成设定图提示词。");
+    setReferenceImageError(null);
+    setRegeneratingReferencePrompts(true);
+    const result = await confirmProductionEntityList(project.id);
+    if (result.ok) {
+      setEntityListMessage(result.data.message);
+      setReferenceImageMessage(result.data.message);
+      setPromptDrafts({});
+      await onRefresh();
+    } else {
+      setEntityListError(result.error.message);
+      setReferenceImageError(result.error.message);
+    }
+    setRegeneratingReferencePrompts(false);
+  }
+
+  async function handleRegenerateReferencePrompts() {
+    setReferenceImageMessage("正在根据剧本和已确认风格生成设定图提示词。");
+    setReferenceImageError(null);
+    setRegeneratingReferencePrompts(true);
+    const result = await regenerateProductionReferencePrompts(project.id);
+    if (result.ok) {
+      setReferenceImageMessage(result.data.message);
+      setPromptDrafts({});
+      await onRefresh();
+    } else {
+      setReferenceImageError(result.error.message);
+    }
+    setRegeneratingReferencePrompts(false);
+  }
+
+  function getReferencePrompt(referenceSet: ProductionReferenceSetView | null) {
+    if (!referenceSet) return "";
+    return promptDrafts[referenceSet.id] ?? referenceSet.currentPrompt ?? referenceSet.prompt;
+  }
+
+  function getReferenceRatio(
+    entity: ProductionEntityView,
+    referenceSet: ProductionReferenceSetView | null
+  ): ProductionReferenceSetView["defaultRatio"] {
+    if (referenceSet && ratioDrafts[referenceSet.id]) return ratioDrafts[referenceSet.id];
+    if (referenceSet?.defaultRatio && referenceSet.defaultRatio !== "1:1") return referenceSet.defaultRatio;
+    return entity.entityType === "character" ? "3:4" : entity.entityType === "scene" ? "16:9" : "1:1";
+  }
+
+  function getReferenceCount(referenceSet: ProductionReferenceSetView | null) {
+    if (!referenceSet) return 1;
+    return countDrafts[referenceSet.id] ?? referenceSet.lastGenerationCount ?? 1;
+  }
+
+  async function handleSaveReferencePrompt(referenceSet: ProductionReferenceSetView, entity: ProductionEntityView) {
+    setSavingReferenceSetId(referenceSet.id);
+    setReferenceImageMessage(null);
+    setReferenceImageError(null);
+    const result = await saveProductionReferencePrompt(project.id, {
+      referenceSetId: referenceSet.id,
+      prompt: getReferencePrompt(referenceSet),
+      ratio: getReferenceRatio(entity, referenceSet),
+      generationCount: getReferenceCount(referenceSet),
+    });
+    if (result.ok) {
+      setReferenceImageMessage(result.data.message);
+      await onRefresh();
+    } else {
+      setReferenceImageError(result.error.message);
+    }
+    setSavingReferenceSetId(null);
+  }
+
+  async function handleGenerateReferenceImages(entity: ProductionEntityView, referenceSet: ProductionReferenceSetView | null) {
+    if (!referenceSet) {
+      setReferenceImageError("这个人物或场景还没有设定图卡片。请先确认清单或刷新工作台。");
+      return;
+    }
+    const pollId = referenceImageJobPollRef.current + 1;
+    referenceImageJobPollRef.current = pollId;
+    setGeneratingReferenceEntityId(entity.id);
+    setReferenceImageMessage(null);
+    setReferenceImageError(null);
+    const result = await generateProductionReferenceImages(project.id, {
+      entityId: entity.id,
+      prompt: getReferencePrompt(referenceSet),
+      count: getReferenceCount(referenceSet),
+      ratio: getReferenceRatio(entity, referenceSet),
+    });
+    if (result.ok) {
+      setReferenceImageMessage(result.data.message);
+      await onRefresh();
+      await waitForProductionReferenceImageJobs(result.data.jobs.map((job) => job.jobId), pollId);
+    } else {
+      setReferenceImageError(result.error.message);
+    }
+    setGeneratingReferenceEntityId(null);
+  }
+
+  async function waitForProductionReferenceImageJobs(jobIds: string[], pollId: number) {
+    if (jobIds.length === 0) {
+      setReferenceImageError("没有创建新的设定图生成任务。请检查人物或场景是否已锁定。");
+      await onRefresh();
+      return;
+    }
+
+    const maxAttempts = 180;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      await wait(attempt === 0 ? 1200 : 2000);
+
+      if (referenceImageJobPollRef.current !== pollId) return;
+
+      const results = await Promise.all(jobIds.map((jobId) => fetchJob(jobId)));
+      const failedApi = results.find((result) => !result.ok) as ApiResult<{ job: JobSummary }> | undefined;
+      if (failedApi && !failedApi.ok) {
+        setReferenceImageError(failedApi.error.message);
+        await onRefresh();
+        return;
+      }
+
+      const jobs = results
+        .filter((result): result is Extract<typeof result, { ok: true }> => result.ok)
+        .map((result) => result.data.job);
+      const failedJob = jobs.find((job) => job.status === "failed" || job.status === "cancelled");
+      if (failedJob) {
+        setReferenceImageError(failedJob.userMessage ?? "设定图生成任务没有完成。请稍后重试。");
+        await onRefresh();
+        return;
+      }
+
+      const completedCount = jobs.filter((job) => job.status === "succeeded").length;
+      if (completedCount === jobIds.length) {
+        setReferenceImageMessage("设定图已生成，候选图已自动刷新到设定卡片。");
+        await onRefresh();
+        return;
+      }
+
+      if (attempt === 0 || attempt % 5 === 0) {
+        const runningCount = jobs.length - completedCount;
+        setReferenceImageMessage(
+          completedCount > 0
+            ? `设定图正在生成：已完成 ${completedCount}/${jobIds.length}，剩余 ${runningCount} 张会自动刷新。`
+            : "设定图任务已创建，候选位会先显示排队/生成中，完成后自动刷新。"
+        );
+        await onRefresh();
+      }
+    }
+
+    setReferenceImageMessage("设定图仍在后台生成。系统已保存任务状态，你可以稍后回到本项目继续查看。");
+    await onRefresh();
+  }
+
+  async function handleSelectReferenceImage(referenceSetId: string, imageId: string) {
+    setReviewingReferenceImageId(imageId);
+    setMessage(null);
+    setError(null);
+    const result = await selectProductionReferenceImage(project.id, { referenceSetId, imageId });
+    if (result.ok) {
+      setMessage(result.data.message);
+      setReferenceImagePreview((current) => current ? { ...current, selectedImageId: imageId } : current);
+      await onRefresh();
+    } else {
+      setError(result.error.message);
+    }
+    setReviewingReferenceImageId(null);
+  }
+
+  const previewImage = referenceImagePreview
+    ? referenceImagePreview.images[referenceImagePreview.index] ?? null
+    : null;
 
   return (
+    <>
     <div className="grid gap-5">
       <WorkspaceCard>
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
               <FileText size={18} />
-              <h3 className="ds-text-section-title">最终脚本与文字分镜拆解</h3>
+              <h3 className="ds-text-section-title">导入完整剧本</h3>
             </div>
             <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-              SOP 5 先锁定完整脚本，再生成文字分镜；人物参考图与场景参考图并行准备，并共同挂在对应脚本方向下。
+              合同签署后，直接粘贴完整剧本并点击“检查”；有格式问题时再选择是否让系统整理。
             </p>
           </div>
           <Badge variant="outline">SOP 5</Badge>
         </div>
         {message && <Feedback tone="success" text={message} />}
         {error && <Feedback tone="warning" text={error} />}
-        <form action={handleSave} className="mt-4 grid gap-4">
-          <label className="grid gap-1 text-xs font-medium">
-            脚本方向标题
-            <Input name="title" defaultValue={latestPackage?.title ?? selectedDirection?.title ?? ""} disabled={!canEdit || saving} />
-          </label>
-          <label className="grid gap-1 text-xs font-medium">
-            方向概念
-            <textarea
-              name="concept"
-              defaultValue={latestPackage?.concept ?? selectedDirection?.coreIdea ?? ""}
-              disabled={!canEdit || saving}
-              className="min-h-24 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-sm leading-6"
-            />
-          </label>
-          <div className="grid gap-4 lg:grid-cols-2">
-            <ReferenceDraftGroup
-              title="并行人物参考图（3 张）"
-              prefix="character"
-              count={3}
-              references={scriptReferences.filter((item) => item.referenceType === "character")}
-              disabled={!canEdit || saving}
-            />
-            <ReferenceDraftGroup
-              title="并行场景参考图（2 张）"
-              prefix="scene"
-              count={2}
-              references={scriptReferences.filter((item) => item.referenceType === "scene")}
-              disabled={!canEdit || saving}
-            />
-          </div>
+        <form action={handleCheck} className="mt-4 grid gap-4">
+          <input type="hidden" name="title" value={latestPackage?.title ?? `${project.projectName} 完整剧本`} />
+          <input type="hidden" name="concept" value={latestPackage?.concept ?? "完整剧本导入"} />
           <label className="grid gap-1 text-xs font-medium">
             完整剧本
             <textarea
@@ -2500,72 +2919,249 @@ function ScriptStoryboardModule({
               defaultValue={latestPackage?.fullScript ?? ""}
               disabled={!canEdit || saving}
               className="min-h-56 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-sm leading-6"
-              placeholder="粘贴或整理已经与甲方确认到本轮的完整剧本。"
+              placeholder="请粘贴标准剧本：剧名、剧情简介、人物小传，以及每场戏的集数、场次编号、场景、人物、画面和台词。"
             />
           </label>
           {latestPackage?.fullScript && (
             <div className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3">
-              <p className="text-xs font-semibold">当前完整脚本</p>
+              <p className="text-xs font-semibold">{standardizedReady ? "当前标准剧本" : "当前完整剧本"}</p>
               <p className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap text-xs leading-5 text-[var(--text-secondary)]">
                 {latestPackage.fullScript}
               </p>
             </div>
           )}
           <div className="flex flex-wrap gap-2">
-            <Button disabled={!canEdit || saving}>
+            <Button type="submit" disabled={!canEdit || saving}>
               {saving ? <Loader2 className="animate-spin" size={15} /> : <CheckCircle2 size={15} />}
-              保存脚本方向包
+              检查
             </Button>
-            {latestPackage && (
-              <Button type="button" variant="outline" disabled={!canEdit || splittingPackageId === latestPackage.id} onClick={() => void handleSplit(latestPackage.id)}>
-                {splittingPackageId === latestPackage.id ? <Loader2 className="animate-spin" size={15} /> : <WandSparkles size={15} />}
-                自动拆分文字分镜
+            {latestPackage && standardization?.validation.hasBlockingIssues && (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={!canEdit || standardizingPackageId === latestPackage.id}
+                onClick={() => void handleStandardize(latestPackage.id)}
+              >
+                {standardizingPackageId === latestPackage.id ? <Loader2 className="animate-spin" size={15} /> : <WandSparkles size={15} />}
+                整理
               </Button>
             )}
           </div>
         </form>
+        <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium">标准剧本格式检查</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
+                检查剧名、剧情简介、人物小传、集数、场次编号、场景、人物、画面、台词和闪回标记。
+              </p>
+            </div>
+            <Badge variant="outline">{standardizationStatusLabel(latestPackage, standardization)}</Badge>
+          </div>
+          {!latestPackage ? (
+            <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">把完整剧本粘贴进来后点击“检查”，系统会保存检查记录。</p>
+          ) : !standardization ? (
+            <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">
+              当前剧本还没有格式检查记录。点击“检查”后，如果没有必填问题就可以继续下一步；有问题时会出现“整理”按钮。
+            </p>
+          ) : (
+            <div className="mt-3 grid gap-3">
+              <div className="flex flex-wrap gap-2 text-xs">
+                <span className="ds-pill bg-[var(--surface-card)] text-[var(--text-secondary)]">
+                  错误 {standardization.validation.issues.filter((issue) => issue.severity === "error").length}
+                </span>
+                <span className="ds-pill bg-[var(--surface-card)] text-[var(--text-secondary)]">
+                  建议 {standardization.validation.issues.filter((issue) => issue.severity === "warning").length}
+                </span>
+                {standardization.standardizedAt && (
+                  <span className="ds-pill bg-[var(--surface-card)] text-[var(--text-secondary)]">
+                    {formatDateTime(standardization.standardizedAt)}
+                  </span>
+                )}
+              </div>
+              {standardization.validation.issues.length === 0 ? (
+                <Feedback tone="success" text="格式检查通过，可以提交甲方确认。" />
+              ) : (
+                <div className="grid gap-2">
+                  {standardization.validation.issues.slice(0, 8).map((issue, index) => (
+                    <div key={`${issue.code}-${issue.line ?? index}`} className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-2 text-xs leading-5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={cn("ds-pill", issue.severity === "error" ? "bg-[var(--macaron-yellow-bg)] text-[var(--warning)]" : "bg-[var(--surface-soft)] text-[var(--text-secondary)]")}>
+                          {issue.severity === "error" ? "必填缺失" : "建议"}
+                        </span>
+                        {issue.line && <span className="text-[var(--text-secondary)]">第 {issue.line} 行</span>}
+                      </div>
+                      <p className="mt-1 font-medium">{issue.message}</p>
+                      {issue.suggestion && <p className="mt-1 text-[var(--text-secondary)]">{issue.suggestion}</p>}
+                    </div>
+                  ))}
+                  {standardization.validation.issues.length > 8 && (
+                    <p className="text-xs text-[var(--text-secondary)]">还有 {standardization.validation.issues.length - 8} 条格式提示，请在标准剧本文本里继续检查。</p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
         <ClientReviewLaunchBox
           projectId={project.id}
           reviewType="script_package"
           targetScopeId={latestPackage?.id ?? null}
-          title="甲方脚本方向审核"
-          detail="把脚本创意方向、3 张人物参考、2 张场景参考和完整剧本打包给甲方确认；通过后再拆分文字分镜。"
-          disabled={!latestPackage}
-          disabledReason="请先保存脚本方向包，再生成甲方审核链接。"
+          title="甲方完整剧本确认"
+          detail="把已通过格式检查的标准剧本发给甲方确认；通过后再拆详细文字分镜，并进入人物、场景设定图生成。"
+          disabled={!latestPackage || !standardizedReady}
+          disabledReason={!latestPackage ? "请先导入完整剧本并检查格式。" : "请先完成标准剧本格式检查，并确认没有必填格式问题。"}
           tasks={clientReviewTasks}
           onRefresh={onRefresh}
         />
       </WorkspaceCard>
       <WorkspaceCard>
         <div className="flex items-center justify-between gap-3">
-          <h3 className="ds-text-section-title">文字分镜结果</h3>
-          <Badge variant="outline">{storyboardShots.length} 条分镜</Badge>
+          <div>
+            <h3 className="ds-text-section-title">文字分镜拆解</h3>
+            <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
+              只有标准剧本经甲方确认后，才会调用文本模型拆解详细文字分镜，并同步抽取人物和场景设定清单。
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Badge variant="outline">{storyboardShots.length} 条分镜</Badge>
+            {latestPackage && (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={!canSplitStoryboard}
+                onClick={() => void handleSplit(latestPackage.id)}
+              >
+                {splittingPackageId === latestPackage.id ? <Loader2 className="animate-spin" size={15} /> : <WandSparkles size={15} />}
+                自动拆分文字分镜
+              </Button>
+            )}
+          </div>
         </div>
+        {splitDisabledReason && <p className="mt-2 text-xs leading-5 text-[var(--warning)]">{splitDisabledReason}</p>}
+        {splittingPackageId && (
+          <div className="mt-3 flex items-center gap-2 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3 text-sm text-[var(--text-secondary)]">
+            <Loader2 className="animate-spin" size={15} />
+            正在拆分文字分镜，通常需要几十秒。完成后会自动刷新下方场次、分镜和人物场景设定。
+          </div>
+        )}
+        {!splittingPackageId && splitMessage && <Feedback tone="success" text={splitMessage} />}
+        {!splittingPackageId && splitError && <Feedback tone="warning" text={splitError} />}
         <div className="mt-4 space-y-3">
           {storyboardScenes.length === 0 ? (
             <p className="ds-card-soft p-3 text-sm leading-6 text-[var(--text-secondary)]">
-              暂无文字分镜。保存完整剧本后点击“自动拆分文字分镜”，系统会调用真实文本模型并写入数据库。
+              暂无文字分镜。标准剧本通过甲方确认后，点击“自动拆分文字分镜”，系统会调用真实文本模型并写入数据库。
             </p>
           ) : (
-            storyboardScenes.map((scene) => (
+            storyboardScenes.map((scene) => {
+              const isEditingScene = editingSceneId === scene.id;
+              const sceneShots = storyboardShots
+                .filter((shot) => shot.sceneId === scene.id)
+                .sort((a, b) => a.sortOrder - b.sortOrder || a.shotNumber.localeCompare(b.shotNumber, "zh-Hans-CN"));
+              const draftShots = editingShots[scene.id] ?? sceneShots.map(toStoryboardSequenceInput);
+              return (
               <div key={scene.id} className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="font-semibold">场次 {scene.sceneNumber}：{scene.title}</p>
                     <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">{scene.description || "暂无场次说明"}</p>
                   </div>
-                  <Badge variant="outline">{sceneStatusLabel(scene.status)}</Badge>
+                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                    <Badge variant="outline">{sceneStatusLabel(scene.status)}</Badge>
+                    {canEdit && !isEditingScene && (
+                      <Button type="button" size="sm" variant="outline" onClick={() => startSceneEdit(scene)}>
+                        <GripVertical size={14} />
+                        编辑序列
+                      </Button>
+                    )}
+                    {isEditingScene && (
+                      <>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={savingSceneId === scene.id}
+                          onClick={() => {
+                            setEditingSceneId(null);
+                            setDeletedShotIds((current) => ({ ...current, [scene.id]: [] }));
+                          }}
+                        >
+                          取消
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          disabled={savingSceneId === scene.id || draftShots.length === 0}
+                          onClick={() => void handleSaveStoryboardSequence(scene.id)}
+                        >
+                          {savingSceneId === scene.id ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />}
+                          保存序列
+                        </Button>
+                      </>
+                    )}
+                  </div>
                 </div>
                 <div className="mt-3 space-y-2">
-                  {storyboardShots.filter((shot) => shot.sceneId === scene.id).map((shot) => (
-                    <div key={shot.id} className="rounded-card-sm bg-[var(--surface-soft)] p-2 text-xs leading-5">
-                      <span className="font-semibold">{shot.shotNumber}</span>
-                      <span className="ml-2 text-[var(--text-secondary)]">{shot.visualDescription}</span>
-                    </div>
-                  ))}
+                  {isEditingScene ? (
+                    draftShots.map((shot, index) => (
+                      <div
+                        key={shot.id ?? `new-${index}`}
+                        draggable
+                        onDragStart={() => setDraggingShotId(shot.id ?? `new-${index}`)}
+                        onDragOver={(event) => event.preventDefault()}
+                        onDrop={() => {
+                          const fromIndex = draftShots.findIndex((item, itemIndex) => (item.id ?? `new-${itemIndex}`) === draggingShotId);
+                          moveEditingShot(scene.id, fromIndex, index);
+                          setDraggingShotId(null);
+                        }}
+                        className="grid gap-2 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-2 text-xs leading-5 md:grid-cols-[auto_84px_minmax(0,1fr)_auto]"
+                      >
+                        <div className="flex items-center text-[var(--text-tertiary)]" title="拖拽调整顺序">
+                          <GripVertical size={15} />
+                        </div>
+                        <Input
+                          value={shot.shotNumber}
+                          onChange={(event) => updateEditingShot(scene.id, index, { shotNumber: event.target.value })}
+                          className="h-8 bg-[var(--surface-card)] text-xs font-semibold"
+                          aria-label="镜号"
+                        />
+                        <textarea
+                          value={shot.visualDescription}
+                          onChange={(event) => updateEditingShot(scene.id, index, { visualDescription: event.target.value })}
+                          className="min-h-8 resize-y rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] px-3 py-2 text-xs leading-5"
+                          aria-label="分镜内容"
+                        />
+                        <div className="flex items-center justify-end gap-1">
+                          <Button type="button" size="icon-sm" variant="outline" disabled={index === 0} onClick={() => moveEditingShot(scene.id, index, index - 1)} title="上移">
+                            <ChevronUp size={14} />
+                          </Button>
+                          <Button type="button" size="icon-sm" variant="outline" disabled={index === draftShots.length - 1} onClick={() => moveEditingShot(scene.id, index, index + 1)} title="下移">
+                            <ChevronDown size={14} />
+                          </Button>
+                          <Button type="button" size="icon-sm" variant="destructive" disabled={draftShots.length <= 1} onClick={() => removeEditingShot(scene.id, index)} title="删除分镜">
+                            <Trash2 size={14} />
+                          </Button>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    sceneShots.map((shot) => (
+                      <div key={shot.id} className="rounded-card-sm bg-[var(--surface-soft)] p-2 text-xs leading-5">
+                        <span className="font-semibold">{shot.shotNumber}</span>
+                        <span className="ml-2 text-[var(--text-secondary)]">{shot.visualDescription}</span>
+                      </div>
+                    ))
+                  )}
                 </div>
+                {isEditingScene && (
+                  <Button type="button" size="sm" variant="outline" className="mt-3" onClick={() => addEditingShot(scene)}>
+                    <Plus size={14} />
+                    新增分镜
+                  </Button>
+                )}
               </div>
-            ))
+              );
+            })
           )}
         </div>
       </WorkspaceCard>
@@ -2574,36 +3170,145 @@ function ScriptStoryboardModule({
           <div>
             <h3 className="ds-text-section-title">人物场景设定</h3>
             <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
-              系统会从文字分镜的人物引用和场景引用中抽取唯一设定；这些设定需要甲方审核通过并锁定后，后续图片阶段才能使用。
+              先确认人物和场景清单，再按每张卡片里的当前提示词生成设定图候选。
             </p>
           </div>
-          <Badge variant="outline">{productionEntities.length} 个设定</Badge>
+          <Badge variant="outline">{activeProductionEntities.length} 个有效设定</Badge>
         </div>
-        {productionEntities.length === 0 ? (
-          <p className="mt-4 ds-card-soft p-3 text-sm leading-6 text-[var(--text-secondary)]">
-            暂无人物或场景设定。请先自动拆分文字分镜，系统会根据分镜中的 characterRefs 和 sceneRefs 生成设定记录。
-          </p>
-        ) : (
-          <div className="mt-4 grid gap-3">
-            {productionEntities.map((entity) => {
+
+        <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium">清单确认区</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">AI 抽取的人物和场景先在这里确认；路人群众可移入忽略列表。</p>
+            </div>
+            <Button type="button" size="sm" disabled={!canEdit || activeProductionEntities.length === 0 || regeneratingReferencePrompts} onClick={() => void handleConfirmEntityList()}>
+              {regeneratingReferencePrompts ? <Loader2 className="animate-spin" size={14} /> : <CheckCircle2 size={14} />}
+              {regeneratingReferencePrompts ? "正在生成提示词" : "确认清单"}
+            </Button>
+          </div>
+          {entityListMessage && <Feedback tone="success" text={entityListMessage} />}
+          {entityListError && <Feedback tone="warning" text={entityListError} />}
+          <div className="mt-3 grid gap-2">
+            <div className="grid gap-2 md:grid-cols-[9rem_minmax(0,1fr)_minmax(0,1.4fr)_auto]">
+              <select value={newEntityType} onChange={(event) => setNewEntityType(event.target.value as "character" | "scene")} className="h-9 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] px-3 text-xs">
+                <option value="character">人物</option>
+                <option value="scene">场景</option>
+              </select>
+              <Input value={newEntityName} onChange={(event) => setNewEntityName(event.target.value)} placeholder={newEntityType === "character" ? "新增人物" : "新增场景"} className="h-9 text-xs" />
+              <Input value={newEntityDescription} onChange={(event) => setNewEntityDescription(event.target.value)} placeholder="简短描述" className="h-9 text-xs" />
+              <Button type="button" size="sm" variant="outline" disabled={!canEdit || !newEntityName.trim()} onClick={() => void handleCreateEntity()}>
+                <Plus size={14} />
+                {newEntityType === "character" ? "新增人物" : "新增场景"}
+              </Button>
+            </div>
+            {activeProductionEntities.length === 0 ? (
+              <p className="text-sm leading-6 text-[var(--text-secondary)]">暂无人物或场景设定。请先自动拆分文字分镜，或手动新增需要生成设定图的人物和场景。</p>
+            ) : (
+              activeProductionEntities.map((entity) => {
+                const draft = entityDrafts[entity.id] ?? { name: entity.name, description: entity.description };
+                const isEditing = editingEntityId === entity.id;
+                return (
+                  <div key={entity.id} className="grid gap-2 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-2 text-xs md:grid-cols-[6rem_minmax(0,1fr)_minmax(0,2fr)_auto]">
+                    <Badge variant="outline">{productionEntityTypeLabel(entity.entityType)}</Badge>
+                    {isEditing ? (
+                      <Input value={draft.name} onChange={(event) => setEntityDrafts((current) => ({ ...current, [entity.id]: { ...draft, name: event.target.value } }))} className="h-8 text-xs" />
+                    ) : (
+                      <p className="font-medium">{entity.name}</p>
+                    )}
+                    {isEditing ? (
+                      <Input value={draft.description} onChange={(event) => setEntityDrafts((current) => ({ ...current, [entity.id]: { ...draft, description: event.target.value } }))} className="h-8 text-xs" />
+                    ) : (
+                      <p className="truncate text-[var(--text-secondary)]">{entity.description || `来自 ${entity.sourceShotIds.length} 条分镜引用`}</p>
+                    )}
+                    <div className="flex justify-end gap-1">
+                      {isEditing ? (
+                        <>
+                          <Button type="button" size="xs" variant="outline" onClick={() => setEditingEntityId(null)}>取消</Button>
+                          <Button type="button" size="xs" onClick={() => void handleEditEntity(entity.id)}>保存</Button>
+                        </>
+                      ) : (
+                        <>
+                          <Button type="button" size="xs" variant="outline" onClick={() => {
+                            setEditingEntityId(entity.id);
+                            setEntityDrafts((current) => ({ ...current, [entity.id]: { name: entity.name, description: entity.description } }));
+                          }}>编辑</Button>
+                          <Button type="button" size="xs" variant="outline" onClick={() => void handleIgnoreEntity(entity.id)}>移入忽略列表</Button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+          {ignoredProductionEntities.length > 0 && (
+            <details className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-2">
+              <summary className="cursor-pointer text-xs font-medium">忽略列表 {ignoredProductionEntities.length}</summary>
+              <div className="mt-2 grid gap-2">
+                {ignoredProductionEntities.map((entity) => (
+                  <div key={entity.id} className="flex items-center justify-between gap-3 rounded-card-sm bg-[var(--surface-soft)] px-2 py-1 text-xs">
+                    <span>{productionEntityTypeLabel(entity.entityType)} · {entity.name}</span>
+                    <Button type="button" size="xs" variant="outline" onClick={() => void handleRestoreEntity(entity.id)}>恢复到清单</Button>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+        </div>
+
+        <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium">设定图生成区</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">每张卡片按当前可见提示词生成，候选图会横向追加。</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline">{isEntityListConfirmed ? "清单已确认" : "清单待确认"}</Badge>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={!canEdit || !isEntityListConfirmed || activeProductionEntities.length === 0 || regeneratingReferencePrompts}
+                onClick={() => void handleRegenerateReferencePrompts()}
+              >
+                {regeneratingReferencePrompts ? <Loader2 className="animate-spin" size={14} /> : <RefreshCcw size={14} />}
+                重新生成提示词
+              </Button>
+            </div>
+          </div>
+          {referenceImageMessage && <Feedback tone="success" text={referenceImageMessage} />}
+          {referenceImageError && <Feedback tone="warning" text={referenceImageError} />}
+          <div className="mt-3 grid gap-3">
+            {activeProductionEntities.map((entity) => {
               const referenceSets = productionReferenceSets.filter((set) => set.entityId === entity.id);
               const activeReference = referenceSets.find((set) => set.depth === entity.referenceDepth) ?? referenceSets[0] ?? null;
+              const referenceImages = (activeReference?.referenceImageIds ?? [])
+                .map((imageId) => referenceImageMap.get(imageId))
+                .filter((image): image is GeneratedImageView => Boolean(image));
+              const selectedImageId = activeReference?.selectedImageId ?? null;
+              const isGeneratingThisEntity = generatingReferenceEntityId === entity.id;
+              const currentRatio = getReferenceRatio(entity, activeReference);
+              const currentCount = getReferenceCount(activeReference);
+              const selectedImageIndex = referenceImages.findIndex((image) => image.id === selectedImageId);
+              const activeCanvasIndex = Math.min(
+                Math.max(
+                  referenceCanvasIndexes[activeReference?.id ?? entity.id] ?? (selectedImageIndex >= 0 ? selectedImageIndex : 0),
+                  0
+                ),
+                Math.max(referenceImages.length - 1, 0)
+              );
+              const currentCanvasImage = referenceImages[activeCanvasIndex] ?? referenceImages[0] ?? null;
               return (
-                <div key={entity.id} className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant="outline">{productionEntityTypeLabel(entity.entityType)}</Badge>
-                        <p className="font-semibold">{entity.name}</p>
-                        <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">
-                          {productionEntityStatusLabel(entity.status)}
-                        </span>
-                      </div>
-                      <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">
-                        {entity.description || `来自 ${entity.sourceShotIds.length} 条分镜引用，等待补充设定描述。`}
-                      </p>
+                <div key={entity.id} className="grid gap-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3 xl:grid-cols-[13rem_minmax(24rem,1fr)_minmax(17rem,0.76fr)]">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="outline">{productionEntityTypeLabel(entity.entityType)}</Badge>
+                      <span className={cn("ds-pill", selectedImageId ? "ds-pill-teal" : "bg-[var(--surface-card)] text-[var(--text-secondary)]")}>{selectedImageId ? "已采用" : "待采用"}</span>
                     </div>
-                    <div className="flex shrink-0 gap-2">
+                    <p className="mt-2 font-semibold">{entity.name}</p>
+                    <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">{entity.description || `来自 ${entity.sourceShotIds.length} 条分镜引用`}</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
                       {(["basic", "full"] as const).map((depth) => (
                         <Button
                           key={depth}
@@ -2617,16 +3322,144 @@ function ScriptStoryboardModule({
                           {depth === "basic" ? "基础" : "完整"}
                         </Button>
                       ))}
+	                      {activeReference && <span className="self-center text-xs text-[var(--text-secondary)]">{referenceDepthLabel(activeReference.depth)} · v{activeReference.version}</span>}
+	                    </div>
+	                  </div>
+                  <div className="min-w-0">
+                    <div className="relative min-h-[21rem] overflow-hidden rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)]" aria-label={`${entity.name} 主候选画布`}>
+                      {referenceImages.length === 0 ? (
+                        <div className="flex h-full min-h-[21rem] items-center justify-center p-5 text-center text-xs leading-5 text-[var(--text-secondary)]">
+                          还没有候选图。确认当前提示词后点击“生成”。
+                        </div>
+                      ) : (
+                        <>
+                          <div
+                            className="flex h-full min-h-[21rem] snap-x snap-mandatory overflow-x-auto scroll-smooth"
+                            onScroll={(event) => {
+                              if (!activeReference) return;
+                              const width = event.currentTarget.clientWidth;
+                              if (width <= 0) return;
+                              const nextIndex = Math.round(event.currentTarget.scrollLeft / width);
+                              setReferenceCanvasIndexes((current) => (
+                                current[activeReference.id] === nextIndex ? current : { ...current, [activeReference.id]: nextIndex }
+                              ));
+                            }}
+                          >
+                            {referenceImages.map((image, index) => {
+                              const isSelected = selectedImageId === image.id;
+                              const isSelectable = image.status === "succeeded";
+                              return (
+                                <button
+                                  key={image.id}
+                                  type="button"
+                                  className="grid min-w-full snap-start place-items-center bg-[var(--surface-soft)] p-4 text-left"
+                                  onClick={() => activeReference && setReferenceCanvasIndexes((current) => ({ ...current, [activeReference.id]: index }))}
+                                  onDoubleClick={() => activeReference && setReferenceImagePreview({
+                                    entityName: entity.name,
+                                    referenceSetId: activeReference.id,
+                                    selectedImageId,
+                                    images: referenceImages,
+                                    index,
+                                  })}
+                                  disabled={!activeReference}
+                                >
+                                  <div className={cn(
+                                    "relative grid max-h-[18rem] min-h-[15rem] w-full max-w-[15rem] place-items-center overflow-hidden rounded-card-sm border bg-[var(--surface-card)]",
+                                    entity.entityType === "scene" ? "aspect-video max-w-[28rem]" : "aspect-[3/4]",
+                                    isSelected ? "border-[var(--accent)] shadow-[0_0_0_3px_color-mix(in_oklch,var(--accent)_18%,transparent)]" : "border-[var(--border-soft)]"
+                                  )}>
+                                    {image.ossUrl ? (
+                                      <Image src={image.ossUrl} alt={`${entity.name} 设定图候选 ${index + 1}`} width={520} height={680} sizes="(min-width: 1280px) 440px, 80vw" unoptimized className="h-full w-full object-cover" loading="lazy" />
+                                    ) : (
+                                      <div className="flex h-full w-full items-center justify-center p-4 text-center text-xs leading-5 text-[var(--text-secondary)]">{imageStatusLabel(image.status)}</div>
+                                    )}
+                                    {!isSelectable && (
+                                      <span className="absolute bottom-3 rounded-full bg-[var(--surface-card)]/90 px-3 py-1 text-xs text-[var(--text-secondary)]">
+                                        {imageStatusLabel(image.status)}
+                                      </span>
+                                    )}
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <div className="pointer-events-none absolute left-3 right-3 top-3 flex items-center justify-between gap-2">
+                            <span className="rounded-full border border-[var(--border-soft)] bg-[var(--surface-card)]/90 px-3 py-1 text-xs text-[var(--text-secondary)] shadow-sm">候选 {activeCanvasIndex + 1} / {Math.max(referenceImages.length, 1)}</span>
+                            <span className="rounded-full border border-[var(--border-soft)] bg-[var(--surface-card)]/90 px-3 py-1 text-xs text-[var(--text-secondary)] shadow-sm">双击放大查看</span>
+                          </div>
+                          <div className="pointer-events-none absolute bottom-3 left-0 right-0 flex justify-center gap-1.5">
+                            {referenceImages.map((image, index) => (
+                              <span key={image.id} className={cn("h-1.5 rounded-full bg-[var(--text-tertiary)]/35 transition-all", index === activeCanvasIndex ? "w-5 bg-[var(--accent)]" : "w-1.5")} />
+                            ))}
+                          </div>
+                        </>
+                      )}
                     </div>
+                    {activeReference && currentCanvasImage && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="mt-2 w-full"
+                        disabled={!canEdit || currentCanvasImage.status !== "succeeded" || reviewingReferenceImageId === currentCanvasImage.id || entity.status === "locked"}
+                        onClick={() => void handleSelectReferenceImage(activeReference.id, currentCanvasImage.id)}
+                      >
+                        {reviewingReferenceImageId === currentCanvasImage.id ? <Loader2 className="animate-spin" size={14} /> : <CheckCircle2 size={14} />}
+                        {selectedImageId === currentCanvasImage.id ? "已采用" : "设为采用"}
+                      </Button>
+                    )}
                   </div>
-                  <div className="mt-3 rounded-card-sm bg-[var(--surface-soft)] p-2 text-xs leading-5 text-[var(--text-secondary)]">
-                    参考集：{activeReference ? `${referenceDepthLabel(activeReference.depth)} · ${productionEntityStatusLabel(activeReference.status)} · v${activeReference.version}` : "尚未生成参考集"}
-                  </div>
-                </div>
-              );
-            })}
+	                  <div className="grid min-w-0 content-start gap-2">
+	                    <textarea
+	                      value={getReferencePrompt(activeReference)}
+	                      onChange={(event) => activeReference && setPromptDrafts((current) => ({ ...current, [activeReference.id]: event.target.value }))}
+	                      disabled={!canEdit || !activeReference || entity.status === "locked"}
+	                      placeholder="请先确认清单，系统会根据剧本和视觉风格生成提示词。"
+	                      className="min-h-44 resize-y rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-xs leading-5"
+	                      aria-label={`${entity.name} 生成提示词`}
+	                    />
+                    <div className="grid gap-2 sm:grid-cols-2">
+	                      <label className="grid gap-1 text-[11px] font-medium">
+	                        生成数量
+	                        <input
+                          type="number"
+                          min={1}
+                          max={8}
+                          value={currentCount}
+                          onChange={(event) => activeReference && setCountDrafts((current) => ({ ...current, [activeReference.id]: Number(event.target.value) }))}
+                          className="h-8 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] px-2 text-xs"
+                        />
+                      </label>
+                      <label className="grid gap-1 text-[11px] font-medium">
+                        比例
+                        <select
+                          value={currentRatio}
+                          onChange={(event) => activeReference && setRatioDrafts((current) => ({ ...current, [activeReference.id]: event.target.value as ProductionReferenceSetView["defaultRatio"] }))}
+                          className="h-8 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] px-2 text-xs"
+                        >
+                          <option value="3:4">3:4</option>
+                          <option value="16:9">16:9</option>
+                          <option value="1:1">1:1</option>
+                          <option value="4:3">4:3</option>
+	                          <option value="9:16">9:16</option>
+	                        </select>
+	                      </label>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-[6rem_minmax(0,1fr)]">
+                      <Button type="button" size="sm" variant="outline" disabled={!canEdit || !activeReference || savingReferenceSetId === activeReference.id} onClick={() => activeReference && void handleSaveReferencePrompt(activeReference, entity)}>
+                        {savingReferenceSetId === activeReference?.id ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />}
+                        保存
+                      </Button>
+                      <Button type="button" size="sm" disabled={!canEdit || !activeReference || isGeneratingReferenceImages || entity.status === "locked"} onClick={() => void handleGenerateReferenceImages(entity, activeReference)}>
+                        {isGeneratingThisEntity ? <Loader2 className="animate-spin" size={14} /> : <ImageIcon size={14} />}
+                        生成
+                      </Button>
+                    </div>
+	                  </div>
+	                </div>
+	              );
+	            })}
           </div>
-        )}
+        </div>
         <div className="mt-4 ds-card-soft p-3">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
@@ -2652,7 +3485,7 @@ function ScriptStoryboardModule({
           </div>
           {!hasRequiredReferences && (
             <p className="mt-2 text-xs leading-5 text-[var(--warning)]">
-              请先拆分文字分镜并保存每个人物、场景的设定深度，再提交审核。
+              请先为每个人物、场景生成设定图，并至少选择一张“设为采用”后再提交审核。
             </p>
           )}
           {createdSetupReview && (
@@ -2670,64 +3503,125 @@ function ScriptStoryboardModule({
         </div>
       </WorkspaceCard>
     </div>
-  );
-}
-
-function ReferenceDraftGroup({
-  title,
-  prefix,
-  count,
-  references,
-  disabled,
-}: {
-  title: string;
-  prefix: "character" | "scene";
-  count: number;
-  references: ScriptReferenceAssetView[];
-  disabled: boolean;
-}) {
-  return (
-    <div className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3">
-      <p className="text-xs font-semibold">{title}</p>
-      <div className="mt-3 grid gap-3">
-        {Array.from({ length: count }).map((_, index) => {
-          const ref = references[index];
-          const number = index + 1;
-          return (
-            <div key={number} className="grid gap-2 rounded-card-sm bg-[var(--surface-card)] p-2">
-              <Input name={`${prefix}Title${number}`} defaultValue={ref?.title ?? ""} placeholder={`${title} ${number}`} disabled={disabled} />
-              <Input name={`${prefix}Style${number}`} defaultValue={ref?.styleLabel ?? ""} placeholder="风格标签" disabled={disabled} />
-              <textarea
-                name={`${prefix}Prompt${number}`}
-                defaultValue={ref?.prompt ?? ""}
-                placeholder="参考描述 / Prompt"
-                disabled={disabled}
-                className="min-h-16 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-2 text-xs leading-5"
-              />
+    {referenceImagePreview && previewImage && (
+      <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/55 p-4" role="dialog" aria-modal="true" aria-label={`${referenceImagePreview.entityName} 候选图放大查看`}>
+        <div className="grid max-h-[92vh] w-full max-w-5xl gap-3 rounded-card bg-[var(--surface-card)] p-4 shadow-[0_30px_90px_-45px_rgb(15_23_42/0.55)]">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium">{referenceImagePreview.entityName} · 候选 {referenceImagePreview.index + 1} / {referenceImagePreview.images.length}</p>
+              <p className="mt-1 text-xs text-[var(--text-secondary)]">{imageStatusLabel(previewImage.status)}</p>
             </div>
-          );
-        })}
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" size="sm" variant="outline" disabled={referenceImagePreview.index === 0} onClick={() => setReferenceImagePreview((current) => current ? { ...current, index: Math.max(0, current.index - 1) } : current)}>
+                上一张
+              </Button>
+              <Button type="button" size="sm" variant="outline" disabled={referenceImagePreview.index >= referenceImagePreview.images.length - 1} onClick={() => setReferenceImagePreview((current) => current ? { ...current, index: Math.min(current.images.length - 1, current.index + 1) } : current)}>
+                下一张
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={!canEdit || previewImage.status !== "succeeded" || reviewingReferenceImageId === previewImage.id}
+                onClick={() => void handleSelectReferenceImage(referenceImagePreview.referenceSetId, previewImage.id)}
+              >
+                {reviewingReferenceImageId === previewImage.id ? <Loader2 className="animate-spin" size={14} /> : <CheckCircle2 size={14} />}
+                {referenceImagePreview.selectedImageId === previewImage.id ? "已采用" : "设为采用"}
+              </Button>
+              <Button type="button" size="sm" variant="outline" onClick={() => setReferenceImagePreview(null)}>
+                关闭
+              </Button>
+            </div>
+          </div>
+          <div className="grid max-h-[72vh] place-items-center overflow-hidden rounded-card-sm bg-[var(--surface-soft)] p-3">
+            {previewImage.ossUrl ? (
+              <Image src={previewImage.ossUrl} alt={`${referenceImagePreview.entityName} 候选图放大查看`} width={1200} height={900} sizes="90vw" unoptimized className="max-h-[68vh] w-auto max-w-full rounded-card-sm object-contain" />
+            ) : (
+              <div className="flex min-h-[24rem] items-center justify-center text-sm text-[var(--text-secondary)]">{imageStatusLabel(previewImage.status)}</div>
+            )}
+          </div>
+        </div>
       </div>
-    </div>
+    )}
+    </>
   );
 }
 
-function referencePreviewUrl(value: unknown): string | null {
-  if (typeof value === "string") {
-    return /^https?:\/\//.test(value) ? value : null;
-  }
-  if (!value || typeof value !== "object") return null;
+function toStoryboardSequenceInput(shot: StoryboardShotView): StoryboardSequenceShotInput {
+  return {
+    id: shot.id,
+    shotNumber: shot.shotNumber,
+    visualDescription: shot.visualDescription,
+    shotSize: shot.shotSize,
+    actionExpression: shot.actionExpression,
+    cameraMovement: shot.cameraMovement,
+    durationSeconds: shot.durationSeconds,
+    soundTransition: shot.soundTransition,
+    notes: shot.notes,
+    characterRefs: shot.characterRefs,
+    sceneRefs: shot.sceneRefs,
+    imagePrompt: shot.imagePrompt,
+    videoPrompt: shot.videoPrompt,
+  };
+}
 
-  const record = value as Record<string, unknown>;
-  const directUrl = record.ossUrl ?? record.imageUrl ?? record.previewUrl ?? record.url;
-  if (typeof directUrl === "string" && directUrl.trim()) return directUrl;
+function isConfirmedProductionReferenceImage(image: GeneratedImageView | undefined) {
+  return Boolean(image?.ossUrl && image.status === "succeeded" && image.reviewStatus === "confirmed");
+}
 
-  for (const nested of Object.values(record)) {
-    const url = referencePreviewUrl(nested);
-    if (url) return url;
-  }
+function isScriptStandardizationArtifact(artifact: ArtifactView, packageId: string) {
+  const data = asUnknownRecord(artifact.data);
+  return artifact.kind === "script_direction_package" && data.operation === "script_format_standardization" && data.packageId === packageId;
+}
 
-  return null;
+function getScriptStandardizationSnapshot(artifact: ArtifactView | null): {
+  validation: ScriptFormatValidationView;
+  standardizedAt: string | null;
+  standardizedScript: string;
+} | null {
+  if (!artifact) return null;
+  const data = asUnknownRecord(artifact.data);
+  const validationRecord = asUnknownRecord(data.validation);
+  const rawIssues = Array.isArray(validationRecord.issues) ? validationRecord.issues : [];
+  const issues = rawIssues.map(normalizeScriptFormatIssue).filter((issue): issue is ScriptFormatIssueView => issue !== null);
+  const hasBlockingIssues =
+    typeof validationRecord.hasBlockingIssues === "boolean"
+      ? validationRecord.hasBlockingIssues
+      : issues.some((issue) => issue.severity === "error");
+  return {
+    validation: {
+      issues,
+      hasBlockingIssues,
+    },
+    standardizedAt: typeof data.standardizedAt === "string" ? data.standardizedAt : artifact.updatedAt,
+    standardizedScript: typeof data.standardizedScript === "string" ? data.standardizedScript : "",
+  };
+}
+
+function normalizeScriptFormatIssue(value: unknown): ScriptFormatIssueView | null {
+  const record = asUnknownRecord(value);
+  const message = typeof record.message === "string" ? record.message : "";
+  const code = typeof record.code === "string" ? record.code : "";
+  if (!message || !code) return null;
+  return {
+    severity: record.severity === "warning" ? "warning" : "error",
+    code,
+    message,
+    suggestion: typeof record.suggestion === "string" ? record.suggestion : undefined,
+    line: typeof record.line === "number" ? record.line : undefined,
+  };
+}
+
+function standardizationStatusLabel(
+  pkg: ScriptDirectionPackageView | null,
+  standardization: ReturnType<typeof getScriptStandardizationSnapshot>
+) {
+  if (!pkg) return "待导入";
+  if (!standardization) return "待检查";
+  return standardization.validation.hasBlockingIssues ? "需补齐" : "已通过";
+}
+
+function asUnknownRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
 function StoryboardImageCanvasModule({
@@ -2737,6 +3631,9 @@ function StoryboardImageCanvasModule({
   shots,
   images,
   batches,
+  productionEntities,
+  productionReferenceSets,
+  generatedImages,
   clientReviewTasks,
   clientReviewItems,
   onRefresh,
@@ -2747,12 +3644,17 @@ function StoryboardImageCanvasModule({
   shots: StoryboardShotView[];
   images: StoryboardImageView[];
   batches: StoryboardImageBatchView[];
+  productionEntities: ProductionEntityView[];
+  productionReferenceSets: ProductionReferenceSetView[];
+  generatedImages: GeneratedImageView[];
   clientReviewTasks: ClientReviewTaskView[];
   clientReviewItems: ClientReviewItemView[];
   onRefresh: () => Promise<void>;
 }) {
   const [activeShotId, setActiveShotId] = useState<string | null>(shots[0]?.id ?? null);
   const [activeImageId, setActiveImageId] = useState<string | null>(null);
+  const [imageRatio, setImageRatio] = useState<"16:9" | "9:16" | "1:1" | "4:3" | "3:4">("16:9");
+  const [imageCount, setImageCount] = useState<1 | 2 | 4>(1);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [batchSceneDrafts, setBatchSceneDrafts] = useState<Record<number, string>>({});
   const [message, setMessage] = useState<string | null>(null);
@@ -2762,8 +3664,40 @@ function StoryboardImageCanvasModule({
   const activeImages = activeShot ? images.filter((image) => image.shotId === activeShot.id) : [];
   const selectedImage = activeImages.find((image) => image.id === activeImageId) ?? activeImages.find((image) => image.isSelected) ?? activeImages[0] ?? null;
   const canOperate = user.role === "creative" || user.role === "admin";
-  const characterRefs = Array.isArray(activeShot?.characterRefs) ? activeShot.characterRefs : [];
-  const sceneRefs = Array.isArray(activeShot?.sceneRefs) ? activeShot.sceneRefs : [];
+  const generatedImageById = new Map(generatedImages.map((image) => [image.id, image]));
+  const shotReferenceResolution = (() => {
+    const references: Array<{ entityId: string; entityType: "character" | "scene"; name: string; ossUrl: string }> = [];
+    const missing: Array<{ entityId: string; name: string }> = [];
+    if (!activeShot) return { references, missing };
+    const linkedEntities = productionEntities.filter(
+      (entity) =>
+        entity.inclusionStatus !== "ignored" &&
+        (entity.entityType === "character" || entity.entityType === "scene") &&
+        entity.sourceShotIds.includes(activeShot.id)
+    );
+    for (const entity of linkedEntities) {
+      const referenceSet = productionReferenceSets.find(
+        (set) => set.entityId === entity.id && set.depth === entity.referenceDepth
+      );
+      const candidateIds = referenceSet
+        ? referenceSet.selectedImageId
+          ? [referenceSet.selectedImageId]
+          : referenceSet.referenceImageIds
+        : [];
+      const confirmed = candidateIds
+        .map((imageId) => generatedImageById.get(imageId))
+        .find(isConfirmedProductionReferenceImage);
+      if (confirmed?.ossUrl) {
+        references.push({ entityId: entity.id, entityType: entity.entityType as "character" | "scene", name: entity.name, ossUrl: confirmed.ossUrl });
+      } else {
+        missing.push({ entityId: entity.id, name: entity.name });
+      }
+    }
+    references.sort((a, b) => a.entityType.localeCompare(b.entityType) || a.name.localeCompare(b.name, "zh-Hans-CN"));
+    return { references, missing };
+  })();
+  const shotReferences = shotReferenceResolution.references;
+  const missingReferences = shotReferenceResolution.missing;
   const batchNumbers = [1, 2, 3] as const;
   const latestBatches = batchNumbers.map((batchNumber) => batches.find((batch) => batch.batchNumber === batchNumber) ?? null);
   const latestBatchById = new Map(batches.map((batch) => [batch.id, batch]));
@@ -2886,37 +3820,49 @@ function StoryboardImageCanvasModule({
               <div className="storyboard-controls-inner">
                 <div className="storyboard-control-cluster">
                   <div className="storyboard-control-row">
-                    <div className="storyboard-reference-list" aria-label="参考图">
-                      {[...characterRefs, ...sceneRefs].slice(0, 3).map((ref, index) => {
-                        const previewUrl = referencePreviewUrl(ref);
-                        return (
-                          <div key={`${index}-${JSON.stringify(ref).slice(0, 30)}`} className="storyboard-reference-tile" title={`参考图 ${index + 1}`}>
-                            {previewUrl ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img src={previewUrl} alt="" className="h-full w-full object-cover" />
-                            ) : (
-                              <ImageIcon size={15} />
-                            )}
+                    <div className="storyboard-reference-list" aria-label="本镜锁定设定图（生图参考）">
+                      {shotReferences.length === 0 ? (
+                        <span className="text-xs text-[var(--text-secondary)]">本镜未关联人物/场景设定图</span>
+                      ) : (
+                        shotReferences.map((reference) => (
+                          <div
+                            key={reference.entityId}
+                            className="storyboard-reference-tile"
+                            title={`${reference.entityType === "character" ? "人物" : "场景"}：${reference.name}`}
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={reference.ossUrl} alt={reference.name} className="h-full w-full object-cover" />
                           </div>
-                        );
-                      })}
-                      <button type="button" className="storyboard-reference-add" disabled={!canOperate} aria-label="添加参考图">
-                        <Plus size={15} />
-                      </button>
+                        ))
+                      )}
                     </div>
                     <div className="storyboard-select-row">
                       <select aria-label="生图模型" className="storyboard-select-control storyboard-model-select">
-                        <option>{selectedImage?.modelName || "gpt-image-2-all"}</option>
+                        <option>{selectedImage?.modelName || "doubao-seedream-4-0-250828"}</option>
                       </select>
-                      <select aria-label="图片比例" className="storyboard-select-control">
-                        <option>16:9</option>
-                        <option>9:16</option>
-                        <option>1:1</option>
+                      <select
+                        aria-label="图片比例"
+                        className="storyboard-select-control"
+                        value={imageRatio}
+                        disabled={!canOperate}
+                        onChange={(event) => setImageRatio(event.target.value as typeof imageRatio)}
+                      >
+                        <option value="16:9">16:9</option>
+                        <option value="9:16">9:16</option>
+                        <option value="1:1">1:1</option>
+                        <option value="4:3">4:3</option>
+                        <option value="3:4">3:4</option>
                       </select>
-                      <select aria-label="生图数量" className="storyboard-select-control">
-                        <option>1 张</option>
-                        <option>2 张</option>
-                        <option>4 张</option>
+                      <select
+                        aria-label="生图数量"
+                        className="storyboard-select-control"
+                        value={imageCount}
+                        disabled={!canOperate}
+                        onChange={(event) => setImageCount(Number(event.target.value) as typeof imageCount)}
+                      >
+                        <option value={1}>1 张</option>
+                        <option value={2}>2 张</option>
+                        <option value={4}>4 张</option>
                       </select>
                     </div>
                   </div>
@@ -2926,12 +3872,17 @@ function StoryboardImageCanvasModule({
                     className="storyboard-prompt-field w-full rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-sm leading-6 text-[var(--text-secondary)] outline-none"
                     aria-label="Prompt 提示词输入框"
                   />
+                  {missingReferences.length > 0 ? (
+                    <p className="rounded-card-sm bg-[var(--surface-soft)] p-2 text-xs leading-5 text-[var(--text-warning,#b45309)]">
+                      提示：{missingReferences.map((item) => item.name).join("、")} 还没有已采用的锁定设定图，本次将不作为参考图。如需一致性，建议先在 SOP5 设定图卡片中生成并“设为采用”后再生成。
+                    </p>
+                  ) : null}
                 </div>
                 <Button
                   type="button"
                   className="storyboard-generate-button"
                   disabled={!canOperate || !activeShot || busyKey === "generate-image"}
-                  onClick={() => activeShot && void runAction("generate-image", () => generateStoryboardImage(project.id, activeShot.id))}
+                  onClick={() => activeShot && void runAction("generate-image", () => generateStoryboardImage(project.id, activeShot.id, { ratio: imageRatio, count: imageCount }))}
                 >
                   {busyKey === "generate-image" ? <Loader2 className="animate-spin" size={16} /> : <WandSparkles size={16} />}
                   生成图片
@@ -3978,19 +4929,6 @@ function referenceDepthLabel(depth: ProductionEntityView["referenceDepth"]) {
   return depth === "full" ? "完整设定" : "基础设定";
 }
 
-function productionEntityStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    draft: "草稿",
-    generating: "生成中",
-    internal_confirmed: "内部已确认",
-    client_reviewing: "甲方审核中",
-    client_rejected: "甲方已打回",
-    client_approved: "甲方已通过",
-    locked: "已锁定",
-  };
-  return labels[status] ?? status;
-}
-
 function reviewCutStatusLabel(status: string) {
   const labels: Record<string, string> = {
     uploaded: "已上传",
@@ -4027,8 +4965,6 @@ function WorkspaceCard({
     </Card>
   );
 }
-
-type TaskTone = "neutral" | "info" | "success" | "warning" | "danger";
 
 function TaskCard({
   icon,
@@ -4071,6 +5007,8 @@ function TaskCard({
   );
 }
 
+type TaskTone = "neutral" | "info" | "success" | "warning" | "danger";
+
 function TaskStatusPill({
   children,
   tone = "neutral",
@@ -4087,6 +5025,7 @@ function BriefIntakeWorkflowCard({
   project,
   user,
   assets,
+  jobs,
   assetAnalyses,
   artifacts,
   clientReviewTasks,
@@ -4096,6 +5035,7 @@ function BriefIntakeWorkflowCard({
   project: ProjectSummary;
   user: CurrentUser;
   assets: AssetView[];
+  jobs: JobSummary[];
   assetAnalyses: AssetAnalysisView[];
   artifacts: ArtifactView[];
   clientReviewTasks: ClientReviewTaskView[];
@@ -4106,16 +5046,17 @@ function BriefIntakeWorkflowCard({
   const latest = structuredRequirements[0] ?? null;
   const openQuestions = latest ? extractArtifactStringArray((latest.data as Partial<Record<string, unknown>>).openQuestions) : [];
   const latestBriefReview = clientReviewTasks.find((task) => task.reviewType === "brief_confirmation" && task.targetScopeId === project.id) ?? null;
+  const latestStructuringJob = jobs.find((job) => job.type === "requirement_structuring") ?? null;
 
   return (
     <StageWorkCard
       icon={<BriefcaseBusiness size={18} />}
       title="SOP 1 · Brief 收集、补齐与甲方确认"
-      detail="把微信聊天、截图、飞书链接和项目文件统一投放进资料池；AI 整理标准 Brief，缺失信息回填后生成新版本，再交甲方确认。"
+      detail="把微信聊天、截图、飞书链接和项目文件统一投放进资料池；AI 整理标准 Brief 并提示缺失项，由团队判断当前信息是否足够进入风险体检。"
       badges={[
         assets.length > 0 ? `${assets.length} 份资料` : "待录入资料",
         latest ? `Brief v${latest.version}` : "待生成 Brief",
-        openQuestions.length > 0 ? `${openQuestions.length} 项待补` : latest ? "待确认" : "待检索",
+        openQuestions.length > 0 ? `${openQuestions.length} 项待确认` : latest ? "可确认" : "待检索",
       ]}
       defaultOpen
       className="lg:col-span-2"
@@ -4144,17 +5085,16 @@ function BriefIntakeWorkflowCard({
           {latest ? (
             <StructuredRequirementPreview artifact={latest} />
           ) : (
-            <div className="mt-3 rounded-card-sm border border-dashed border-[var(--border-soft)] bg-[var(--surface-card)] p-4 text-sm leading-6 text-[var(--text-secondary)]">
-              还没有标准化 Brief。先在上方投放客户原始信息，再让 AI 整理成标准 Brief。
-            </div>
+            <BriefStructuringJobNotice job={latestStructuringJob} />
           )}
         </section>
+        <BriefInternalConfirmBox projectId={project.id} latest={latest} openQuestions={openQuestions} onRefresh={onRefresh} />
         <section className="ds-card-soft p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <p className="text-sm font-medium">甲方 Brief 确认</p>
               <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
-                只有标准 Brief 完整后才进入甲方确认；甲方通过后，项目再流转到风险体检卡。
+                只要团队判断当前 Brief 已经足够推进，就可以发起甲方确认；待确认项会继续保留并透传到风险体检。
               </p>
             </div>
             {latestBriefReview && (
@@ -4168,14 +5108,12 @@ function BriefIntakeWorkflowCard({
             reviewType="brief_confirmation"
             targetScopeId={project.id}
             title="生成甲方 Brief 审核链接"
-            detail="链接会带上当前项目和最新标准化 Brief；甲方确认或打回后会回写阶段状态。"
-            disabled={!latest || openQuestions.length > 0}
+            detail="链接会带上当前项目、最新标准化 Brief 和待确认项；甲方确认或打回后会回写阶段状态。"
+            disabled={!latest}
             disabledReason={
               !latest
                 ? "请先生成标准化 Brief。"
-                : openQuestions.length > 0
-                  ? "当前 Brief 仍有待确认问题，请先把客户回复回填并更新 Brief。"
-                  : undefined
+                : undefined
             }
             tasks={clientReviewTasks}
             onRefresh={onRefresh}
@@ -4200,7 +5138,7 @@ function BriefWorkflowSteps({
   const steps = [
     { label: "原始信息", value: assets.length > 0 ? `${assets.length} 份已入库` : "待投放", tone: assets.length > 0 ? "success" : "neutral" },
     { label: "AI Brief", value: latest ? `v${latest.version}` : "待整理", tone: latest ? "success" : "neutral" },
-    { label: "缺失补齐", value: latest ? (openQuestions.length > 0 ? `${openQuestions.length} 项待问` : "无待补项") : "待检索", tone: latest && openQuestions.length === 0 ? "success" : openQuestions.length > 0 ? "warning" : "neutral" },
+    { label: "缺失提示", value: latest ? (openQuestions.length > 0 ? `${openQuestions.length} 项待确认` : "无待确认") : "待检索", tone: latest && openQuestions.length === 0 ? "success" : openQuestions.length > 0 ? "warning" : "neutral" },
     { label: "甲方确认", value: latestReview ? clientReviewStatusLabel(latestReview.status) : "未发起", tone: latestReview?.status === "approved" ? "success" : latestReview ? "info" : "neutral" },
   ] satisfies Array<{ label: string; value: string; tone: TaskTone }>;
 
@@ -4349,9 +5287,16 @@ function BriefRawInputPool({
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const briefJobPollRef = useRef(0);
   const succeededAnalyses = assetAnalyses.filter((analysis) => analysis.status === "succeeded");
   const unparsedAssets = assets.filter((asset) => asset.parseStatus === "queued" || asset.parseStatus === "failed");
   const missingQuestionText = openQuestions.length > 0 ? openQuestions.map((question, index) => `${index + 1}. ${question}`).join("\n") : "";
+
+  useEffect(() => {
+    return () => {
+      briefJobPollRef.current += 1;
+    };
+  }, [project.id]);
 
   async function handleSubmit() {
     setMessage(null);
@@ -4371,18 +5316,64 @@ function BriefRawInputPool({
     }
 
     setSubmitting(true);
-    await registerFeishuLinksFromText(project.id, requirementText);
-    const result = await structureRequirement(project.id, structuringInput);
+    const pollId = briefJobPollRef.current + 1;
+    briefJobPollRef.current = pollId;
 
-    if (result.ok) {
-      setMessage(result.data.message);
-      setRequirementText("");
-      await onRefresh();
-    } else {
-      setError(result.error.message);
+    try {
+      await registerFeishuLinksFromText(project.id, requirementText);
+      const result = await structureRequirement(project.id, structuringInput);
+
+      if (result.ok) {
+        setRequirementText("");
+        setMessage("Brief 生成任务已创建。系统正在等待后台处理，成功后会自动显示在下方表格。");
+        await onRefresh();
+        await waitForRequirementStructuringJob(result.data.jobId, pollId);
+      } else {
+        setError(result.error.message);
+      }
+    } finally {
+      if (briefJobPollRef.current === pollId) {
+        setSubmitting(false);
+      }
+    }
+  }
+
+  async function waitForRequirementStructuringJob(jobId: string, pollId: number) {
+    const maxAttempts = 120;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      await wait(attempt === 0 ? 1200 : 2000);
+
+      if (briefJobPollRef.current !== pollId) return;
+
+      const result = await fetchJob(jobId);
+      if (!result.ok) {
+        setError(result.error.message);
+        await onRefresh();
+        return;
+      }
+
+      const job = result.data.job;
+      if (job.status === "succeeded") {
+        setMessage("标准化 Brief 已生成，已自动刷新到下方表格。");
+        await onRefresh();
+        return;
+      }
+
+      if (job.status === "failed" || job.status === "cancelled") {
+        setError(job.userMessage ?? "Brief 生成失败。请调整输入内容后重试。");
+        await onRefresh();
+        return;
+      }
+
+      if (attempt === 0 || attempt % 5 === 0) {
+        setMessage(job.userMessage ?? "Brief 正在后台生成，完成后会自动显示在下方表格。");
+        await onRefresh();
+      }
     }
 
-    setSubmitting(false);
+    setMessage("Brief 仍在后台生成。系统已保存任务状态，你可以稍后回到本项目继续查看。");
+    await onRefresh();
   }
 
   async function handleFiles(files: FileList | File[], forcedAssetType?: string) {
@@ -4706,7 +5697,9 @@ function buildRequirementStructuringInput({
     blocks.push(assetAnalysisBlock);
   }
 
-  blocks.push("【约束】只根据材料中明确出现的信息填写字段；不确定或缺失的信息放入 openQuestions。");
+  blocks.push(
+    "【标准化 Brief 规则】必须尽量抽取：品牌/客户、项目内容、视频目标、交付形式、时间节点、敏感内容或授权风险。建议抽取但不阻塞推进：目标受众、风格参考、投放渠道、时长、核心卖点、预算、客户偏好、参考案例。可后续补充：角色、场景、特效复杂度、画面细节、文件规格、审核人和反馈规则。只根据材料中明确出现的信息填写字段；缺失或不确定的信息放入 openQuestions，但 openQuestions 只作为待确认提示，不代表 Brief 不可进入下一环节。"
+  );
   return blocks.join("\n\n");
 }
 
@@ -4746,6 +5739,109 @@ function extractArtifactStringArray(value: unknown) {
   return formatted ? [formatted] : [];
 }
 
+function BriefStructuringJobNotice({ job }: { job: JobSummary | null }) {
+  if (!job) {
+    return (
+      <div className="mt-3 rounded-card-sm border border-dashed border-[var(--border-soft)] bg-[var(--surface-card)] p-4 text-sm leading-6 text-[var(--text-secondary)]">
+        还没有标准化 Brief。先在上方投放客户原始信息，再让 AI 整理成标准 Brief。
+      </div>
+    );
+  }
+
+  const isFailed = job.status === "failed" || job.status === "cancelled";
+  const isWaiting = job.status === "queued" || job.status === "retrying";
+  const isRunning = job.status === "processing";
+  const toneClass = isFailed
+    ? "border-[var(--cool-alert-bg)] bg-[var(--cool-alert-bg)] text-[var(--warning)]"
+    : isRunning
+      ? "border-[var(--accent-subtle)] bg-[var(--accent-subtle)] text-[var(--accent)]"
+      : "border-[var(--border-soft)] bg-[var(--surface-card)] text-[var(--text-secondary)]";
+  const title = isFailed
+    ? "Brief 生成失败"
+    : isRunning
+      ? "Brief 正在生成"
+      : isWaiting
+        ? "Brief 生成任务已排队"
+        : "Brief 生成任务状态";
+  const detail =
+    job.userMessage ??
+    (isWaiting
+      ? "任务已经创建，但需要后台 worker 执行后才会生成标准化 Brief。"
+      : isRunning
+        ? "系统正在调用模型整理客户需求，完成后刷新工作台即可查看 Brief。"
+        : "任务已有状态记录，但还没有生成标准化 Brief。");
+
+  return (
+    <div className={cn("mt-3 rounded-card-sm border p-4 text-sm leading-6", toneClass)}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="font-semibold">{title}</p>
+        <span className="rounded-full bg-[var(--surface-card)] px-2 py-0.5 text-xs font-semibold text-[var(--text-secondary)]">
+          {parseStatusLabel(job.status)}
+        </span>
+      </div>
+      <p className="mt-2">{detail}</p>
+      <p className="mt-2 text-xs opacity-80">任务：{job.title} · {formatDateTime(job.updatedAt)}</p>
+    </div>
+  );
+}
+
+function BriefInternalConfirmBox({
+  projectId,
+  latest,
+  openQuestions,
+  onRefresh,
+}: {
+  projectId: string;
+  latest: ArtifactView | null;
+  openQuestions: string[];
+  onRefresh: () => Promise<void>;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleConfirm() {
+    setConfirming(true);
+    setMessage(null);
+    setError(null);
+
+    const result = await confirmRequirementBrief(projectId);
+    if (result.ok) {
+      setMessage(result.data.message);
+      await onRefresh();
+    } else {
+      setError(result.error.message);
+    }
+
+    setConfirming(false);
+  }
+
+  return (
+    <section className="ds-card-soft p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium">内部确认推进</p>
+          <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
+            团队判断当前 Brief 已经够用时，可直接进入风险体检；待确认项会继续保留为后续风险提示。
+          </p>
+          {latest && openQuestions.length > 0 && (
+            <p className="mt-2 text-xs leading-5 text-[var(--warning)]">
+              当前还有 {openQuestions.length} 项待确认，但不会阻塞推进。
+            </p>
+          )}
+        </div>
+        <Button type="button" disabled={!latest || confirming} onClick={() => void handleConfirm()}>
+          {confirming ? <Loader2 className="animate-spin" size={15} /> : <CheckCircle2 size={15} />}
+          确认当前 Brief 足够，进入风险体检
+        </Button>
+      </div>
+      {!latest && <p className="mt-2 text-xs leading-5 text-[var(--warning)]">请先生成标准化 Brief。</p>}
+      {error && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm text-[var(--warning)]">{error}</div>}
+      {message && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-3 text-sm text-[var(--success)]">{message}</div>}
+    </section>
+  );
+}
+
 function StructuredRequirementPreview({ artifact }: { artifact: ArtifactView }) {
   const data = artifact.data as Partial<Record<string, unknown>>;
   const rows: Array<[string, unknown]> = [
@@ -4780,7 +5876,7 @@ function StructuredRequirementPreview({ artifact }: { artifact: ArtifactView }) 
       </div>
       {openQuestions.length > 0 && (
         <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3">
-          <p className="text-xs font-medium text-[var(--warning)]">待客户补充确认</p>
+          <p className="text-xs font-medium text-[var(--warning)]">待确认项，可带入后续环节</p>
           <ol className="mt-2 list-decimal space-y-1 pl-4 text-sm leading-6 text-[var(--warning)]">
             {openQuestions.map((question, index) => (
               <li key={`${question}-${index}`}>{question}</li>
@@ -5247,6 +6343,7 @@ function TechnicalFeasibilityReviewCard({
 function CreativeDirectionsCard({
   project,
   user,
+  jobs,
   directions,
   expansions,
   generatedImages,
@@ -5257,6 +6354,7 @@ function CreativeDirectionsCard({
 }: {
   project: ProjectSummary;
   user: CurrentUser;
+  jobs: JobSummary[];
   directions: CreativeDirectionView[];
   expansions: CreativeExpansionView[];
   generatedImages: GeneratedImageView[];
@@ -5267,35 +6365,268 @@ function CreativeDirectionsCard({
 }) {
   const [generating, setGenerating] = useState(false);
   const [savingDirectionId, setSavingDirectionId] = useState<string | null>(null);
-  const [reviewingDirectionId, setReviewingDirectionId] = useState<string | null>(null);
   const [expandingDirectionId, setExpandingDirectionId] = useState<string | null>(null);
   const [generatingImageExpansionId, setGeneratingImageExpansionId] = useState<string | null>(null);
+  const [generatingSelectedAtmosphere, setGeneratingSelectedAtmosphere] = useState(false);
   const [creatingRound, setCreatingRound] = useState<1 | 2 | null>(null);
   const [reviewingRoundId, setReviewingRoundId] = useState<string | null>(null);
+  const [createdRoundReview, setCreatedRoundReview] = useState<{ roundId: string; url: string; code: string } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [directionError, setDirectionError] = useState<string | null>(null);
+  const creativeDirectionJobPollRef = useRef(0);
+  const creativeAssetJobPollRef = useRef(0);
   const canGenerate = user.role === "creative" || user.role === "admin";
   const canEdit = user.role === "creative" || user.role === "admin";
   const latestArtifact = artifacts.find((artifact) => artifact.kind === "creative_direction");
-  const selectedCount = directions.filter((direction) => direction.isSelected).length;
+  const latestDirectionJob = jobs.find((job) => job.type === "creative_direction_generation") ?? null;
+  const latestCreativeAssetJob = jobs.find((job) => job.type === "creative_expansion_generation" || job.type === "atmosphere_image_generation") ?? null;
+  const latestDirectionJobStatus = latestDirectionJob?.status;
+  const latestDirectionJobId = latestDirectionJob?.id;
+  const latestCreativeAssetJobStatus = latestCreativeAssetJob?.status;
+  const latestCreativeAssetJobId = latestCreativeAssetJob?.id;
+  const latestCreativeAssetJobLabel = latestCreativeAssetJob ? creativeAssetJobTypeLabel(latestCreativeAssetJob.type) : "故事大纲";
+  const hasRunningDirectionJob =
+    directions.length === 0 &&
+    (latestDirectionJobStatus === "queued" || latestDirectionJobStatus === "processing" || latestDirectionJobStatus === "retrying");
+  const hasRunningCreativeAssetJob =
+    latestCreativeAssetJobStatus === "queued" || latestCreativeAssetJobStatus === "processing" || latestCreativeAssetJobStatus === "retrying";
+  const selectedDirections = directions.filter((direction) => direction.isSelected);
+  const selectedDirectionIdSet = new Set(selectedDirections.map((direction) => direction.id));
+  const selectedCount = selectedDirections.length;
+  const selectedExpansionCount = expansions.filter((expansion) => selectedDirectionIdSet.has(expansion.directionId)).length;
+  const selectedAtmosphereTargetCount = selectedExpansionCount * 4;
+  const selectedAtmosphereImageCount = generatedImages.filter(
+    (image) => image.directionId && selectedDirectionIdSet.has(image.directionId) && isGeneratedImageRunningOrDone(image)
+  ).length;
   const round1 = creativeProposalRounds.find((round) => round.roundNumber === 1) ?? null;
   const round2 = creativeProposalRounds.find((round) => round.roundNumber === 2) ?? null;
+  const selectedDirectionIds = selectedDirections.map((direction) => direction.id);
+  const round1MatchesSelection = isCreativeRoundMatchingSelection(round1, selectedDirectionIds);
+  const round2MatchesSelection = isCreativeRoundMatchingSelection(round2, selectedDirectionIds);
+  const activeRound1 = round1MatchesSelection ? round1 : null;
+  const activeRound2 = round2MatchesSelection ? round2 : null;
+  const round1ReviewTask = findCreativeRoundReviewTask(clientReviewTasks, activeRound1, "creative_round_1");
+  const round2ReviewTask = findCreativeRoundReviewTask(clientReviewTasks, activeRound2, "creative_round_2");
+  const creativeAssetJobAffectsCurrentStep = !activeRound1 && (selectedExpansionCount === 0 || selectedAtmosphereImageCount < selectedAtmosphereTargetCount);
+  const creativeAssetJobBlocksCurrentStep =
+    hasRunningCreativeAssetJob &&
+    creativeAssetJobAffectsCurrentStep;
+  const latestCreativeAssetJobError =
+    latestCreativeAssetJob && creativeAssetJobAffectsCurrentStep && (latestCreativeAssetJob.status === "failed" || latestCreativeAssetJob.status === "cancelled")
+      ? `${latestCreativeAssetJobLabel}生成失败：${latestCreativeAssetJob.userMessage ?? "任务没有完成，请稍后重试。"}`
+      : null;
+  const latestCreativeAssetJobMessage =
+    latestCreativeAssetJob && creativeAssetJobBlocksCurrentStep
+      ? `${latestCreativeAssetJobLabel}正在生成：${latestCreativeAssetJob.userMessage ?? "任务已创建，系统正在后台处理。"}`
+      : creativeAssetJobAffectsCurrentStep && latestCreativeAssetJob?.status === "succeeded" && latestCreativeAssetJob.type === "creative_expansion_generation" && selectedExpansionCount > 0 && selectedAtmosphereImageCount === 0
+        ? "故事大纲已生成。现在可以继续点击生成已选方向氛围图。"
+        : null;
+  const selectedDirectionCards = directions.filter((direction) => direction.isSelected);
+  const unselectedDirectionCards = directions.filter((direction) => !direction.isSelected);
+  const visibleDirectionError =
+    directionError ??
+    (directions.length === 0 && (latestDirectionJobStatus === "failed" || latestDirectionJobStatus === "cancelled")
+      ? latestDirectionJob?.userMessage ?? "创意方向生成失败。请补充 Brief 或稍后重试。"
+      : latestCreativeAssetJobError);
+  const visibleDirectionMessage =
+    message ??
+    (hasRunningDirectionJob
+      ? latestDirectionJob?.userMessage ?? "4 个创意方向正在后台生成，完成后会自动显示在下方卡片。"
+      : latestCreativeAssetJobMessage);
+  const canLaunchRoundReview = user.role === "business" || user.role === "admin";
+  const sop3FlowState = deriveSop3FlowState({
+    directionCount: directions.length,
+    selectedDirectionCount: selectedCount,
+    selectedExpansionCount,
+    selectedAtmosphereTargetCount,
+    selectedAtmosphereImageCount,
+    hasRound1: Boolean(activeRound1),
+    hasRound2: Boolean(activeRound2),
+    round1ReviewStatus: round1ReviewTask?.status ?? null,
+    round2ReviewStatus: round2ReviewTask?.status ?? null,
+    canGenerate,
+    canCreateRound: canEdit,
+    canLaunchReview: canLaunchRoundReview,
+    hasRunningDirectionJob,
+    hasRunningCreativeAssetJob: creativeAssetJobBlocksCurrentStep,
+  });
+  const primaryActionBusy =
+    generating ||
+    generatingSelectedAtmosphere ||
+    creatingRound !== null ||
+    reviewingRoundId !== null ||
+    hasRunningDirectionJob ||
+    creativeAssetJobBlocksCurrentStep;
+
+  function handlePrimarySop3Action() {
+    if (sop3FlowState.primaryActionKey === "generate_directions") {
+      void handleGenerate();
+      return;
+    }
+
+    if (sop3FlowState.primaryActionKey === "confirm_selection") {
+      setDirectionError("请先在下方创意方向卡片中选择至少 1 个方向。");
+      return;
+    }
+
+    if (sop3FlowState.primaryActionKey === "generate_expansions" || sop3FlowState.primaryActionKey === "generate_atmosphere") {
+      void handleGenerateSelectedAtmosphereImages();
+      return;
+    }
+
+    if (sop3FlowState.primaryActionKey === "create_round_1") {
+      void handleCreateRound(1);
+      return;
+    }
+
+    if (sop3FlowState.primaryActionKey === "launch_round_1_review" && activeRound1) {
+      void handleCreateRoundClientReview(activeRound1);
+      return;
+    }
+
+    if (sop3FlowState.primaryActionKey === "confirm_round_1_feedback" || sop3FlowState.primaryActionKey === "create_round_2") {
+      void handleCreateRound(2);
+      return;
+    }
+
+    if (sop3FlowState.primaryActionKey === "launch_round_2_review" && activeRound2) {
+      void handleCreateRoundClientReview(activeRound2);
+      return;
+    }
+
+    if (sop3FlowState.primaryActionKey === "enter_quote_contract") {
+      setMessage("最终方向已确认，请进入上方 SOP 4 报价合同模块继续。");
+    }
+  }
+
+  const waitForCreativeDirectionJob = useCallback(
+    async (jobId: string, pollId: number) => {
+      const maxAttempts = 90;
+
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        await wait(attempt === 0 ? 1200 : 2000);
+
+        if (creativeDirectionJobPollRef.current !== pollId) return;
+
+        const result = await fetchJob(jobId);
+        if (!result.ok) {
+          setDirectionError(result.error.message);
+          await onRefresh();
+          return;
+        }
+
+        const job = result.data.job;
+        if (job.status === "succeeded") {
+          setMessage("4 个创意方向已生成，已自动刷新到下方卡片。");
+          await onRefresh();
+          return;
+        }
+
+        if (job.status === "failed" || job.status === "cancelled") {
+          setDirectionError(job.userMessage ?? "创意方向生成失败。请补充 Brief 或稍后重试。");
+          await onRefresh();
+          return;
+        }
+
+        if (attempt === 0 || attempt % 5 === 0) {
+          setMessage(job.userMessage ?? "4 个创意方向正在后台生成，完成后会自动显示在下方卡片。");
+          await onRefresh();
+        }
+      }
+
+      setMessage("4 个创意方向仍在后台生成。系统已保存任务状态，你可以稍后回到本项目继续查看。");
+      await onRefresh();
+    },
+    [onRefresh]
+  );
+
+  const waitForCreativeAssetJobStatus = useCallback(
+    async (jobId: string, pollId: number) => {
+      const maxAttempts = 360;
+
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        await wait(attempt === 0 ? 1200 : 2000);
+
+        if (creativeAssetJobPollRef.current !== pollId) return;
+
+        const result = await fetchJob(jobId);
+        if (!result.ok) {
+          setDirectionError(result.error.message);
+          await onRefresh();
+          return;
+        }
+
+        const job = result.data.job;
+        const label = creativeAssetJobTypeLabel(job.type);
+        if (job.status === "succeeded") {
+          setMessage(`${label}任务已完成，已自动刷新工作台。`);
+          await onRefresh();
+          return;
+        }
+
+        if (job.status === "failed" || job.status === "cancelled") {
+          setDirectionError(`${label}生成失败：${job.userMessage ?? "任务没有完成，请稍后重试。"}`);
+          await onRefresh();
+          return;
+        }
+
+        if (attempt === 0 || attempt % 5 === 0) {
+          setMessage(`${label}正在生成：${job.userMessage ?? "任务已创建，系统正在后台处理。"}`);
+          await onRefresh();
+        }
+      }
+
+      setMessage("生成任务仍在后台处理中。系统已保存任务状态，你可以稍后回到本项目继续查看。");
+      await onRefresh();
+    },
+    [onRefresh]
+  );
+
+  useEffect(() => {
+    return () => {
+      creativeDirectionJobPollRef.current += 1;
+      creativeAssetJobPollRef.current += 1;
+    };
+  }, [project.id]);
+
+  useEffect(() => {
+    if (!hasRunningDirectionJob || !latestDirectionJobId) return;
+
+    const pollId = creativeDirectionJobPollRef.current + 1;
+    creativeDirectionJobPollRef.current = pollId;
+    void waitForCreativeDirectionJob(latestDirectionJobId, pollId);
+  }, [hasRunningDirectionJob, latestDirectionJobId, waitForCreativeDirectionJob]);
+
+  useEffect(() => {
+    if (!creativeAssetJobBlocksCurrentStep || !latestCreativeAssetJobId) return;
+
+    const pollId = creativeAssetJobPollRef.current + 1;
+    creativeAssetJobPollRef.current = pollId;
+    void waitForCreativeAssetJobStatus(latestCreativeAssetJobId, pollId);
+  }, [creativeAssetJobBlocksCurrentStep, latestCreativeAssetJobId, waitForCreativeAssetJobStatus]);
 
   async function handleGenerate() {
     setGenerating(true);
     setMessage(null);
     setDirectionError(null);
+    const pollId = creativeDirectionJobPollRef.current + 1;
+    creativeDirectionJobPollRef.current = pollId;
 
-    const result = await generateCreativeDirections(project.id);
-    if (result.ok) {
-      setMessage(result.data.message);
-      await onRefresh();
-    } else {
-      setDirectionError(result.error.message);
+    try {
+      const result = await generateCreativeDirections(project.id);
+      if (result.ok) {
+        setMessage(result.data.message);
+        await onRefresh();
+        await waitForCreativeDirectionJob(result.data.jobId, pollId);
+      } else {
+        setDirectionError(result.error.message);
+      }
+    } finally {
+      if (creativeDirectionJobPollRef.current === pollId) {
+        setGenerating(false);
+      }
     }
-
-    setGenerating(false);
   }
 
   async function handleSelection(direction: CreativeDirectionView) {
@@ -5340,26 +6671,6 @@ function CreativeDirectionsCard({
     setSavingDirectionId(null);
   }
 
-  async function handleReviewDirection(direction: CreativeDirectionView, action: CreativeDirectionReviewAction, reason: string) {
-    setReviewingDirectionId(direction.id);
-    setMessage(null);
-    setDirectionError(null);
-
-    const result = await reviewCreativeDirection(project.id, direction.id, {
-      action,
-      reason,
-    });
-
-    if (result.ok) {
-      setMessage(result.data.message);
-      await onRefresh();
-    } else {
-      setDirectionError(result.error.message);
-    }
-
-    setReviewingDirectionId(null);
-  }
-
   async function handleGenerateExpansions(direction: CreativeDirectionView) {
     setExpandingDirectionId(direction.id);
     setMessage(null);
@@ -5392,12 +6703,167 @@ function CreativeDirectionsCard({
     setGeneratingImageExpansionId(null);
   }
 
-  async function handleCreateRound(roundNumber: 1 | 2) {
-    setCreatingRound(roundNumber);
+  async function waitForCreativeJobs(jobIds: string[], label: string, maxAttempts = 180) {
+    const pendingJobIds = new Set(jobIds);
+    const failedMessages: string[] = [];
+
+    for (let attempt = 0; attempt < maxAttempts && pendingJobIds.size > 0; attempt += 1) {
+      await wait(attempt === 0 ? 1200 : 5000);
+
+      const results = await Promise.all(
+        Array.from(pendingJobIds).map(async (jobId) => ({
+          jobId,
+          result: await fetchJob(jobId),
+        }))
+      );
+
+      for (const { jobId, result } of results) {
+        if (!result.ok) {
+          failedMessages.push(result.error.message);
+          pendingJobIds.delete(jobId);
+          continue;
+        }
+
+        const job = result.data.job;
+        if (job.status === "succeeded") {
+          pendingJobIds.delete(jobId);
+          continue;
+        }
+
+        if (job.status === "failed" || job.status === "cancelled") {
+          failedMessages.push(job.userMessage ?? `${label}任务没有完成，请稍后重试。`);
+          pendingJobIds.delete(jobId);
+        }
+      }
+
+      if (pendingJobIds.size > 0 && (attempt === 0 || attempt % 3 === 0)) {
+        setMessage(`${label}仍在后台处理中，完成后会自动刷新当前项目。`);
+        await onRefresh();
+      }
+    }
+
+    return {
+      failedMessages,
+      timedOutCount: pendingJobIds.size,
+    };
+  }
+
+  async function handleGenerateSelectedAtmosphereImages() {
+    if (selectedDirections.length === 0) {
+      setDirectionError("请先选择至少 1 个创意方向，再生成对应的氛围图。");
+      return;
+    }
+
+    setGeneratingSelectedAtmosphere(true);
     setMessage(null);
     setDirectionError(null);
 
-    const directionIds = roundNumber === 2 ? directions.filter((direction) => direction.isSelected).map((direction) => direction.id) : directions.map((direction) => direction.id);
+    const selectedDirectionIds = selectedDirections.map((direction) => direction.id);
+    const selectedDirectionIdsSet = new Set(selectedDirectionIds);
+    const errors: string[] = [];
+
+    try {
+      const expansionCountsByDirection = new Map<string, number>();
+      for (const expansion of expansions.filter((item) => selectedDirectionIdsSet.has(item.directionId))) {
+        expansionCountsByDirection.set(expansion.directionId, (expansionCountsByDirection.get(expansion.directionId) ?? 0) + 1);
+      }
+      const expansionJobIds: string[] = [];
+
+      for (const direction of selectedDirections) {
+        if ((expansionCountsByDirection.get(direction.id) ?? 0) >= 4) continue;
+
+        const result = await generateCreativeExpansions(project.id, direction.id);
+        if (result.ok) {
+          expansionJobIds.push(result.data.jobId);
+        } else {
+          errors.push(`${direction.title}：${result.error.message}`);
+        }
+      }
+
+      if (expansionJobIds.length > 0) {
+        setMessage(`已为 ${expansionJobIds.length} 个已选方向创建故事大纲任务。故事大纲完成后，再继续生成氛围图。`);
+        await onRefresh();
+        const expansionWaitResult = await waitForCreativeJobs(expansionJobIds, "故事大纲");
+        if (expansionWaitResult.failedMessages.length > 0) {
+          setDirectionError(expansionWaitResult.failedMessages.slice(0, 3).join("；"));
+          await onRefresh();
+          return;
+        }
+        if (expansionWaitResult.timedOutCount > 0) {
+          setMessage(`${expansionWaitResult.timedOutCount} 个故事大纲任务仍在后台处理中。系统会继续保存任务状态；稍后看到故事大纲后再点击生成氛围图。`);
+          await onRefresh();
+          return;
+        }
+      }
+
+      const workspaceResult = await fetchWorkspace(project.id);
+      if (!workspaceResult.ok) {
+        setDirectionError(`故事大纲任务已保存，但刷新项目数据失败：${workspaceResult.error.message}`);
+        await onRefresh();
+        return;
+      }
+
+      const freshExpansions = workspaceResult.data.creativeExpansions.filter((expansion) => selectedDirectionIdsSet.has(expansion.directionId));
+      const freshGeneratedImages = workspaceResult.data.generatedImages;
+      if (freshExpansions.length === 0) {
+        setDirectionError("已选方向还没有可用于生图的故事大纲。请稍后刷新，或先为方向生成故事大纲。");
+        await onRefresh();
+        return;
+      }
+
+      const imageJobIds: string[] = [];
+      for (const expansion of freshExpansions) {
+        const existingImageCount = freshGeneratedImages.filter((image) => image.expansionId === expansion.id && isGeneratedImageRunningOrDone(image)).length;
+        const missingImageCount = Math.max(0, 4 - existingImageCount);
+        if (missingImageCount === 0) continue;
+
+        for (let index = 0; index < missingImageCount; index += 1) {
+          const result = await generateAtmosphereImage(project.id, expansion.directionId, expansion.id);
+          if (result.ok) {
+            imageJobIds.push(result.data.jobId);
+          } else {
+            errors.push(`${expansion.title}：${result.error.message}`);
+          }
+        }
+      }
+
+      if (imageJobIds.length > 0) {
+        setMessage(`已为已选方向补齐 ${imageJobIds.length} 张氛围图候选任务，完成后会自动刷新。`);
+        await onRefresh();
+        const imageWaitResult = await waitForCreativeJobs(imageJobIds, "氛围图");
+        errors.push(...imageWaitResult.failedMessages);
+        if (imageWaitResult.timedOutCount > 0) {
+          setMessage(`${imageWaitResult.timedOutCount} 张氛围图候选仍在后台处理中。系统已保存任务状态；完成后会继续在本项目显示。`);
+          await onRefresh();
+          return;
+        }
+      }
+
+      if (errors.length > 0) {
+        setDirectionError(errors.slice(0, 3).join("；"));
+      }
+
+      if (imageJobIds.length > 0) {
+        setMessage(`已创建 ${imageJobIds.length} 张已选方向氛围图候选任务；已有结果或正在生成的候选图不会重复创建。`);
+      } else if (expansionJobIds.length > 0) {
+        setMessage("故事卡已补齐；已有候选图任务不会重复创建。");
+      } else {
+        setMessage("已选方向已有完整候选图任务或结果，无需重复创建。");
+      }
+
+      await onRefresh();
+    } finally {
+      setGeneratingSelectedAtmosphere(false);
+    }
+  }
+
+  async function handleCreateRound(roundNumber: 1 | 2) {
+    setCreatingRound(roundNumber);
+    setCreatedRoundReview(null);
+    setMessage(null);
+    setDirectionError(null);
+
+    const directionIds = selectedDirections.map((direction) => direction.id);
     const result = await createCreativeProposalRound(project.id, {
       roundNumber,
       directionIds,
@@ -5414,12 +6880,30 @@ function CreativeDirectionsCard({
 
   async function handleCreateRoundClientReview(round: CreativeProposalRoundView) {
     setReviewingRoundId(round.id);
+    setCreatedRoundReview(null);
     setMessage(null);
     setDirectionError(null);
 
-    const result = await createCreativeProposalRoundClientReview(project.id, round.id);
+    const selectedDirectionIds = selectedDirections.map((direction) => direction.id);
+    let reviewRound = round;
+    if (!isCreativeRoundMatchingSelection(round, selectedDirectionIds)) {
+      const savedRoundResult = await createCreativeProposalRound(project.id, {
+        roundNumber: round.roundNumber,
+        directionIds: selectedDirectionIds,
+      });
+      if (savedRoundResult.ok) {
+        reviewRound = savedRoundResult.data.round;
+      } else {
+        setDirectionError(savedRoundResult.error.message);
+        setReviewingRoundId(null);
+        return;
+      }
+    }
+
+    const result = await createCreativeProposalRoundClientReview(project.id, reviewRound.id);
     if (result.ok) {
-      setMessage(`${result.data.message} 验证码：${result.data.verificationCode}；链接：${result.data.reviewUrl}`);
+      setCreatedRoundReview({ roundId: reviewRound.id, url: result.data.reviewUrl, code: result.data.verificationCode });
+      setMessage(result.data.message);
       await onRefresh();
     } else {
       setDirectionError(result.error.message);
@@ -5434,76 +6918,116 @@ function CreativeDirectionsCard({
         <div>
           <div className="flex items-center gap-2">
             <Sparkles size={18} />
-            <h3 className="ds-text-section-title">4 个创意方向</h3>
+            <h3 className="ds-text-section-title">两轮创意视觉提案</h3>
           </div>
           <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-            基于结构化需求、资料解析和标签评分生成真实创意卡片。卡片内容、选择状态和人工改写都会入库保存。
+            先生成 4 个内部方向，再选择要进入甲方 Round 1 的方向。甲方看到的是整轮提案包，不是零散方向卡片。
           </p>
         </div>
+      </div>
+
+      <Sop3FlowStrip state={sop3FlowState} />
+
+      <div className="sop3-primary-action">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">{sop3FlowState.primaryLabel}</p>
+          <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">{sop3FlowState.primaryDescription}</p>
+          {sop3FlowState.disabledReason && <p className="mt-1 text-xs leading-5 text-[var(--warning)]">{sop3FlowState.disabledReason}</p>}
+        </div>
         <button
-          onClick={() => void handleGenerate()}
-          disabled={!canGenerate || generating}
-          className="inline-flex h-9 items-center justify-center gap-2 rounded-card-sm bg-[var(--accent)] px-3 text-sm font-medium text-[var(--accent-foreground)] disabled:opacity-60"
-          title={canGenerate ? "生成 4 个创意方向" : "当前角色不能发起创意方向生成"}
+          type="button"
+          onClick={handlePrimarySop3Action}
+          disabled={Boolean(sop3FlowState.disabledReason) || primaryActionBusy}
+          className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-card-sm bg-[var(--accent)] px-3 text-sm font-medium text-[var(--accent-foreground)] disabled:opacity-60"
         >
-          {generating ? <Loader2 className="animate-spin" size={16} /> : <WandSparkles size={16} />}
-          {directions.length > 0 ? "重新生成" : "生成 4 个方向"}
+          {primaryActionBusy ? (
+            <Loader2 className="animate-spin" size={16} />
+          ) : sop3FlowState.primaryActionKey === "launch_round_1_review" || sop3FlowState.primaryActionKey === "launch_round_2_review" ? (
+            <Send size={16} />
+          ) : (
+            <WandSparkles size={16} />
+          )}
+          {sop3FlowState.primaryLabel}
         </button>
       </div>
 
-      <div className="mt-4 flex flex-wrap gap-2 text-xs">
+      <div className="mt-3 flex flex-wrap gap-2 text-xs">
         <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">已选 {selectedCount}</span>
-        {latestArtifact && <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">快照 v{latestArtifact.version}</span>}
+        <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">已选方向大纲 {selectedExpansionCount}</span>
+        <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">氛围图候选 {selectedAtmosphereImageCount}/{selectedAtmosphereTargetCount}</span>
+        {latestArtifact && <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">方向快照 v{latestArtifact.version}</span>}
         {!canGenerate && <span className="ds-pill ds-pill-yellow">商务可选择，生成和改写需创意或管理员</span>}
       </div>
 
-      {directionError && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm text-[var(--warning)]">{directionError}</div>}
-      {message && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-3 text-sm text-[var(--success)]">{message}</div>}
+      <div className="mt-3 flex flex-wrap gap-2 text-xs">
+        <div className="flex flex-wrap gap-2 text-xs">
+          {directions.length > 0 && canGenerate && (
+            <button
+              type="button"
+              onClick={() => void handleGenerate()}
+              disabled={generating || hasRunningDirectionJob}
+              className="inline-flex h-8 items-center gap-2 rounded-card-sm border border-[var(--border-soft)] px-3 font-medium disabled:opacity-50"
+            >
+              {generating || hasRunningDirectionJob ? <Loader2 className="animate-spin" size={13} /> : <RefreshCcw size={13} />}
+              重新生成方向
+            </button>
+          )}
+        </div>
+      </div>
+
+      {visibleDirectionError && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm text-[var(--warning)]">{visibleDirectionError}</div>}
+      {visibleDirectionMessage && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-3 text-sm text-[var(--success)]">{visibleDirectionMessage}</div>}
 
       {directions.length === 0 ? (
         <div className="mt-4 ds-card-sm p-3 text-sm text-[var(--text-secondary)]">
           还没有创意方向。请先完成需求结构化或资料解析，再由创意团队/管理员发起 4 个创意方向生成。
         </div>
       ) : (
-        <div className="mt-4 grid gap-3 xl:grid-cols-2">
+        <div className="mt-4 grid gap-3 md:grid-cols-2 2xl:grid-cols-4">
           {directions.map((direction) => (
             <CreativeDirectionCard
               key={direction.id}
               direction={direction}
               expansions={expansions.filter((item) => item.directionId === direction.id)}
-              generatedImages={generatedImages.filter((item) => item.directionId === direction.id)}
               canEdit={canEdit}
               canExpand={canGenerate}
-              canSubmitReview={user.role === "creative" || user.role === "admin"}
-              canAdminReview={user.role === "admin"}
               editing={editingId === direction.id}
-              saving={savingDirectionId === direction.id || expandingDirectionId === direction.id || reviewingDirectionId === direction.id}
-              generatingImageExpansionId={generatingImageExpansionId}
+              saving={savingDirectionId === direction.id || expandingDirectionId === direction.id}
               onToggleEdit={() => setEditingId((current) => (current === direction.id ? null : direction.id))}
               onSelection={() => void handleSelection(direction)}
               onGenerateExpansions={() => void handleGenerateExpansions(direction)}
-              onGenerateAtmosphereImage={(expansion) => void handleGenerateAtmosphereImage(direction, expansion)}
-              onReview={(action, reason) => void handleReviewDirection(direction, action, reason)}
               onSave={(formData) => void handleSave(direction, formData)}
-              onRefresh={onRefresh}
             />
           ))}
         </div>
       )}
 
+      {directions.length > 0 && (
+        <CreativeExpansionBoard
+          projectId={project.id}
+          selectedDirections={selectedDirectionCards}
+          unselectedDirections={unselectedDirectionCards}
+          expansions={expansions}
+          generatedImages={generatedImages}
+          canGenerateImage={canGenerate}
+          canReviewImage={canEdit}
+          generatingImageExpansionId={generatingImageExpansionId}
+          onGenerateAtmosphereImage={(direction, expansion) => void handleGenerateAtmosphereImage(direction, expansion)}
+          onRefresh={onRefresh}
+        />
+      )}
+
       <CreativeProposalRoundsPanel
         directions={directions}
         rounds={creativeProposalRounds}
-        round1={round1}
-        round2={round2}
+        round1={activeRound1}
+        round2={activeRound2}
         clientReviewTasks={clientReviewTasks}
         canCreateRound={canEdit}
-        canLaunchReview={user.role === "business" || user.role === "admin"}
-        projectId={project.id}
-        canSelectSceneImages={canEdit}
+        canLaunchReview={canLaunchRoundReview}
         creatingRound={creatingRound}
         reviewingRoundId={reviewingRoundId}
-        onRefresh={onRefresh}
+        createdRoundReview={createdRoundReview}
         onCreateRound={handleCreateRound}
         onCreateRoundClientReview={(round) => void handleCreateRoundClientReview(round)}
       />
@@ -5519,11 +7043,9 @@ function CreativeProposalRoundsPanel({
   clientReviewTasks,
   canCreateRound,
   canLaunchReview,
-  projectId,
-  canSelectSceneImages,
   creatingRound,
   reviewingRoundId,
-  onRefresh,
+  createdRoundReview,
   onCreateRound,
   onCreateRoundClientReview,
 }: {
@@ -5534,62 +7056,66 @@ function CreativeProposalRoundsPanel({
   clientReviewTasks: ClientReviewTaskView[];
   canCreateRound: boolean;
   canLaunchReview: boolean;
-  projectId: string;
-  canSelectSceneImages: boolean;
   creatingRound: 1 | 2 | null;
   reviewingRoundId: string | null;
-  onRefresh: () => Promise<void>;
+  createdRoundReview: { roundId: string; url: string; code: string } | null;
   onCreateRound: (roundNumber: 1 | 2) => void;
   onCreateRoundClientReview: (round: CreativeProposalRoundView) => void;
 }) {
-  const selectedDirectionIds = directions.filter((direction) => direction.isSelected).map((direction) => direction.id);
+  const selectedDirections = directions.filter((direction) => direction.isSelected);
+  const selectedDirectionIds = selectedDirections.map((direction) => direction.id);
+  const round1Directions = round1 ? directions.filter((direction) => round1.directionIds.includes(direction.id)) : selectedDirections;
+  const round2Directions = round2 ? directions.filter((direction) => round2.directionIds.includes(direction.id)) : selectedDirections;
   const round1ReviewTask = findCreativeRoundReviewTask(clientReviewTasks, round1, "creative_round_1");
   const round2ReviewTask = findCreativeRoundReviewTask(clientReviewTasks, round2, "creative_round_2");
   return (
     <div className="mt-5 grid gap-3">
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border-soft)] pt-4">
         <div>
-          <p className="text-sm font-medium">SOP 3 两轮创意视觉提案</p>
+          <p className="text-sm font-medium">Round 提案包与甲方审核</p>
           <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
-            第一轮固定展示 4 个方向，每个方向 2 个视觉场景；第二轮只深化保留方向，每个方向 4 个视觉场景。候选图只展示真实已生成记录或待生成状态。
+            Round 1 用于甲方初选方向和视觉偏好；Round 2 用于确认最终剧本方向和视觉风格。每次创建 Round 都会保存一个提案包快照。
           </p>
         </div>
         <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">已保存 {rounds.length} 轮</span>
       </div>
+      <div className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3 text-xs leading-5 text-[var(--text-secondary)]">
+        当前“选择 / 确认方向”只会保存内部保留方向，不会直接进入下一阶段。完整流转是：勾选要给甲方看的方向 → 创建 Round 1 → 发起甲方审核 → 根据反馈调整保留方向 → 创建 Round 2 → 发起甲方审核 → 第二轮甲方通过后进入 SOP 4。
+      </div>
 
       <CreativeProposalRoundSection
-        title="Round 1 / 四方向初选"
-        detail="用于让甲方确认方向优先级、保留方向和视觉偏好。"
+        title="Round 1 · 甲方初选提案包"
+        detail="甲方在这一轮选择 1 到 3 个剧本方向，并选择 1 到 2 个喜欢的视觉风格。"
+        createLabel="创建 Round 1 提案包"
+        reviewLabel="发起 Round 1 甲方审核"
         round={round1}
         expectedSceneCount={2}
-        directions={directions}
+        directions={round1Directions}
         reviewTask={round1ReviewTask}
-        canCreateRound={canCreateRound && directions.length === 4}
+        canCreateRound={canCreateRound && selectedDirectionIds.length > 0}
         canLaunchReview={canLaunchReview}
-        disabledMessage={directions.length === 4 ? null : "需要先生成恰好 4 个创意方向，才能创建第一轮提案。"}
+        disabledMessage={selectedDirectionIds.length > 0 ? null : "请先选择至少 1 个方向，才能创建第一轮提案。"}
         creating={creatingRound === 1}
         reviewingRoundId={reviewingRoundId}
-        projectId={projectId}
-        canSelectSceneImages={canSelectSceneImages}
-        onRefresh={onRefresh}
+        createdReview={createdRoundReview?.roundId === round1?.id ? createdRoundReview : null}
         onCreateRound={() => onCreateRound(1)}
         onCreateRoundClientReview={onCreateRoundClientReview}
       />
       <CreativeProposalRoundSection
-        title="Round 2 / 保留方向深化"
-        detail="用于确认第二轮脚本与视觉方向，确认后再进入 SOP 4 报价合同。"
+        title="Round 2 · 最终剧本与视觉确认"
+        detail="甲方在这一轮确认最终剧本方向、关键场景画面和视觉风格。"
+        createLabel="创建 Round 2 提案包"
+        reviewLabel="发起最终甲方确认"
         round={round2}
         expectedSceneCount={4}
-        directions={directions.filter((direction) => selectedDirectionIds.includes(direction.id))}
+        directions={round2Directions}
         reviewTask={round2ReviewTask}
         canCreateRound={canCreateRound && selectedDirectionIds.length > 0}
         canLaunchReview={canLaunchReview}
         disabledMessage={selectedDirectionIds.length > 0 ? null : "需要先保留至少 1 个方向，才能创建第二轮深化提案。"}
         creating={creatingRound === 2}
         reviewingRoundId={reviewingRoundId}
-        projectId={projectId}
-        canSelectSceneImages={canSelectSceneImages}
-        onRefresh={onRefresh}
+        createdReview={createdRoundReview?.roundId === round2?.id ? createdRoundReview : null}
         onCreateRound={() => onCreateRound(2)}
         onCreateRoundClientReview={onCreateRoundClientReview}
       />
@@ -5602,15 +7128,25 @@ function findCreativeRoundReviewTask(
   round: CreativeProposalRoundView | null,
   reviewScene: "creative_round_1" | "creative_round_2"
 ) {
+  if (!round) return null;
   if (round?.clientReviewTaskId) {
     return tasks.find((task) => task.id === round.clientReviewTaskId) ?? null;
   }
   return tasks.find((task) => task.reviewScene === reviewScene) ?? null;
 }
 
+function isCreativeRoundMatchingSelection(round: CreativeProposalRoundView | null, selectedDirectionIds: string[]) {
+  if (!round) return false;
+  if (round.directionIds.length !== selectedDirectionIds.length) return false;
+  const selected = new Set(selectedDirectionIds);
+  return round.directionIds.every((id) => selected.has(id));
+}
+
 function CreativeProposalRoundSection({
   title,
   detail,
+  createLabel,
+  reviewLabel,
   round,
   expectedSceneCount,
   directions,
@@ -5620,14 +7156,14 @@ function CreativeProposalRoundSection({
   disabledMessage,
   creating,
   reviewingRoundId,
-  projectId,
-  canSelectSceneImages,
-  onRefresh,
+  createdReview,
   onCreateRound,
   onCreateRoundClientReview,
 }: {
   title: string;
   detail: string;
+  createLabel: string;
+  reviewLabel: string;
   round: CreativeProposalRoundView | null;
   expectedSceneCount: 2 | 4;
   directions: CreativeDirectionView[];
@@ -5637,9 +7173,7 @@ function CreativeProposalRoundSection({
   disabledMessage: string | null;
   creating: boolean;
   reviewingRoundId: string | null;
-  projectId: string;
-  canSelectSceneImages: boolean;
-  onRefresh: () => Promise<void>;
+  createdReview: { url: string; code: string } | null;
   onCreateRound: () => void;
   onCreateRoundClientReview: (round: CreativeProposalRoundView) => void;
 }) {
@@ -5656,10 +7190,10 @@ function CreativeProposalRoundSection({
             onClick={onCreateRound}
             disabled={!canCreateRound || creating}
             className="inline-flex h-8 items-center gap-2 rounded-card-sm border border-[var(--border-soft)] px-3 text-xs font-medium disabled:opacity-50"
-            title={disabledMessage ?? "创建本轮创意视觉提案"}
+            title={disabledMessage ?? createLabel}
           >
             {creating ? <Loader2 className="animate-spin" size={13} /> : <Plus size={13} />}
-            {round ? "生成新版本" : "创建本轮"}
+            {round ? "重新保存提案包快照" : createLabel}
           </button>
           {round && (
             <button
@@ -5670,7 +7204,7 @@ function CreativeProposalRoundSection({
               title={canLaunchReview ? "生成甲方审核链接" : "当前角色不能生成甲方审核链接"}
             >
               {reviewingRoundId === round.id ? <Loader2 className="animate-spin" size={13} /> : <Send size={13} />}
-              发起甲方审核
+              {reviewLabel}
             </button>
           )}
         </div>
@@ -5682,37 +7216,18 @@ function CreativeProposalRoundSection({
             <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">v{round.version}</span>
             <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">{creativeProposalRoundStatusLabel(round.status)}</span>
             <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">每方向 {expectedSceneCount} 个场景</span>
-            {reviewTask && <span className="ds-pill ds-pill-teal">甲方审核 {reviewTask.status}</span>}
+            {reviewTask && <span className="ds-pill ds-pill-teal">甲方审核 {clientReviewStatusLabel(reviewTask.status)}</span>}
           </div>
+          {createdReview && <CreativeRoundReviewAccessBox review={createdReview} />}
+          {reviewTask && !createdReview && (
+            <div className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3 text-xs leading-5 text-[var(--text-secondary)]">
+              <p className="font-medium text-[var(--text-primary)]">本轮甲方审核已发起</p>
+              <p className="mt-1">状态：{clientReviewStatusLabel(reviewTask.status)} · v{reviewTask.version} · {formatDateTime(reviewTask.updatedAt)}</p>
+              <p className="mt-1">出于安全原因，历史验证码不会再次明文展示；如找不到已发送给甲方的链接和验证码，请重新生成一轮审核链接。</p>
+            </div>
+          )}
           <CreativeProposalReviewFeedback task={reviewTask} />
-          {directions.map((direction) => {
-            const concepts = round.concepts.filter((concept) => concept.directionId === direction.id);
-            return (
-              <div key={direction.id} className="ds-card-soft p-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-xs font-medium">{direction.title}</p>
-                  <span className="ds-pill bg-[var(--surface-card)] text-[var(--text-secondary)]">
-                    {concepts.length}/{expectedSceneCount} 个视觉场景
-                  </span>
-                </div>
-                {concepts.length === 0 ? (
-                  <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">本方向还没有保存视觉场景。请重新创建本轮提案版本。</p>
-                ) : (
-                  <div className="mt-3 grid gap-2 md:grid-cols-2">
-                    {concepts.map((concept) => (
-                      <CreativeSceneConceptMiniCard
-                        key={`${concept.id}:${concept.images.filter((image) => image.isSelected).map((image) => image.id).join(",")}`}
-                        projectId={projectId}
-                        concept={concept}
-                        canSelect={canSelectSceneImages}
-                        onRefresh={onRefresh}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          <CreativeRoundSceneSummary round={round} directions={directions} expectedSceneCount={expectedSceneCount} />
         </div>
       ) : (
         <p className="mt-3 text-xs leading-5 text-[var(--text-secondary)]">本轮还未创建。创建后场景、候选图和后续审核状态都会保存到数据库。</p>
@@ -5721,129 +7236,77 @@ function CreativeProposalRoundSection({
   );
 }
 
-function CreativeSceneConceptMiniCard({
-  projectId,
-  concept,
-  canSelect,
-  onRefresh,
-}: {
-  projectId: string;
-  concept: CreativeSceneConceptView;
-  canSelect: boolean;
-  onRefresh: () => Promise<void>;
-}) {
-  const generatedCount = concept.images.filter((image) => image.status === "generated" || image.status === "selected").length;
-  const initialSelectedIds = useMemo(() => concept.images.filter((image) => image.isSelected).map((image) => image.id), [concept.images]);
-  const [selectedImageIds, setSelectedImageIds] = useState<string[]>(initialSelectedIds);
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const selectedCount = selectedImageIds.length;
-  const eligibleCount = concept.images.filter((image) => isSelectableCreativeSceneImage(image)).length;
-  const hasChanges = selectedImageIds.join("|") !== initialSelectedIds.join("|");
-
-  function toggleImage(image: CreativeSceneImageView) {
-    if (!canSelect || !isSelectableCreativeSceneImage(image) || saving) return;
-    setMessage(null);
-    setError(null);
-    setSelectedImageIds((current) => {
-      if (current.includes(image.id)) return current.filter((id) => id !== image.id);
-      if (current.length >= 4) return current;
-      return [...current, image.id];
-    });
-  }
-
-  async function handleSaveSelection() {
-    if (selectedImageIds.length === 0) {
-      setError("请至少选择 1 张已生成候选图，再保存本场景的确认结果。");
-      return;
-    }
-
-    setSaving(true);
-    setMessage(null);
-    setError(null);
-
-    const result = await selectCreativeSceneImages(projectId, concept.id, selectedImageIds);
-    if (result.ok) {
-      setMessage(result.data.message);
-      await onRefresh();
-    } else {
-      setError(result.error.message);
-    }
-
-    setSaving(false);
-  }
-
+function CreativeRoundReviewAccessBox({ review }: { review: { url: string; code: string } }) {
   return (
-    <div className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-2.5 text-xs">
-      <div className="flex items-start justify-between gap-2">
-        <p className="font-medium leading-5">{concept.sceneIndex}. {concept.title}</p>
-        <span className={cn("ds-pill", generatedCount > 0 ? "ds-pill-teal" : "ds-pill-yellow")}>{generatedCount}/{concept.requiredImageCount} 候选</span>
+    <div className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-xs">
+      <div className="grid gap-1">
+        <span className="font-medium">甲方审核链接</span>
+        <code className="break-all rounded bg-[var(--surface-soft)] px-2 py-1 text-[var(--text-secondary)]">{review.url}</code>
+        <button
+          type="button"
+          className="mt-2 inline-flex h-8 w-fit items-center gap-2 rounded-card-sm border border-[var(--border-soft)] px-3 text-xs font-medium"
+          onClick={() => void navigator.clipboard.writeText(review.url)}
+        >
+          <Copy size={13} />
+          复制链接
+        </button>
       </div>
-      <p className="mt-2 leading-5 text-[var(--text-secondary)]">{concept.description}</p>
-      <div className="mt-2 grid gap-1.5">
-        {concept.images.map((image) => (
-          <CreativeSceneImageChoice
-            key={image.id}
-            image={image}
-            checked={selectedImageIds.includes(image.id)}
-            disabled={!canSelect || saving || !isSelectableCreativeSceneImage(image) || (!selectedImageIds.includes(image.id) && selectedImageIds.length >= 4)}
-            onToggle={() => toggleImage(image)}
-          />
-        ))}
+      <div className="mt-2 grid gap-1">
+        <span className="font-medium">验证码 / 密钥</span>
+        <code className="w-fit rounded bg-[var(--surface-soft)] px-2 py-1 text-[var(--text-primary)]">{review.code}</code>
       </div>
-      {canSelect ? (
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => void handleSaveSelection()}
-            disabled={saving || selectedCount === 0 || !hasChanges}
-            className="inline-flex h-8 items-center gap-2 rounded-card-sm bg-[var(--foreground)] px-3 text-xs font-medium text-[var(--text-inverse)] disabled:opacity-60"
-            title={eligibleCount > 0 ? "保存本场景候选图选择" : "当前没有可确认的已生成候选图"}
-          >
-            {saving ? <Loader2 className="animate-spin" size={13} /> : <CheckCircle2 size={13} />}
-            保存选择
-          </button>
-          <span className="text-[var(--text-secondary)]">已选 {selectedCount}/4</span>
-        </div>
-      ) : (
-        <p className="mt-2 text-[var(--text-secondary)]">候选图确认需要创意团队或管理员操作。</p>
-      )}
-      {selectedCount > 0 && <p className="mt-2 text-[var(--success)]">当前确认 {selectedCount} 张候选图。</p>}
-      {generatedCount === 0 && <p className="mt-2 text-[var(--text-secondary)]">候选图还在等待真实氛围图生成记录，当前不会显示为生成成功。</p>}
-      {message && <p className="mt-2 rounded-card-sm bg-[var(--macaron-teal-bg)] p-2 leading-5 text-[var(--success)]">{message}</p>}
-      {error && <p className="mt-2 rounded-card-sm bg-[var(--macaron-yellow-bg)] p-2 leading-5 text-[var(--warning)]">{error}</p>}
+      <p className="mt-2 leading-5 text-[var(--text-secondary)]">把链接和验证码分开发给甲方；甲方提交后，反馈会自动回写到本轮提案卡片。</p>
     </div>
   );
 }
 
-function CreativeSceneImageChoice({
-  image,
-  checked,
-  disabled,
-  onToggle,
+function CreativeRoundSceneSummary({
+  round,
+  directions,
+  expectedSceneCount,
 }: {
-  image: CreativeSceneImageView;
-  checked: boolean;
-  disabled: boolean;
-  onToggle: () => void;
+  round: CreativeProposalRoundView;
+  directions: CreativeDirectionView[];
+  expectedSceneCount: 2 | 4;
 }) {
-  const selectable = isSelectableCreativeSceneImage(image);
+  const directionSummaries = directions.map((direction) => {
+    const concepts = round.concepts.filter((concept) => concept.directionId === direction.id);
+    return {
+      direction,
+      concepts,
+    };
+  });
+
   return (
-    <label
-      className={cn(
-        "flex min-h-9 items-start gap-2 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] px-2 py-1.5 leading-5",
-        checked && "border-[var(--accent)] bg-[var(--macaron-teal-bg)]",
-        disabled && "opacity-70"
-      )}
-    >
-      <input type="checkbox" className="mt-1 size-3.5" checked={checked} disabled={disabled} onChange={onToggle} />
-      <span>
-        <span className="font-medium">图 {image.sortOrder}：{creativeSceneImageStatusLabel(image.status)}</span>
-        {!selectable && <span className="block text-[var(--text-secondary)]">{creativeSceneImageDisabledReason(image)}</span>}
-        {selectable && image.ossUrl && <span className="block break-all text-[var(--text-secondary)]">已生成可确认，文件地址已保存。</span>}
-      </span>
-    </label>
+    <div className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3 text-xs leading-5 text-[var(--text-secondary)]">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="font-medium text-[var(--text-primary)]">本轮提案内容</p>
+        <span>氛围图以上方“故事卡 / 氛围图候选”为准</span>
+      </div>
+      <div className="mt-3 grid gap-2 md:grid-cols-2">
+        {directionSummaries.map(({ direction, concepts }) => (
+          <div key={direction.id} className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="font-medium text-[var(--text-primary)]">{direction.title}</p>
+              <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">
+                {concepts.length}/{expectedSceneCount} 个故事场景
+              </span>
+            </div>
+            {concepts.length > 0 ? (
+              <ol className="mt-2 grid gap-1">
+                {concepts.map((concept) => (
+                  <li key={concept.id}>
+                    {concept.sceneIndex}. {concept.title}
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p className="mt-2">本方向还没有保存故事场景。请重新保存提案包快照。</p>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -5875,42 +7338,191 @@ function readPayloadString(payload: Record<string, unknown>, key: string) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+type Sop3FlowStepKey =
+  | "generate_directions"
+  | "select_directions"
+  | "round1_atmosphere"
+  | "round1_review"
+  | "round2_confirmation";
+
+type Sop3PrimaryActionKey =
+  | "generate_directions"
+  | "confirm_selection"
+  | "generate_expansions"
+  | "generate_atmosphere"
+  | "create_round_1"
+  | "launch_round_1_review"
+  | "confirm_round_1_feedback"
+  | "create_round_2"
+  | "launch_round_2_review"
+  | "enter_quote_contract";
+
+type Sop3FlowState = {
+  stepKey: Sop3FlowStepKey;
+  primaryActionKey: Sop3PrimaryActionKey;
+  primaryLabel: string;
+  primaryDescription: string;
+  disabledReason: string | null;
+};
+
+type Sop3FlowInput = {
+  directionCount: number;
+  selectedDirectionCount: number;
+  selectedExpansionCount: number;
+  selectedAtmosphereTargetCount: number;
+  selectedAtmosphereImageCount: number;
+  hasRound1: boolean;
+  hasRound2: boolean;
+  round1ReviewStatus: ClientReviewTaskView["status"] | null;
+  round2ReviewStatus: ClientReviewTaskView["status"] | null;
+  canGenerate: boolean;
+  canCreateRound: boolean;
+  canLaunchReview: boolean;
+  hasRunningDirectionJob: boolean;
+  hasRunningCreativeAssetJob: boolean;
+};
+
+function deriveSop3FlowState(input: Sop3FlowInput): Sop3FlowState {
+  if (input.directionCount === 0) {
+    return {
+      stepKey: "generate_directions",
+      primaryActionKey: "generate_directions",
+      primaryLabel: input.hasRunningDirectionJob ? "正在生成方向" : "生成 4 个创意方向",
+      primaryDescription: "先基于已确认 Brief 生成 4 个内部创意方向。",
+      disabledReason: input.canGenerate ? null : "当前角色不能发起创意方向生成。",
+    };
+  }
+
+  if (input.selectedDirectionCount === 0) {
+    return {
+      stepKey: "select_directions",
+      primaryActionKey: "confirm_selection",
+      primaryLabel: "确认已选方向，进入氛围图生成",
+      primaryDescription: "从 4 个方向中选择要进入 Round 1 的方向，甲方不会看到未选方向。",
+      disabledReason: "请先选择至少 1 个创意方向。",
+    };
+  }
+
+  if (input.selectedExpansionCount === 0) {
+    return {
+      stepKey: "round1_atmosphere",
+      primaryActionKey: "generate_expansions",
+      primaryLabel: input.hasRunningCreativeAssetJob ? "故事大纲生成中" : "生成已选方向故事大纲",
+      primaryDescription: "为已选方向补齐故事梗概，之后再生成 Round 1 氛围图。",
+      disabledReason: input.canGenerate ? null : "当前角色不能发起故事大纲生成。",
+    };
+  }
+
+  if (input.selectedAtmosphereImageCount < input.selectedAtmosphereTargetCount) {
+    return {
+      stepKey: "round1_atmosphere",
+      primaryActionKey: "generate_atmosphere",
+      primaryLabel: input.hasRunningCreativeAssetJob ? "氛围图生成中" : "补齐已选方向氛围图",
+      primaryDescription: `只为内部已选方向补齐候选图，目标 ${input.selectedAtmosphereTargetCount} 张，当前 ${input.selectedAtmosphereImageCount} 张。`,
+      disabledReason: input.canGenerate ? null : "当前角色不能发起氛围图生成。",
+    };
+  }
+
+  if (!input.hasRound1) {
+    return {
+      stepKey: "round1_review",
+      primaryActionKey: "create_round_1",
+      primaryLabel: "创建 Round 1 提案包",
+      primaryDescription: "把已选方向、故事梗概和氛围图打包为第一轮甲方初选版本。",
+      disabledReason: input.canCreateRound ? null : "当前角色不能创建 Round 1 提案包。",
+    };
+  }
+
+  if (!isClientReviewFeedbackSubmitted(input.round1ReviewStatus)) {
+    return {
+      stepKey: "round1_review",
+      primaryActionKey: "launch_round_1_review",
+      primaryLabel: input.round1ReviewStatus ? "查看或重新发起 Round 1 审核" : "发起 Round 1 甲方审核",
+      primaryDescription: "生成甲方审核链接，让甲方完成第一轮方向和视觉偏好初选。",
+      disabledReason: input.canLaunchReview ? null : "当前角色不能发起甲方审核。",
+    };
+  }
+
+  if (!input.hasRound2) {
+    return {
+      stepKey: "round2_confirmation",
+      primaryActionKey: "confirm_round_1_feedback",
+      primaryLabel: "确认保留方向，进入 Round 2 深化",
+      primaryDescription: "根据甲方 Round 1 反馈保留方向，并创建第二轮深化确认包。",
+      disabledReason: input.canCreateRound ? null : "当前角色不能创建 Round 2 提案包。",
+    };
+  }
+
+  if (!isClientReviewFeedbackSubmitted(input.round2ReviewStatus)) {
+    return {
+      stepKey: "round2_confirmation",
+      primaryActionKey: "launch_round_2_review",
+      primaryLabel: input.round2ReviewStatus ? "查看或重新发起最终确认" : "发起最终甲方确认",
+      primaryDescription: "生成 Round 2 审核链接，让甲方确认最终剧本方向和视觉风格。",
+      disabledReason: input.canLaunchReview ? null : "当前角色不能发起甲方审核。",
+    };
+  }
+
+  return {
+    stepKey: "round2_confirmation",
+    primaryActionKey: "enter_quote_contract",
+    primaryLabel: "进入报价合同",
+    primaryDescription: "最终剧本方向和视觉风格已确认，可以进入 SOP 4。",
+    disabledReason: null,
+  };
+}
+
+function isClientReviewFeedbackSubmitted(status: ClientReviewTaskView["status"] | null) {
+  return status === "submitted" || status === "approved" || status === "rejected";
+}
+
+function Sop3FlowStrip({ state }: { state: Sop3FlowState }) {
+  const steps: Array<{ key: Sop3FlowStepKey; label: string }> = [
+    { key: "generate_directions", label: "生成 4 个创意方向" },
+    { key: "select_directions", label: "内部选择方向" },
+    { key: "round1_atmosphere", label: "生成 Round 1 氛围图" },
+    { key: "round1_review", label: "Round 1 甲方初选" },
+    { key: "round2_confirmation", label: "Round 2 深化确认" },
+  ];
+  const currentIndex = Math.max(0, steps.findIndex((step) => step.key === state.stepKey));
+
+  return (
+    <div className="sop3-flow-strip" aria-label="SOP 3 流程">
+      {steps.map((step, index) => (
+        <div
+          key={step.key}
+          className={cn("sop3-flow-step", index < currentIndex && "is-done", index === currentIndex && "is-current")}
+        >
+          <span className="sop3-flow-step-index">{index + 1}</span>
+          <span className="sop3-flow-step-label">{step.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function CreativeDirectionCard({
   direction,
   expansions,
-  generatedImages,
   canEdit,
   canExpand,
-  canSubmitReview,
-  canAdminReview,
   editing,
   saving,
-  generatingImageExpansionId,
   onToggleEdit,
   onSelection,
   onGenerateExpansions,
-  onGenerateAtmosphereImage,
-  onReview,
   onSave,
-  onRefresh,
 }: {
   direction: CreativeDirectionView;
   expansions: CreativeExpansionView[];
-  generatedImages: GeneratedImageView[];
   canEdit: boolean;
   canExpand: boolean;
-  canSubmitReview: boolean;
-  canAdminReview: boolean;
   editing: boolean;
   saving: boolean;
-  generatingImageExpansionId: string | null;
   onToggleEdit: () => void;
   onSelection: () => void;
   onGenerateExpansions: () => void;
-  onGenerateAtmosphereImage: (expansion: CreativeExpansionView) => void;
-  onReview: (action: CreativeDirectionReviewAction, reason: string) => void;
   onSave: (formData: FormData) => void;
-  onRefresh: () => Promise<void>;
 }) {
   if (editing) {
     return (
@@ -5947,16 +7559,20 @@ function CreativeDirectionCard({
   }
 
   return (
-    <div className={cn("rounded-card-sm border bg-[var(--surface-card)] p-3 text-sm", direction.isSelected ? "ds-selected-surface" : "border-[var(--border-soft)]")}>
+    <div
+      className={cn(
+        "flex min-h-[18rem] flex-col rounded-card-sm border bg-[var(--surface-card)] p-3 text-sm",
+        direction.isSelected ? "border-[var(--accent)] bg-[var(--accent-subtle)] shadow-[0_18px_36px_-30px_var(--accent)]" : "border-[var(--border-soft)]"
+      )}
+    >
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">#{direction.sortOrder}</span>
-            <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">评分 {direction.score}</span>
-            <span className={cn("ds-pill", creativeDirectionStatusClass(direction.status))}>{creativeDirectionStatusLabel(direction.status)}</span>
-            {direction.isSelected && <span className="ds-pill ds-selected-pill">已选中</span>}
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">方向 {direction.sortOrder}</span>
+            <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">{direction.score} 分</span>
+            {direction.isSelected && <span className="ds-pill ds-selected-pill">已选</span>}
           </div>
-          <h4 className="mt-3 ds-text-card-title text-[var(--text-primary)]">{direction.title}</h4>
+          <h4 className="mt-3 line-clamp-2 text-[1rem] font-semibold leading-6 text-[var(--text-primary)]">{direction.title}</h4>
         </div>
         <button
           type="button"
@@ -5972,21 +7588,11 @@ function CreativeDirectionCard({
         </button>
       </div>
 
-      <div className="mt-3 grid gap-3">
-        <InfoBlock label="核心创意" value={direction.coreIdea} />
-        <InfoBlock label="适配理由" value={direction.fitReason} />
-        <InfoBlock label="风险提示" value={direction.riskNotes || "暂无明显风险，进入深化前仍需人工复核。"} />
-      </div>
-
-      <div className="mt-3 grid gap-2 md:grid-cols-3">
-        <MiniMetric label="成本预估" value={direction.costEstimate || "待评估"} />
-        <MiniMetric label="周期预估" value={direction.cycleEstimate || "待评估"} />
-        <MiniMetric label="技术难度" value={direction.technicalDifficulty || "待评估"} />
-      </div>
+      <p className="mt-3 line-clamp-4 text-xs leading-5 text-[var(--text-secondary)]">{direction.coreIdea}</p>
 
       {direction.referenceTags.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-1">
-          {direction.referenceTags.map((tag) => (
+          {direction.referenceTags.slice(0, 4).map((tag) => (
             <span key={tag} className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">
               {tag}
             </span>
@@ -5994,15 +7600,14 @@ function CreativeDirectionCard({
         </div>
       )}
 
-      {direction.atmospherePrompt && (
-        <div className="mt-3 ds-card-soft p-3">
-          <p className="text-xs font-medium">氛围图提示词</p>
-          <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">{direction.atmospherePrompt}</p>
-        </div>
-      )}
+      <div className="mt-3 grid grid-cols-3 gap-1.5 text-xs">
+        <MiniMetric label="成本" value={direction.costEstimate || "待评估"} />
+        <MiniMetric label="周期" value={direction.cycleEstimate || "待评估"} />
+        <MiniMetric label="难度" value={direction.technicalDifficulty || "待评估"} />
+      </div>
 
       {canEdit && (
-        <div className="mt-3 flex flex-wrap gap-2">
+        <div className="mt-auto flex flex-wrap gap-2 pt-3">
           <button onClick={onToggleEdit} className="rounded-card-sm border border-[var(--border-soft)] px-3 py-1.5 text-xs font-medium">
             人工改写
           </button>
@@ -6017,31 +7622,14 @@ function CreativeDirectionCard({
           </button>
         </div>
       )}
-
-      <CreativeDirectionReviewPanel
-        status={direction.status}
-        canSubmitReview={canSubmitReview}
-        canAdminReview={canAdminReview}
-        saving={saving}
-        onReview={onReview}
-      />
-
-      <CreativeExpansionList
-        projectId={direction.projectId}
-        expansions={expansions}
-        generatedImages={generatedImages}
-        canGenerateImage={canExpand}
-        canReviewImage={canEdit}
-        generatingImageExpansionId={generatingImageExpansionId}
-        onGenerateAtmosphereImage={onGenerateAtmosphereImage}
-        onRefresh={onRefresh}
-      />
     </div>
   );
 }
 
-function CreativeExpansionList({
+function CreativeExpansionBoard({
   projectId,
+  selectedDirections,
+  unselectedDirections,
   expansions,
   generatedImages,
   canGenerateImage,
@@ -6051,6 +7639,71 @@ function CreativeExpansionList({
   onRefresh,
 }: {
   projectId: string;
+  selectedDirections: CreativeDirectionView[];
+  unselectedDirections: CreativeDirectionView[];
+  expansions: CreativeExpansionView[];
+  generatedImages: GeneratedImageView[];
+  canGenerateImage: boolean;
+  canReviewImage: boolean;
+  generatingImageExpansionId: string | null;
+  onGenerateAtmosphereImage: (direction: CreativeDirectionView, expansion: CreativeExpansionView) => void;
+  onRefresh: () => Promise<void>;
+}) {
+  if (selectedDirections.length === 0) {
+    return (
+      <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3 text-xs leading-5 text-[var(--text-secondary)]">
+        先在上方选择要进入 Round 1 的创意方向。未选中的方向不会生成故事大纲和氛围图，也不会进入甲方提案包。
+      </div>
+    );
+  }
+
+  return (
+    <section className="mt-5 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium">已选方向的故事卡与氛围图候选</p>
+          <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
+            这里只处理已选方向；每个方向保留 4 个故事卡，每个故事卡目标生成 4 张候选氛围图供内部选择。
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs">
+          <span className="ds-pill ds-selected-pill">已选 {selectedDirections.length}</span>
+          {unselectedDirections.length > 0 && <span className="ds-pill bg-[var(--surface-card)] text-[var(--text-secondary)]">未选 {unselectedDirections.length} 个不生成</span>}
+        </div>
+      </div>
+      <div className="mt-3 grid gap-3">
+        {selectedDirections.map((direction) => (
+          <CreativeDirectionAtmosphereCard
+            key={direction.id}
+            projectId={projectId}
+            direction={direction}
+            expansions={expansions.filter((expansion) => expansion.directionId === direction.id)}
+            generatedImages={generatedImages.filter((image) => image.directionId === direction.id)}
+            canGenerateImage={canGenerateImage}
+            canReviewImage={canReviewImage}
+            generatingImageExpansionId={generatingImageExpansionId}
+            onGenerateAtmosphereImage={(expansion) => onGenerateAtmosphereImage(direction, expansion)}
+            onRefresh={onRefresh}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function CreativeDirectionAtmosphereCard({
+  projectId,
+  direction,
+  expansions,
+  generatedImages,
+  canGenerateImage,
+  canReviewImage,
+  generatingImageExpansionId,
+  onGenerateAtmosphereImage,
+  onRefresh,
+}: {
+  projectId: string;
+  direction: CreativeDirectionView;
   expansions: CreativeExpansionView[];
   generatedImages: GeneratedImageView[];
   canGenerateImage: boolean;
@@ -6059,26 +7712,54 @@ function CreativeExpansionList({
   onGenerateAtmosphereImage: (expansion: CreativeExpansionView) => void;
   onRefresh: () => Promise<void>;
 }) {
+  const generatedCount = generatedImages.filter((image) => isGeneratedImageRunningOrDone(image)).length;
+  const confirmedCount = generatedImages.filter((image) => image.reviewStatus === "confirmed").length;
+  const directionMetrics = (
+    <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
+      <MiniMetric label="成本" value={direction.costEstimate || "待评估"} />
+      <MiniMetric label="周期" value={direction.cycleEstimate || "待评估"} />
+      <MiniMetric label="难度" value={direction.technicalDifficulty || "待评估"} />
+    </div>
+  );
+
   if (expansions.length === 0) {
     return (
-      <div className="mt-4 ds-card-soft p-3 text-xs leading-5 text-[var(--text-secondary)]">
-        选中方向后可生成 4-5 个故事大纲或梗概，后续用于氛围图和提案。
+      <div className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm font-semibold">{direction.title}</p>
+          <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">0/4 故事卡</span>
+        </div>
+        {directionMetrics}
+        <p className="mt-3 rounded-card-sm bg-[var(--surface-soft)] p-3 text-xs leading-5 text-[var(--text-secondary)]">
+          选中方向后可生成 4 个故事卡，后续每张故事卡生成 4 张氛围图候选。
+        </p>
       </div>
     );
   }
 
   return (
-    <div className="mt-4 border-t border-[var(--border-soft)] pt-4">
-      <p className="text-xs font-medium">故事大纲 / 梗概</p>
-      <div className="mt-3 grid gap-3">
+    <article className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-[var(--text-primary)]">{direction.title}</p>
+          <p className="mt-1 line-clamp-2 text-xs leading-5 text-[var(--text-secondary)]">{direction.coreIdea}</p>
+        </div>
+        <div className="flex shrink-0 flex-wrap justify-end gap-2 text-xs">
+          <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">{expansions.length}/4 故事卡</span>
+          <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">候选 {generatedCount}/{expansions.length * 4}</span>
+          <span className={cn("ds-pill", confirmedCount > 0 ? "ds-pill-teal" : "ds-pill-yellow")}>已确认 {confirmedCount}</span>
+        </div>
+      </div>
+      {directionMetrics}
+      <div className="mt-3 grid gap-2 md:grid-cols-2 lg:grid-cols-4">
         {expansions.map((expansion) => {
-          const generatedImage = generatedImages.find((image) => image.expansionId === expansion.id) ?? null;
+          const expansionImages = generatedImages.filter((image) => image.expansionId === expansion.id);
           return (
-            <CreativeExpansionItem
-              key={`${expansion.id}:${generatedImage?.id ?? "no-image"}`}
+            <CreativeStoryAtmosphereCell
+              key={`${expansion.id}:${expansionImages.map((image) => image.id).join(",") || "no-image"}`}
               projectId={projectId}
               expansion={expansion}
-              generatedImage={generatedImage}
+              generatedImages={expansionImages}
               canGenerateImage={canGenerateImage}
               canReviewImage={canReviewImage}
               generating={generatingImageExpansionId === expansion.id}
@@ -6088,100 +7769,14 @@ function CreativeExpansionList({
           );
         })}
       </div>
-    </div>
+    </article>
   );
 }
 
-function CreativeDirectionReviewPanel({
-  status,
-  canSubmitReview,
-  canAdminReview,
-  saving,
-  onReview,
-}: {
-  status: string;
-  canSubmitReview: boolean;
-  canAdminReview: boolean;
-  saving: boolean;
-  onReview: (action: CreativeDirectionReviewAction, reason: string) => void;
-}) {
-  const [reason, setReason] = useState("");
-  const canSubmit = canSubmitReview && ["draft", "needs_revision"].includes(status);
-  const canApprove = canAdminReview && status === "waiting_review";
-  const canReject = canAdminReview && ["waiting_review", "approved"].includes(status);
-
-  if (!canSubmitReview && !canAdminReview) {
-    return (
-      <div className="mt-3 ds-card-soft p-3 text-xs leading-5 text-[var(--text-secondary)]">
-        当前角色可以查看创意方向状态；提交审核、确认或驳回需要创意团队或管理员处理。
-      </div>
-    );
-  }
-
-  return (
-    <div className="mt-3 ds-card-soft p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs font-medium">创意方向审核流</p>
-        <span className={cn("ds-pill", creativeDirectionStatusClass(status))}>{creativeDirectionStatusLabel(status)}</span>
-      </div>
-      {(canReject || status === "needs_revision") && (
-        <textarea
-          value={reason}
-          onChange={(event) => setReason(event.target.value)}
-          disabled={saving}
-          maxLength={600}
-          placeholder={status === "needs_revision" ? "可查看/补充修改说明，改写后重新提交审核。" : "驳回时请填写修改意见，便于创意团队重新提交。"}
-          className="mt-3 min-h-16 w-full ds-card-sm p-2.5 text-xs leading-5 disabled:opacity-60"
-        />
-      )}
-      <div className="mt-3 flex flex-wrap gap-2">
-        {canSubmit && (
-          <button
-            type="button"
-            onClick={() => onReview("submit_review", reason)}
-            disabled={saving}
-            className="inline-flex h-8 items-center gap-2 rounded-card-sm bg-[var(--foreground)] px-3 text-xs font-medium text-[var(--text-inverse)] disabled:opacity-60"
-          >
-            {saving ? <Loader2 className="animate-spin" size={13} /> : <CheckCircle2 size={13} />}
-            {status === "needs_revision" ? "重新提交审核" : "提交审核"}
-          </button>
-        )}
-        {canApprove && (
-          <button
-            type="button"
-            onClick={() => onReview("approve", reason)}
-            disabled={saving}
-            className="inline-flex h-8 items-center gap-2 rounded-card-sm bg-[var(--foreground)] px-3 text-xs font-medium text-[var(--text-inverse)] disabled:opacity-60"
-          >
-            {saving ? <Loader2 className="animate-spin" size={13} /> : <CheckCircle2 size={13} />}
-            确认方向
-          </button>
-        )}
-        {canReject && (
-          <button
-            type="button"
-            onClick={() => onReview("request_revision", reason)}
-            disabled={saving}
-            className="inline-flex h-8 items-center gap-2 ds-card-sm px-3 text-xs font-medium disabled:opacity-60"
-          >
-            {saving ? <Loader2 className="animate-spin" size={13} /> : <XCircle size={13} />}
-            驳回修改
-          </button>
-        )}
-        {!canSubmit && !canApprove && !canReject && (
-          <p className="text-xs leading-5 text-[var(--text-secondary)]">
-            {status === "approved" ? "该方向已确认。如需重改，可由管理员驳回修改。" : "当前状态暂不需要审核动作。"}
-          </p>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function CreativeExpansionItem({
+function CreativeStoryAtmosphereCell({
   projectId,
   expansion,
-  generatedImage,
+  generatedImages,
   canGenerateImage,
   canReviewImage,
   generating,
@@ -6190,26 +7785,28 @@ function CreativeExpansionItem({
 }: {
   projectId: string;
   expansion: CreativeExpansionView;
-  generatedImage: GeneratedImageView | null;
+  generatedImages: GeneratedImageView[];
   canGenerateImage: boolean;
   canReviewImage: boolean;
   generating: boolean;
   onGenerateAtmosphereImage: () => void;
   onRefresh: () => Promise<void>;
 }) {
-  const [reviewNote, setReviewNote] = useState(generatedImage?.reviewNote ?? "");
+  const primaryGeneratedImage = generatedImages.find((image) => image.status === "succeeded") ?? generatedImages[0] ?? null;
+  const generatedCount = generatedImages.filter((image) => isGeneratedImageRunningOrDone(image)).length;
+  const [reviewNote, setReviewNote] = useState(primaryGeneratedImage?.reviewNote ?? "");
   const [reviewingStatus, setReviewingStatus] = useState<"confirmed" | "discarded" | null>(null);
   const [reviewMessage, setReviewMessage] = useState<string | null>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
 
   async function handleReview(reviewStatus: "confirmed" | "discarded") {
-    if (!generatedImage || reviewingStatus) return;
+    if (!primaryGeneratedImage || reviewingStatus) return;
 
     setReviewingStatus(reviewStatus);
     setReviewMessage(null);
     setReviewError(null);
 
-    const result = await reviewGeneratedImage(projectId, generatedImage.id, {
+    const result = await reviewGeneratedImage(projectId, primaryGeneratedImage.id, {
       reviewStatus,
       reviewNote: reviewNote.trim() || undefined,
     });
@@ -6223,40 +7820,28 @@ function CreativeExpansionItem({
     setReviewingStatus(null);
   }
 
-  const reviewStatus = generatedImage?.reviewStatus ?? "pending";
+  const reviewStatus = primaryGeneratedImage?.reviewStatus ?? "pending";
 
   return (
-    <div className="ds-card-soft p-3">
+    <div className="flex min-h-[20rem] flex-col rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm font-medium">
+        <p className="line-clamp-1 text-sm font-medium">
           {expansion.sortOrder}. {expansion.title}
         </p>
         <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">{expansion.productionDifficulty || "待评估"}</span>
       </div>
-      <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">{expansion.oneLiner}</p>
-      <div className="mt-3 grid gap-2 text-xs">
-        {Object.entries(expansion.storyArc).slice(0, 4).map(([key, value]) => (
-          <div key={key} className="grid gap-1 border-b border-[var(--border-soft)] pb-2 last:border-b-0">
-            <span className="font-medium">{storyArcLabel(key)}</span>
-            <span className="leading-5 text-[var(--text-secondary)]">{value}</span>
-          </div>
-        ))}
-      </div>
+      <p className="mt-2 line-clamp-2 min-h-10 text-xs leading-5 text-[var(--text-secondary)]">{expansion.oneLiner}</p>
       {expansion.visualHighlights.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-1">
-          {expansion.visualHighlights.map((highlight) => (
+          {expansion.visualHighlights.slice(0, 3).map((highlight) => (
             <span key={highlight} className="rounded bg-[var(--surface-card)] px-2 py-1 text-xs">
               {highlight}
             </span>
           ))}
         </div>
       )}
-      <div className="mt-3 grid gap-2 md:grid-cols-2">
-        <MiniMetric label="画面风格" value={expansion.visualStyle || "待确认"} />
-        <MiniMetric label="风险提示" value={expansion.riskNotes || "待复核"} />
-      </div>
 
-      <div className="mt-3 ds-card-sm p-3">
+      <div className="mt-auto pt-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <ImageIcon size={15} />
@@ -6270,39 +7855,60 @@ function CreativeExpansionItem({
             title={canGenerateImage ? "生成氛围图" : "当前角色不能生成氛围图"}
           >
             {generating ? <Loader2 className="animate-spin" size={13} /> : <ImageIcon size={13} />}
-            {generatedImage ? "重新生成" : "生成"}
+            {generatedCount >= 4 ? "再生成" : `继续生成 ${generatedCount}/4`}
           </button>
         </div>
 
-        {generatedImage ? (
-          <div className="mt-3">
-            <div className="flex flex-wrap gap-1 text-xs">
-              <span className={cn("ds-pill", generatedImage.status === "succeeded" ? "ds-pill-teal" : "bg-[var(--surface-soft)] text-[var(--text-secondary)]")}>
-                {imageStatusLabel(generatedImage.status)}
-              </span>
-              <span className={cn("ds-pill", imageReviewStatusClass(reviewStatus))}>{imageReviewStatusLabel(reviewStatus)}</span>
-              <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">{generatedImage.modelName}</span>
-              {generatedImage.retryCount > 0 && <span className="ds-pill ds-pill-yellow">重试 {generatedImage.retryCount}</span>}
+        <div className="mt-3">
+          <div className="flex flex-wrap gap-1 text-xs">
+            <span className="ds-pill bg-[var(--surface-card)] text-[var(--text-secondary)]">候选 {generatedCount}/4</span>
+            <span className={cn("ds-pill", imageReviewStatusClass(reviewStatus))}>{imageReviewStatusLabel(reviewStatus)}</span>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            {generatedImages.slice(0, 4).map((image, index) => (
+                <div key={image.id} className="overflow-hidden rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)]">
+                  {image.ossUrl ? (
+                    <Image
+                      src={image.ossUrl}
+                      alt={`氛围图候选 ${index + 1}：${expansion.title}`}
+                      width={360}
+                      height={240}
+                      sizes="(min-width: 1280px) 18vw, (min-width: 768px) 30vw, 50vw"
+                      unoptimized
+                      className="block aspect-[3/2] w-full object-cover"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div className="flex aspect-[3/2] items-center justify-center p-3 text-center text-xs leading-5 text-[var(--text-secondary)]">
+                      {imageStatusLabel(image.status)}
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between gap-2 px-2 py-1.5 text-[11px] text-[var(--text-secondary)]">
+                    <span>图 {index + 1}</span>
+                    <span>{imageStatusLabel(image.status)}</span>
+                  </div>
+                </div>
+            ))}
+            {Array.from({ length: Math.max(0, 4 - generatedImages.length) }).map((_, index) => (
+              <div key={`empty-${index}`} className="flex aspect-[3/2] items-center justify-center rounded-card-sm border border-dashed border-[var(--border-soft)] bg-[var(--surface-card)] text-xs text-[var(--text-secondary)]">
+                待生成
+              </div>
+            ))}
+          </div>
+          {primaryGeneratedImage?.failureReason && (
+            <div className="mt-2 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-2 text-xs leading-5 text-[var(--warning)]">
+              {primaryGeneratedImage.failureReason}
             </div>
-            {generatedImage.ossUrl && (
-              <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3 text-xs leading-5 text-[var(--text-secondary)]">
-                氛围图资产已保存，图片预览已隐藏；可继续填写审核备注并确认采用或废弃。
-              </div>
-            )}
-            {generatedImage.failureReason && (
-              <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-2 text-xs leading-5 text-[var(--warning)]">
-                {generatedImage.failureReason}
-              </div>
-            )}
-            {generatedImage.status === "succeeded" && (
-              <div className="mt-3 border-t border-[var(--border-soft)] pt-3">
+          )}
+          {primaryGeneratedImage?.status === "succeeded" && (
+            <div className="mt-3 border-t border-[var(--border-soft)] pt-3">
                 {canReviewImage ? (
                   <>
-                    <label className="text-xs font-medium" htmlFor={`image-review-note-${generatedImage.id}`}>
+                    <label className="text-xs font-medium" htmlFor={`image-review-note-${primaryGeneratedImage.id}`}>
                       审核备注
                     </label>
                     <textarea
-                      id={`image-review-note-${generatedImage.id}`}
+                      id={`image-review-note-${primaryGeneratedImage.id}`}
                       value={reviewNote}
                       onChange={(event) => setReviewNote(event.target.value)}
                       disabled={reviewingStatus !== null}
@@ -6334,24 +7940,21 @@ function CreativeExpansionItem({
                 ) : (
                   <div className="text-xs leading-5 text-[var(--text-secondary)]">
                     <p className="font-medium text-[var(--text-primary)]">审核备注</p>
-                    <p className="mt-1">{generatedImage.reviewNote || "创意团队暂未填写审核备注。"}</p>
+                    <p className="mt-1">{primaryGeneratedImage.reviewNote || "创意团队暂未填写审核备注。"}</p>
                   </div>
                 )}
 
-                {canReviewImage && generatedImage.reviewNote && reviewNote === generatedImage.reviewNote && (
-                  <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">已保存备注：{generatedImage.reviewNote}</p>
+                {canReviewImage && primaryGeneratedImage.reviewNote && reviewNote === primaryGeneratedImage.reviewNote && (
+                  <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">已保存备注：{primaryGeneratedImage.reviewNote}</p>
                 )}
-                {generatedImage.reviewedAt && (
-                  <p className="mt-2 text-xs text-[var(--text-secondary)]">最近审核时间：{formatDateTime(generatedImage.reviewedAt)}</p>
+                {primaryGeneratedImage.reviewedAt && (
+                  <p className="mt-2 text-xs text-[var(--text-secondary)]">最近审核时间：{formatDateTime(primaryGeneratedImage.reviewedAt)}</p>
                 )}
                 {reviewError && <div className="mt-2 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-2 text-xs leading-5 text-[var(--warning)]">{reviewError}</div>}
                 {reviewMessage && <div className="mt-2 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-2 text-xs leading-5 text-[var(--success)]">{reviewMessage}</div>}
-              </div>
-            )}
-          </div>
-        ) : (
-          <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">尚未生成氛围图。生成后会保存任务、prompt、模型名和 OSS 地址。</p>
-        )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -6367,6 +7970,16 @@ function imageStatusLabel(status: string) {
     cancelled: "已取消",
   };
   return labels[status] ?? status;
+}
+
+function isGeneratedImageRunningOrDone(image: Pick<GeneratedImageView, "status">) {
+  return image.status === "queued" || image.status === "processing" || image.status === "retrying" || image.status === "succeeded";
+}
+
+function creativeAssetJobTypeLabel(type: string) {
+  if (type === "atmosphere_image_generation") return "氛围图";
+  if (type === "creative_expansion_generation") return "故事大纲";
+  return "创意素材";
 }
 
 function imageReviewStatusLabel(status: GeneratedImageView["reviewStatus"]) {
@@ -6397,25 +8010,77 @@ function BusinessDocumentDraftCard({
   onRefresh: () => Promise<void>;
 }) {
   const canGenerate = user.role === "business" || user.role === "admin";
+  const draftJobPollRef = useRef(0);
   const [generating, setGenerating] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [draftError, setDraftError] = useState<string | null>(null);
 
   async function handleGenerate() {
+    const pollId = draftJobPollRef.current + 1;
+    draftJobPollRef.current = pollId;
     setGenerating(true);
     setMessage(null);
     setDraftError(null);
 
-    const result = await generateDocumentDrafts(project.id);
-    if (result.ok) {
-      setMessage(result.data.message);
-      await onRefresh();
-    } else {
-      setDraftError(result.error.message);
+    try {
+      const result = await generateDocumentDrafts(project.id);
+      if (result.ok) {
+        setMessage("商务草稿生成任务已创建。系统正在后台生成，完成后会自动刷新报价和合同内容。");
+        await onRefresh();
+        await waitForDocumentDraftJob(result.data.jobId, pollId);
+      } else {
+        setDraftError(result.error.message);
+      }
+    } finally {
+      if (draftJobPollRef.current === pollId) {
+        setGenerating(false);
+      }
+    }
+  }
+
+  async function waitForDocumentDraftJob(jobId: string, pollId: number) {
+    const maxAttempts = 120;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      await wait(attempt === 0 ? 1200 : 2000);
+
+      if (draftJobPollRef.current !== pollId) return;
+
+      const result = await fetchJob(jobId);
+      if (!result.ok) {
+        setDraftError(result.error.message);
+        await onRefresh();
+        return;
+      }
+
+      const job = result.data.job;
+      if (job.status === "succeeded") {
+        setMessage("商务草稿已生成，报价和合同内容已自动刷新。");
+        await onRefresh();
+        return;
+      }
+
+      if (job.status === "failed" || job.status === "cancelled") {
+        setDraftError(job.userMessage ?? "商务草稿生成失败。请检查项目产物是否完整后重试。");
+        await onRefresh();
+        return;
+      }
+
+      if (attempt === 0 || attempt % 5 === 0) {
+        setMessage(job.userMessage ?? "商务草稿正在后台生成，完成后会自动刷新报价和合同内容。");
+        await onRefresh();
+      }
     }
 
-    setGenerating(false);
+    setMessage("商务草稿仍在后台生成。系统已保存任务状态，你可以稍后回到本项目继续查看。");
+    await onRefresh();
   }
+
+  useEffect(() => {
+    return () => {
+      draftJobPollRef.current += 1;
+    };
+  }, [project.id]);
 
   return (
     <div className="ds-card-sm p-4 lg:col-span-2">
@@ -6423,10 +8088,10 @@ function BusinessDocumentDraftCard({
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <WandSparkles size={18} />
-            <h3 className="ds-text-section-title">Agent 商务文档草稿</h3>
+            <h3 className="ds-text-section-title">生成商务草稿</h3>
           </div>
           <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-            基于真实需求、评分结果、已选创意方向、故事大纲和氛围图，一次生成提案、报价与合同草稿并保存版本快照。
+            基于已确认提案、工作量估算和阶段产物生成报价/合同草稿。它只是起草助手，最终内容仍需要人工保存确认。
           </p>
         </div>
         <button
@@ -6436,7 +8101,7 @@ function BusinessDocumentDraftCard({
           className="inline-flex h-9 items-center justify-center gap-2 rounded-card-sm bg-[var(--foreground)] px-3 text-sm font-medium text-[var(--text-inverse)] disabled:opacity-60"
         >
           {generating ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
-          生成三类草稿
+          生成报价/合同草稿
         </button>
       </div>
       {!canGenerate && (
@@ -6495,10 +8160,10 @@ function ProposalEditorCard({
         <div>
           <div className="flex items-center gap-2">
             <BriefcaseBusiness size={18} />
-            <h3 className="ds-text-section-title">提案编辑与版本快照</h3>
+            <h3 className="ds-text-section-title">最终提案整理与版本快照</h3>
           </div>
           <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-            提案正文、状态和每次保存的历史快照都会写入数据库。刷新页面后会恢复最新版本。
+            Round 2 甲方确认后，在这里整理最终提案正文并保存历史快照。状态设为“已确认”后，项目进入 SOP 4 工作量估算。
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-xs">
@@ -6549,17 +8214,35 @@ function ProposalEditorCard({
 
       {proposalError && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm text-[var(--warning)]">{proposalError}</div>}
       {message && <div className="mt-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-teal-bg)] p-3 text-sm text-[var(--success)]">{message}</div>}
-      <ClientReviewLaunchBox
-        projectId={project.id}
-        reviewType="project_proposal"
-        targetScopeId={proposal?.id ?? null}
-        title="甲方完整项目提案审核"
-        detail="将完整项目提案发给甲方确认；通过后项目可进入报价合同模块，打回会保留历史版本和意见。"
-        disabled={!proposal}
-        disabledReason="请先保存提案快照，再生成甲方审核链接。"
-        tasks={clientReviewTasks}
-        onRefresh={onRefresh}
-      />
+      <Collapsible>
+        <div className="mt-4 ds-card-soft p-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium">特殊情况：重新发起完整提案确认</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
+                常规流程不需要再审一次完整提案；只有甲方要求重新确认正式提案文本时使用。
+              </p>
+            </div>
+            <CollapsibleTrigger render={<Button type="button" variant="outline" size="sm" className="shrink-0" />}>
+              <ChevronDown size={15} />
+              展开
+            </CollapsibleTrigger>
+          </div>
+          <CollapsibleContent>
+            <ClientReviewLaunchBox
+              projectId={project.id}
+              reviewType="project_proposal"
+              targetScopeId={proposal?.id ?? null}
+              title="甲方完整项目提案审核"
+              detail="将完整项目提案发给甲方确认；通过或打回都会保留历史版本和意见。"
+              disabled={!proposal}
+              disabledReason="请先保存提案快照，再生成甲方审核链接。"
+              tasks={clientReviewTasks}
+              onRefresh={onRefresh}
+            />
+          </CollapsibleContent>
+        </div>
+      </Collapsible>
 
       <div className="mt-5 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(260px,0.65fr)]">
         <div className="ds-card-soft p-3">
@@ -6619,6 +8302,12 @@ function proposalStatusLabel(status: string) {
 function summarizeText(value: string, maxLength: number) {
   const normalized = value.replace(/\s+/g, " ").trim();
   return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized;
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
 }
 
 function formatDateTime(value: string) {
@@ -6707,10 +8396,10 @@ function QuoteEditorCard({
         <div>
           <div className="flex items-center gap-2">
             <BriefcaseBusiness size={18} />
-            <h3 className="ds-text-section-title">报价编辑与版本快照</h3>
+            <h3 className="ds-text-section-title">报价编辑与历史版本</h3>
           </div>
           <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-            报价明细、合计金额、状态和每次保存的快照都会写入数据库。后续合同会引用这里的确认版本。
+            报价明细、合计金额和状态都会写入数据库。每次保存都会冻结一份历史版本，后续合同引用最终确认报价。
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-xs">
@@ -6777,7 +8466,7 @@ function QuoteEditorCard({
           className="inline-flex h-9 w-fit items-center justify-center gap-2 rounded-card-sm bg-[var(--foreground)] px-3 text-sm font-medium text-[var(--text-inverse)] disabled:opacity-60"
         >
           {saving ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
-          保存报价并创建快照
+          保存报价并记录版本
         </button>
       </form>
 
@@ -6799,7 +8488,7 @@ function QuoteEditorCard({
         title="甲方报价确认"
         detail="将当前报价明细和总价发给甲方确认；通过后可继续推进合同确认，打回会回写报价修改意见。"
         disabled={!quote}
-        disabledReason="请先保存报价快照，再生成甲方审核链接。"
+        disabledReason="请先保存报价版本，再生成甲方审核链接。"
         tasks={clientReviewTasks}
         onRefresh={onRefresh}
       />
@@ -6825,9 +8514,9 @@ function QuoteEditorCard({
           )}
         </div>
         <div className="ds-card-soft p-3">
-          <p className="text-sm font-medium">报价快照</p>
+          <p className="text-sm font-medium">报价历史版本</p>
           {snapshots.length === 0 ? (
-            <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">还没有报价快照。每次保存都会新增一个版本。</p>
+            <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">还没有报价历史版本。每次保存都会新增一版，便于回溯甲方确认过程。</p>
           ) : (
             <div className="mt-3 grid gap-2">
               {snapshots.slice(0, 5).map((snapshot) => (
@@ -6836,7 +8525,7 @@ function QuoteEditorCard({
                     <span className="font-medium">v{snapshot.version} · {quoteStatusLabel(snapshot.status)}</span>
                     <span className="text-[var(--text-secondary)]">{formatDateTime(snapshot.createdAt)}</span>
                   </div>
-                  <p className="mt-2 leading-5 text-[var(--text-secondary)]">{snapshot.summary || "报价快照已保存。"}</p>
+                  <p className="mt-2 leading-5 text-[var(--text-secondary)]">{snapshot.summary || "报价版本已保存。"}</p>
                 </div>
               ))}
             </div>
@@ -7024,10 +8713,10 @@ function ContractEditorCard({
         <div>
           <div className="flex items-center gap-2">
             <BriefcaseBusiness size={18} />
-            <h3 className="ds-text-section-title">合同模板填充与版本快照</h3>
+            <h3 className="ds-text-section-title">合同编辑与历史版本</h3>
           </div>
           <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-            合同模板字段、正文、状态和每次保存的快照都会写入数据库。PDF/Word 导出后续会作为真实导出任务接入。
+            基于已确认报价填充合同字段和正文。每次保存都会记录一版历史合同，导出文件会引用最新保存版本。
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-xs">
@@ -7040,7 +8729,7 @@ function ContractEditorCard({
 
       {!quote && (
         <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm leading-6 text-[var(--warning)]">
-          当前项目还没有已保存报价。请先保存报价明细，合同才能引用真实报价并创建快照。
+          当前项目还没有已保存报价。请先保存报价明细，合同才能引用真实报价并记录历史版本。
         </div>
       )}
 
@@ -7171,7 +8860,7 @@ function ContractEditorCard({
           name="content"
           disabled={!canEdit || saving || !quote}
           initialValue={contract?.content ?? buildDefaultContractContent(project, fields)}
-          placeholder="编辑合同正文，可使用标题、列表和重点标记。保存后会进入合同快照、导出和飞书交付链路。"
+          placeholder="编辑合同正文，可使用标题、列表和重点标记。保存后会进入合同历史版本、导出和飞书交付链路。"
           minHeightClassName="min-h-64"
           ariaLabel="合同正文"
         />
@@ -7180,14 +8869,14 @@ function ContractEditorCard({
           className="inline-flex h-9 w-fit items-center justify-center gap-2 rounded-card-sm bg-[var(--foreground)] px-3 text-sm font-medium text-[var(--text-inverse)] disabled:opacity-60"
         >
           {saving ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
-          保存合同并创建快照
+          保存合同并记录版本
         </button>
       </form>
 
       <div className="mt-4 flex flex-wrap items-center gap-3 ds-card-soft p-3">
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium">导出正式文件</p>
-          <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">导出基于数据库里的最新合同快照；如果刚编辑过正文，请先保存合同。</p>
+          <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">导出基于数据库里的最新合同版本；如果刚编辑过正文，请先保存合同。</p>
         </div>
         <button
           type="button"
@@ -7227,7 +8916,7 @@ function ContractEditorCard({
         title="甲方合同确认"
         detail="将合同主体、交付范围、付款条款和补充约定发给甲方确认；通过后可继续推进签署与交付。"
         disabled={!contract}
-        disabledReason="请先保存合同快照，再生成甲方审核链接。"
+        disabledReason="请先保存合同版本，再生成甲方审核链接。"
         tasks={clientReviewTasks}
         onRefresh={onRefresh}
       />
@@ -7240,9 +8929,9 @@ function ContractEditorCard({
           </p>
         </div>
         <div className="ds-card-soft p-3">
-          <p className="text-sm font-medium">合同快照</p>
+          <p className="text-sm font-medium">合同历史版本</p>
           {snapshots.length === 0 ? (
-            <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">还没有合同快照。每次保存都会新增一个版本。</p>
+            <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">还没有合同历史版本。每次保存都会新增一版，便于回溯签署确认过程。</p>
           ) : (
             <div className="mt-3 grid gap-2">
               {snapshots.slice(0, 5).map((snapshot) => (
@@ -7260,7 +8949,7 @@ function ContractEditorCard({
         <div className="ds-card-soft p-3">
           <p className="text-sm font-medium">历史导出</p>
           {exports.length === 0 ? (
-            <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">还没有导出记录。保存合同快照后可以导出 PDF 或 Word。</p>
+            <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">还没有导出记录。保存合同版本后可以导出 PDF 或 Word。</p>
           ) : (
             <div className="mt-3 grid gap-2">
               {exports.slice(0, 5).map((item) => (
@@ -7335,10 +9024,14 @@ function FeishuDeliveryCard({
   const [sending, setSending] = useState(false);
   const [savingReceiver, setSavingReceiver] = useState(false);
   const [retryingDeliveryId, setRetryingDeliveryId] = useState<string | null>(null);
+  const [signingContract, setSigningContract] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [deliveryError, setDeliveryError] = useState<string | null>(null);
   const selectedDocument = availableDocuments.find((item) => item.type === documentType) ?? availableDocuments[0] ?? null;
   const selectedReceiver = receivers.find((receiver) => receiver.id === selectedReceiverId) ?? null;
+  const hasSucceededContractDelivery = deliveries.some((item) => item.documentType === "contract" && item.status === "succeeded");
+  const canConfirmContractSigned =
+    canSend && Boolean(contract) && ["sent", "confirmed"].includes(contract?.status ?? "") && hasSucceededContractDelivery;
 
   async function handleSubmit(formData: FormData) {
     setMessage(null);
@@ -7441,6 +9134,29 @@ function FeishuDeliveryCard({
       setDeliveryError(result.error.message);
     }
     setSavingReceiver(false);
+  }
+
+  async function handleConfirmContractSigned() {
+    if (!contract) return;
+
+    setSigningContract(true);
+    setMessage(null);
+    setDeliveryError(null);
+
+    const result = await reviewContract(project.id, {
+      contractId: contract.id,
+      action: "mark_signed",
+      reason: "甲方已完成合同签署，内部确认后进入下一步。",
+    });
+
+    if (result.ok) {
+      setMessage(result.data.message);
+      await onRefresh();
+    } else {
+      setDeliveryError(result.error.message);
+    }
+
+    setSigningContract(false);
   }
 
   return (
@@ -7596,6 +9312,11 @@ function FeishuDeliveryCard({
                       打开飞书文档
                     </a>
                     {item.feishuMessageId && <span className="text-[var(--text-secondary)]">消息 ID：{item.feishuMessageId}</span>}
+                    {item.documentType === "contract" && contract && contract.status !== "signed" && (
+                      <span className="basis-full rounded-card-sm bg-[var(--macaron-teal-bg)] px-3 py-2 leading-5 text-[var(--success)]">
+                        合同已发送给甲方；请在本模块底部确认甲方已签署后，再进入下一步。
+                      </span>
+                    )}
                   </div>
                 ) : item.failureReason ? (
                   <div className="mt-2 grid gap-2">
@@ -7669,6 +9390,35 @@ function FeishuDeliveryCard({
             ))}
           </div>
         )}
+      </div>
+
+      <div className="mt-4 border-t border-[var(--border-soft)] pt-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3">
+          <div className="min-w-0">
+            <p className="text-sm font-medium">最终签署确认</p>
+            <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
+              看完飞书交付记录并确认甲方已完成签署后，再点击进入下一步。系统会把合同标记为已签署，并推进到脚本、人物场景设定与文字分镜确认。
+            </p>
+            {contract?.status === "signed" ? (
+              <p className="mt-2 text-xs leading-5 text-[var(--success)]">合同已签署，SOP 4 已完成。</p>
+            ) : !contract ? (
+              <p className="mt-2 text-xs leading-5 text-[var(--warning)]">请先保存合同版本。</p>
+            ) : !hasSucceededContractDelivery ? (
+              <p className="mt-2 text-xs leading-5 text-[var(--warning)]">请先完成一次合同飞书交付，再做最终签署确认。</p>
+            ) : !["sent", "confirmed"].includes(contract.status) ? (
+              <p className="mt-2 text-xs leading-5 text-[var(--warning)]">当前合同状态为「{quoteStatusLabel(contract.status)}」，请先完成合同确认或标记发送。</p>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            disabled={!canConfirmContractSigned || signingContract}
+            onClick={() => void handleConfirmContractSigned()}
+            className="inline-flex min-h-9 shrink-0 items-center justify-center gap-2 rounded-card-sm bg-[var(--accent)] px-3 py-2 text-sm font-medium leading-5 text-[var(--accent-foreground)] disabled:opacity-60"
+          >
+            {signingContract ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
+            甲方已签署，进入下一步
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -8008,7 +9758,6 @@ function CommercialReviewPanel({
     { action: "approve", label: "审核确认", tone: "primary", visible: canAdminReview && status === "waiting_review" },
     { action: "request_revision", label: "驳回修改", tone: "plain", visible: canAdminReview && ["waiting_review", "confirmed"].includes(status), needsReason: true },
     { action: "mark_sent", label: "标记已发送", tone: "plain", visible: canBusinessOperate && ["confirmed", "waiting_review"].includes(status) },
-    { action: "mark_signed", label: "标记已签署", tone: "primary", visible: canBusinessOperate && ["sent", "confirmed"].includes(status) },
     { action: "terminate", label: "终止", tone: "plain", visible: canBusinessOperate && status !== "terminated" && status !== "signed", needsReason: true },
   ];
   const visibleActions = actions.filter((item) => item.visible);
@@ -8033,7 +9782,8 @@ function CommercialReviewPanel({
         <div>
           <p className="text-sm font-medium">{documentLabel}审核与签署流转</p>
           <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
-            当前状态：{quoteStatusLabel(status)}。审核、驳回、发送、签署和终止都会写入阶段状态与审计记录。
+            当前状态：{quoteStatusLabel(status)}。审核、驳回、发送和终止都会写入阶段状态与审计记录。
+            {documentLabel === "合同" && ["sent", "confirmed"].includes(status) ? " 最终签署确认请在下方「飞书交付与归档」模块底部完成。" : ""}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -8044,7 +9794,7 @@ function CommercialReviewPanel({
               disabled={disabled || busy || (item.needsReason && !reason.trim())}
               onClick={() => void handleAction(item.action, item.needsReason)}
               className={cn(
-                "inline-flex h-8 items-center justify-center gap-1 rounded-card-sm px-2 text-xs font-medium disabled:opacity-60",
+                "inline-flex min-h-8 items-center justify-center gap-1 rounded-card-sm px-2 py-1 text-center text-xs font-medium leading-4 disabled:opacity-60",
                 item.tone === "primary"
                   ? "bg-[var(--foreground)] text-[var(--text-inverse)]"
                   : "border border-[var(--border-soft)] bg-[var(--surface-card)] text-[var(--text-primary)]"
@@ -8250,10 +10000,10 @@ function WorkloadEstimateCard({
         <div>
           <div className="flex items-center gap-2">
             <ClipboardList size={18} />
-            <h3 className="ds-text-section-title">工作量估算与 AI 报价建议</h3>
+            <h3 className="ds-text-section-title">工作量估算</h3>
           </div>
           <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-            估算会保存到数据库，作为报价建议和交付清单输入。最终报价请继续在下方报价编辑器人工确认。
+            系统先给出角色、场景、镜头、图片、视频、修改轮次和建议价格区间；人工核对保存后，才进入正式报价。
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-xs">
@@ -8413,13 +10163,13 @@ function DeliveryChecklistCard({
         <div>
           <div className="flex items-center gap-2">
             <List size={18} />
-            <h3 className="ds-text-section-title">交付清单编辑</h3>
+            <h3 className="ds-text-section-title">交付清单锁定</h3>
           </div>
           <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-            清单会持久化到数据库，并作为合同交付范围和 SOP 9 交付核对的依据。
+            根据工作量估算生成合同级交付清单，人工核对后保存为后续生产和最终验收依据。
           </p>
           <p className="mt-1 text-sm leading-6 text-[var(--text-secondary)]">
-            SOP 4 只保存草稿、签约前核对和变更草案；最终确认会在 SOP 9 完成，归档在 SOP 10 处理。
+            SOP 4 负责锁定“承诺交付什么”；最终是否全部交付，在 SOP 9 核对，费用回收和归档在 SOP 10 完成。
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-xs">
@@ -8431,7 +10181,7 @@ function DeliveryChecklistCard({
 
       {!checklist && (
         <div className="mt-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--macaron-yellow-bg)] p-3 text-sm leading-6 text-[var(--warning)]">
-          当前还没有交付清单。请先保存工作量估算，再生成初始清单并人工核对。
+          当前还没有交付清单。请先保存工作量估算，再生成合同级清单并人工核对。
         </div>
       )}
 
@@ -8443,7 +10193,7 @@ function DeliveryChecklistCard({
           className="inline-flex h-9 items-center justify-center gap-2 ds-card-sm px-3 text-sm font-medium disabled:opacity-60"
         >
           {generating ? <Loader2 className="animate-spin" size={16} /> : <RefreshCcw size={16} />}
-          根据估算生成清单
+          根据估算生成交付清单
         </button>
         {!estimate && <p className="text-sm leading-6 text-[var(--text-secondary)]">保存估算后才能生成交付清单。</p>}
       </div>
@@ -8817,30 +10567,6 @@ function creativeProposalRoundStatusLabel(status: string) {
   return labels[status] ?? status;
 }
 
-function creativeSceneImageStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    queued: "待真实生成",
-    processing: "生成中",
-    generating: "生成中",
-    generated: "已生成",
-    failed: "生成失败",
-    selected: "已确认",
-    discarded: "已废弃",
-  };
-  return labels[status] ?? status;
-}
-
-function isSelectableCreativeSceneImage(image: CreativeSceneImageView) {
-  return image.status === "generated" || image.status === "selected";
-}
-
-function creativeSceneImageDisabledReason(image: CreativeSceneImageView) {
-  if (image.status === "queued") return "这张候选图还在排队生成，暂时不能确认。";
-  if (image.status === "failed") return image.failureReason ? `生成失败：${image.failureReason}` : "这张候选图生成失败，请重新生成后再确认。";
-  if (image.status === "processing" || image.status === "generating") return "这张候选图仍在生成中，完成后才能确认。";
-  return "这张候选图还没有生成成功，暂时不能确认。";
-}
-
 function creativeDirectionStatusClass(status: string) {
   const classes: Record<string, string> = {
     draft: "bg-[var(--muted)] text-[var(--text-secondary)]",
@@ -8856,15 +10582,12 @@ function formatMoney(amount: number, currency: string) {
   return `${currency} ${amount.toLocaleString("zh-CN", { maximumFractionDigits: 2 })}`;
 }
 
-function storyArcLabel(key: string) {
-  const labels: Record<string, string> = {
-    beginning: "起",
-    development: "承",
-    turn: "转",
-    ending: "合",
-    qichengzhuanhe: "起承转合",
-  };
-  return labels[key] ?? key;
+function formatShortCny(amount: number) {
+  if (amount >= 10000) {
+    const value = amount / 10000;
+    return `${Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1)}万`;
+  }
+  return amount.toLocaleString("zh-CN");
 }
 
 function InfoBlock({ label, value }: { label: string; value: string }) {

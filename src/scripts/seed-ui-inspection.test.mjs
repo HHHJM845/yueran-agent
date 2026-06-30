@@ -43,3 +43,23 @@ test("UI inspection seed script is wired and avoids real external providers", as
   assert.doesNotMatch(source, /callArk/);
   assert.doesNotMatch(source, /deliverToFeishu/);
 });
+
+test("UI inspection seed script only uses supported delivery checklist item kinds", async () => {
+  const source = await readFile(new URL("./seed-ui-inspection.ts", import.meta.url), "utf8");
+
+  assert.doesNotMatch(source, /\["(?:proposal|quote|contract|script|review)",/);
+});
+
+test("UI inspection seed script does not broadly delete editable child collections", async () => {
+  const source = await readFile(new URL("./seed-ui-inspection.ts", import.meta.url), "utf8");
+
+  assert.match(source, /delete from creative_scene_images[\s\S]*?prompt like \$3/);
+  assert.doesNotMatch(source, /delete from delivery_checklist_items where project_id = \$1 and checklist_id = \$2/);
+  assert.doesNotMatch(source, /delete from storyboard_shots where project_id = \$1 and scene_id = \$2/);
+  assert.match(source, /delete from client_review_items[\s\S]*?item_type = 'storyboard_shot_image'[\s\S]*?metadata_json->>'marker' = \$3/);
+  assert.match(source, /delete from client_review_items[\s\S]*?item_type = 'review_cut_video'[\s\S]*?metadata_json->>'marker' = \$3/);
+  assert.match(source, /delete from storyboard_image_batch_items[\s\S]*?feedback_payload_json->>'marker' = \$3/);
+  assert.match(source, /delete from storyboard_video_generation_inputs[\s\S]*?metadata_json->>'marker' = \$3/);
+  assert.doesNotMatch(source, /delete from review_cut_annotations where project_id = \$1 and review_cut_id = \$2/);
+  assert.match(source, /metadata_json->>'marker' = \$\d+/);
+});

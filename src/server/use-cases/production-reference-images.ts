@@ -6,9 +6,11 @@ import { generateOpenAIImage } from "@/server/providers/openai-image";
 import { createGeneratedImageObjectKey, uploadOssObject } from "@/server/providers/oss";
 import {
   createGeneratedImage,
+  listGeneratedImagesByIds,
   markGeneratedImageFailed,
   markGeneratedImageProcessing,
   markGeneratedImageSucceeded,
+  type GeneratedImageView,
   updateGeneratedImageSourceJob,
 } from "@/server/repositories/generated-images";
 import { appendJobEvent, createJob, getJobInput, updateJobStatus } from "@/server/repositories/jobs";
@@ -29,10 +31,21 @@ const referenceImageJobInputSchema = z.object({
   generatedImageId: z.string().uuid(),
   requestedBy: z.string().uuid(),
   imageIndex: z.number().int().min(0),
-  prompt: z.string().min(1),
-  ratio: productionImageRatioSchema,
-  size: z.string().min(1),
-});
+  prompt: z.string().trim().min(1).optional(),
+  ratio: productionImageRatioSchema.optional(),
+  size: z.string().trim().min(1).optional(),
+}).passthrough();
+
+type ReferenceImageJobInput = {
+  entityId: string;
+  referenceSetId: string;
+  generatedImageId: string;
+  requestedBy: string;
+  imageIndex: number;
+  prompt: string;
+  ratio: z.infer<typeof productionImageRatioSchema>;
+  size: string;
+};
 
 export function ratioToOpenAIImageSize(ratio: z.infer<typeof productionImageRatioSchema>) {
   const sizes = {
@@ -193,7 +206,7 @@ export async function enqueueProductionReferenceImages(input: {
 }
 
 export async function runProductionReferenceImageGenerationJob(jobId: string) {
-  const job = await getJobInput<z.infer<typeof referenceImageJobInputSchema>>(jobId);
+  const job = await getJobInput<unknown>(jobId);
   if (!job) {
     throw new AppError({
       status: 404,
@@ -201,38 +214,41 @@ export async function runProductionReferenceImageGenerationJob(jobId: string) {
       userMessage: "没有找到这个设定图生成任务。",
     });
   }
-  const input = referenceImageJobInputSchema.parse(job.input);
-  const [entities, referenceSets] = await Promise.all([
-    listProductionEntities(job.projectId),
-    listProductionReferenceSets(job.projectId),
-  ]);
-  const entity = entities.find((item) => item.id === input.entityId);
-  const referenceSet = referenceSets.find((item) => item.id === input.referenceSetId);
-  if (!entity || !referenceSet) {
-    throw new AppError({
-      status: 404,
-      code: "production_reference_source_missing",
-      userMessage: "设定图对应的人物或场景设定不存在。请刷新后重新发起生成。",
-    });
-  }
 
-  await markGeneratedImageProcessing({ id: input.generatedImageId });
-  await updateJobStatus(jobId, {
-    status: "processing",
-    currentStep: "production_reference_image_generation",
-    userMessage: "正在生成角色或场景设定图。",
-  });
-  await appendJobEvent(jobId, {
-    type: "tool.started",
-    jobId,
-    projectId: job.projectId,
-    callId: "openai_production_reference_image_generation",
-    title: "调用图片模型",
-    userMessage: "系统正在根据人物或场景设定生成参考图。",
-    at: new Date().toISOString(),
-  });
-
+  let resolvedInput: ReferenceImageJobInput | null = null;
   try {
+    resolvedInput = await resolveReferenceImageJobInput(job.projectId, job.input);
+    const input = resolvedInput;
+    const [entities, referenceSets] = await Promise.all([
+      listProductionEntities(job.projectId),
+      listProductionReferenceSets(job.projectId),
+    ]);
+    const entity = entities.find((item) => item.id === input.entityId);
+    const referenceSet = referenceSets.find((item) => item.id === input.referenceSetId);
+    if (!entity || !referenceSet) {
+      throw new AppError({
+        status: 404,
+        code: "production_reference_source_missing",
+        userMessage: "设定图对应的人物或场景设定不存在。请刷新后重新发起生成。",
+      });
+    }
+
+    await markGeneratedImageProcessing({ id: input.generatedImageId });
+    await updateJobStatus(jobId, {
+      status: "processing",
+      currentStep: "production_reference_image_generation",
+      userMessage: "正在生成角色或场景设定图。",
+    });
+    await appendJobEvent(jobId, {
+      type: "tool.started",
+      jobId,
+      projectId: job.projectId,
+      callId: "openai_production_reference_image_generation",
+      title: "调用图片模型",
+      userMessage: "系统正在根据人物或场景设定生成参考图。",
+      at: new Date().toISOString(),
+    });
+
     const prompt = input.prompt;
     const image = await generateOpenAIImage({
       model: env.OPENAI_IMAGE_MODEL,
@@ -288,13 +304,72 @@ export async function runProductionReferenceImageGenerationJob(jobId: string) {
   } catch (error) {
     const userMessage =
       error instanceof AppError ? error.userMessage : "设定图生成失败。请稍后重试，或检查图片模型配置。";
-    await markGeneratedImageFailed({ id: input.generatedImageId, failureReason: userMessage });
+    const inputForFailure = resolvedInput ?? extractFailureImageInput(job.input);
+    if (inputForFailure?.generatedImageId) {
+      await markGeneratedImageFailed({ id: inputForFailure.generatedImageId, failureReason: userMessage });
+    }
     await updateJobStatus(jobId, {
       status: "failed",
       currentStep: "failed",
       userMessage,
       errorCode: error instanceof AppError ? error.code : "production_reference_image_failed",
     });
-    throw error;
+    if (error instanceof AppError) throw error;
+    throw new AppError({
+      status: 502,
+      code: "production_reference_image_failed",
+      userMessage,
+    });
   }
+}
+
+async function resolveReferenceImageJobInput(projectId: string, rawInput: unknown): Promise<ReferenceImageJobInput> {
+  const parsed = referenceImageJobInputSchema.parse(rawInput);
+  const legacyImage = parsed.prompt && parsed.ratio && parsed.size
+    ? null
+    : await getGeneratedImageById(projectId, parsed.generatedImageId);
+  const fallbackPrompt = legacyImage?.prompt;
+  const fallbackRatio = normalizeProductionImageRatio(legacyImage?.metadata.ratio) ?? "3:4";
+  const fallbackSize = ratioToOpenAIImageSize(fallbackRatio);
+  const prompt = parsed.prompt ?? fallbackPrompt;
+  const ratio = parsed.ratio ?? fallbackRatio;
+  const size = parsed.size ?? normalizeImageSize(legacyImage?.metadata.size) ?? fallbackSize;
+
+  if (!prompt) {
+    throw new AppError({
+      status: 422,
+      code: "production_reference_legacy_input_incomplete",
+      userMessage: "这个设定图任务缺少生成提示词，系统无法继续处理。请在设定卡片中重新点击生成。",
+    });
+  }
+
+  return {
+    entityId: parsed.entityId,
+    referenceSetId: parsed.referenceSetId,
+    generatedImageId: parsed.generatedImageId,
+    requestedBy: parsed.requestedBy,
+    imageIndex: parsed.imageIndex,
+    prompt,
+    ratio,
+    size,
+  };
+}
+
+async function getGeneratedImageById(projectId: string, generatedImageId: string): Promise<GeneratedImageView | null> {
+  const [image] = await listGeneratedImagesByIds({ projectId, imageIds: [generatedImageId] });
+  return image ?? null;
+}
+
+function normalizeProductionImageRatio(value: unknown): z.infer<typeof productionImageRatioSchema> | null {
+  const parsed = productionImageRatioSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+function normalizeImageSize(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function extractFailureImageInput(rawInput: unknown) {
+  const record = rawInput && typeof rawInput === "object" && !Array.isArray(rawInput) ? rawInput as Record<string, unknown> : {};
+  return typeof record.generatedImageId === "string" ? { generatedImageId: record.generatedImageId } : null;
 }
