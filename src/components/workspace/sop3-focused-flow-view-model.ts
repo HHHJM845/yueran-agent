@@ -83,6 +83,8 @@ export type Sop3FocusedFlowView = {
 
 export function buildSop3FocusedFlow(input: Sop3FocusedFlowInput): Sop3FocusedFlowView {
   const sortedDirections = [...input.directions].sort((left, right) => left.sortOrder - right.sortOrder);
+  const selectedDirections = sortedDirections.filter((direction) => direction.isSelected === true);
+  const unselectedDirections = sortedDirections.filter((direction) => direction.isSelected !== true);
   const round1 = findLatestRound(input.creativeProposalRounds, 1);
   const round2 = findLatestRound(input.creativeProposalRounds, 2);
   const round1ReviewTask = findCreativeRoundReviewTask(input.clientReviewTasks, round1, "creative_round_1");
@@ -92,24 +94,22 @@ export function buildSop3FocusedFlow(input: Sop3FocusedFlowInput): Sop3FocusedFl
   const round2Returned = isClientReviewReturned(round2ReviewTask?.status);
   const round1FocusIds = resolveRetainedDirectionIds(round1, round1ReviewTask, round1Returned, "round1");
   const round2FocusIds = resolveRetainedDirectionIds(round2, round2ReviewTask, round2Returned, "round2");
-  const internalSelectionDirections = sortedDirections.filter((direction) => direction.isSelected);
   const round1SubmittedDirections = directionsForIds(sortedDirections, round1?.directionIds ?? []);
   const round1RetainedDirections = directionsForIds(sortedDirections, round1FocusIds);
   const round2RetainedDirections = directionsForIds(sortedDirections, round2FocusIds);
-  const selectedDirections = round2
+  const focusedDirections = round2
     ? round2RetainedDirections
     : round1Returned
       ? round1RetainedDirections
-      : internalSelectionDirections;
-  const unselectedDirections = sortedDirections.filter((direction) => !selectedDirections.some((item) => item.id === direction.id));
-  const selectedExpansionCount = countSelectedExpansions(input.expansions, selectedDirections);
-  const selectedGeneratedImageCount = countSelectedGeneratedImages(input.generatedImages, selectedDirections);
-  const confirmedImageCount = countConfirmedGeneratedImages(input.generatedImages, selectedDirections);
-  const selectedHistoryDirections = round2
+      : selectedDirections;
+  const focusedExpansionCount = countSelectedExpansions(input.expansions, focusedDirections);
+  const focusedGeneratedImageCount = countSelectedGeneratedImages(input.generatedImages, focusedDirections);
+  const focusedConfirmedImageCount = countConfirmedGeneratedImages(input.generatedImages, focusedDirections);
+  const focusedHistoryDirections = round2
     ? round2RetainedDirections
     : round1Returned
       ? round1RetainedDirections
-      : internalSelectionDirections;
+      : selectedDirections;
 
   let currentTask: Sop3FocusedFlowView["currentTask"];
   let primaryAction: Sop3FocusedFlowView["primaryAction"];
@@ -182,15 +182,15 @@ export function buildSop3FocusedFlow(input: Sop3FocusedFlowInput): Sop3FocusedFl
       key: "deepen_confirmed_direction",
       title: "深化已确认方向",
       description: "只处理甲方初筛后保留的方向，生成故事大纲和氛围图。",
-      statusLabel: selectedExpansionCount > 0 ? `故事大纲 ${selectedExpansionCount}` : "待深化",
+      statusLabel: focusedExpansionCount > 0 ? `故事大纲 ${focusedExpansionCount}` : "待深化",
     };
     primaryAction = {
       key: "generate_deepening_assets",
-      label: selectedExpansionCount > 0 && selectedGeneratedImageCount > 0 ? "继续补齐深化内容" : "生成深化内容",
+      label: focusedExpansionCount > 0 && focusedGeneratedImageCount > 0 ? "继续补齐深化内容" : "生成深化内容",
       description: "为已确认方向生成故事大纲和氛围图候选。",
       disabledReason: input.canGenerate ? null : "当前角色不能生成深化内容。",
     };
-    visibleDirections = selectedDirections.length > 0 ? selectedDirections : round1RetainedDirections;
+    visibleDirections = round1RetainedDirections;
   } else if (!isClientReviewReturned(round2ReviewTask?.status)) {
     currentTask = {
       key: "wait_round_2_feedback",
@@ -242,11 +242,11 @@ export function buildSop3FocusedFlow(input: Sop3FocusedFlowInput): Sop3FocusedFl
       round1ReviewTask,
       round2ReviewTask,
       currentTaskKey: currentTask.key,
-      selectedExpansionCount,
-      confirmedImageCount,
+      selectedExpansionCount: focusedExpansionCount,
+      confirmedImageCount: focusedConfirmedImageCount,
       activeDirectionTitles:
         currentTask.key === "deepen_confirmed_direction" || currentTask.key === "wait_round_2_feedback" || currentTask.key === "finalize_proposal"
-          ? selectedHistoryDirections.map((direction) => direction.title)
+          ? focusedHistoryDirections.map((direction) => direction.title)
           : [],
     }),
   };
