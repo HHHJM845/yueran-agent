@@ -56,7 +56,7 @@ export function buildRiskIssues(riskCheck: RiskCheckBundleView | null): RiskIssu
   if (!riskCheck) return [];
 
   const issues: RiskIssueView[] = [];
-  const usedDimensionKeys = new Set<string>();
+  const usedSemanticKeys = new Set<string>();
 
   for (const alert of riskCheck.redlineAlerts ?? []) {
     const message = normalizeText(alert);
@@ -81,15 +81,16 @@ export function buildRiskIssues(riskCheck: RiskCheckBundleView | null): RiskIssu
 
   for (const dimension of rankedDimensions) {
     const item = buildDimensionIssue(dimension);
-    if (!item || usedDimensionKeys.has(dimension.dimensionKey)) continue;
-    usedDimensionKeys.add(dimension.dimensionKey);
+    if (!item || usedSemanticKeys.has(dimension.dimensionKey)) continue;
+    usedSemanticKeys.add(dimension.dimensionKey);
     issues.push(item);
     if (issues.length >= 5) return issues.slice(0, 5);
   }
 
   for (const fact of riskCheck.facts ?? []) {
-    const item = buildFactIssue(fact);
+    const item = buildFactIssue(fact, usedSemanticKeys);
     if (!item) continue;
+    usedSemanticKeys.add(fact.fieldKey);
     issues.push(item);
     if (issues.length >= 5) return issues.slice(0, 5);
   }
@@ -159,7 +160,8 @@ function buildDimensionIssue(dimension: RiskCheckDimensionView): RiskIssueView |
   };
 }
 
-function buildFactIssue(fact: RiskCheckFactView): RiskIssueView | null {
+function buildFactIssue(fact: RiskCheckFactView, usedSemanticKeys: Set<string>): RiskIssueView | null {
+  if (usedSemanticKeys.has(fact.fieldKey)) return null;
   const confidence = Number.isFinite(fact.confidence) ? fact.confidence : 0;
   const valueText = normalizeText(String(fact.value ?? ""));
   const evidenceText = normalizeText(fact.evidence);

@@ -112,6 +112,19 @@ test("buildRiskIssues falls back to a single empty-state issue when no risk is f
   ]);
 });
 
+test("buildRiskIssues skips fact rows that duplicate an already surfaced dimension key", () => {
+  const issues = buildRiskIssues(
+    makeRiskCheck({
+      dimensions: [dimension("material_readiness", "high", "素材授权和清晰度未确认。")],
+      facts: [fact("material_readiness", "素材可用性", "待人工确认", "素材还未就绪。", 0.2)],
+    })
+  );
+
+  assert.equal(issues.length, 1);
+  assert.deepEqual(issues.map((issue) => issue.key), ["dimension-material_readiness"]);
+  assert.doesNotMatch(issues.map((issue) => issue.title).join("、"), /素材可用性待确认/);
+});
+
 test("risk panel summary and decision labels stay concise", () => {
   assert.equal(
     getRiskPanelSummary(makeRiskCheck({ card: { overallAlert: "redline" } })),
