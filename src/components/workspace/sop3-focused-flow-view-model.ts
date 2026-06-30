@@ -83,16 +83,33 @@ export type Sop3FocusedFlowView = {
 
 export function buildSop3FocusedFlow(input: Sop3FocusedFlowInput): Sop3FocusedFlowView {
   const sortedDirections = [...input.directions].sort((left, right) => left.sortOrder - right.sortOrder);
-  const selectedDirections = sortedDirections.filter((direction) => direction.isSelected);
-  const unselectedDirections = sortedDirections.filter((direction) => !direction.isSelected);
   const round1 = findLatestRound(input.creativeProposalRounds, 1);
   const round2 = findLatestRound(input.creativeProposalRounds, 2);
   const round1ReviewTask = findCreativeRoundReviewTask(input.clientReviewTasks, round1, "creative_round_1");
   const round2ReviewTask = findCreativeRoundReviewTask(input.clientReviewTasks, round2, "creative_round_2");
   const directionCount = sortedDirections.length;
+  const round1Returned = isClientReviewReturned(round1ReviewTask?.status);
+  const round2Returned = isClientReviewReturned(round2ReviewTask?.status);
+  const round1FocusIds = resolveRetainedDirectionIds(round1, round1ReviewTask, round1Returned, "round1");
+  const round2FocusIds = resolveRetainedDirectionIds(round2, round2ReviewTask, round2Returned, "round2");
+  const internalSelectionDirections = sortedDirections.filter((direction) => direction.isSelected);
+  const round1SubmittedDirections = directionsForIds(sortedDirections, round1?.directionIds ?? []);
+  const round1RetainedDirections = directionsForIds(sortedDirections, round1FocusIds);
+  const round2RetainedDirections = directionsForIds(sortedDirections, round2FocusIds);
+  const selectedDirections = round2
+    ? round2RetainedDirections
+    : round1Returned
+      ? round1RetainedDirections
+      : internalSelectionDirections;
+  const unselectedDirections = sortedDirections.filter((direction) => !selectedDirections.some((item) => item.id === direction.id));
   const selectedExpansionCount = countSelectedExpansions(input.expansions, selectedDirections);
   const selectedGeneratedImageCount = countSelectedGeneratedImages(input.generatedImages, selectedDirections);
-  const confirmedImageCount = input.generatedImages.filter((image) => image.reviewStatus === "confirmed").length;
+  const confirmedImageCount = countConfirmedGeneratedImages(input.generatedImages, selectedDirections);
+  const selectedHistoryDirections = round2
+    ? round2RetainedDirections
+    : round1Returned
+      ? round1RetainedDirections
+      : internalSelectionDirections;
 
   let currentTask: Sop3FocusedFlowView["currentTask"];
   let primaryAction: Sop3FocusedFlowView["primaryAction"];
@@ -154,12 +171,12 @@ export function buildSop3FocusedFlow(input: Sop3FocusedFlowInput): Sop3FocusedFl
       statusLabel: round1ReviewTask ? clientReviewStatusLabel(round1ReviewTask.status) : "待发送",
     };
     primaryAction = {
-      key: "refresh_client_feedback",
+      key: round1ReviewTask ? "refresh_client_feedback" : "send_round_1_review",
       label: round1ReviewTask ? "刷新甲方回传" : "发送给甲方初筛",
       description: "甲方提交后，系统会自动回写筛选结果。",
       disabledReason: null,
     };
-    visibleDirections = directionsForRound(sortedDirections, round1);
+    visibleDirections = round1SubmittedDirections;
   } else if (!round2) {
     currentTask = {
       key: "deepen_confirmed_direction",
@@ -173,7 +190,7 @@ export function buildSop3FocusedFlow(input: Sop3FocusedFlowInput): Sop3FocusedFl
       description: "为已确认方向生成故事大纲和氛围图候选。",
       disabledReason: input.canGenerate ? null : "当前角色不能生成深化内容。",
     };
-    visibleDirections = selectedDirections.length > 0 ? selectedDirections : directionsForRound(sortedDirections, round1);
+    visibleDirections = selectedDirections.length > 0 ? selectedDirections : round1RetainedDirections;
   } else if (!isClientReviewReturned(round2ReviewTask?.status)) {
     currentTask = {
       key: "wait_round_2_feedback",
@@ -187,7 +204,7 @@ export function buildSop3FocusedFlow(input: Sop3FocusedFlowInput): Sop3FocusedFl
       description: "甲方确认后，项目可以进入最终提案整理和 SOP 4。",
       disabledReason: input.canLaunchReview ? null : "当前角色不能发起甲方审核。",
     };
-    visibleDirections = directionsForRound(sortedDirections, round2);
+    visibleDirections = round2RetainedDirections;
   } else {
     currentTask = {
       key: "finalize_proposal",
@@ -201,7 +218,7 @@ export function buildSop3FocusedFlow(input: Sop3FocusedFlowInput): Sop3FocusedFl
       description: "继续进入 SOP 4 工作量估算、报价合同与交付清单。",
       disabledReason: null,
     };
-    visibleDirections = directionsForRound(sortedDirections, round2);
+    visibleDirections = round2RetainedDirections;
   }
 
   return {
@@ -227,6 +244,10 @@ export function buildSop3FocusedFlow(input: Sop3FocusedFlowInput): Sop3FocusedFl
       currentTaskKey: currentTask.key,
       selectedExpansionCount,
       confirmedImageCount,
+      activeDirectionTitles:
+        currentTask.key === "deepen_confirmed_direction" || currentTask.key === "wait_round_2_feedback" || currentTask.key === "finalize_proposal"
+          ? selectedHistoryDirections.map((direction) => direction.title)
+          : [],
     }),
   };
 }
@@ -252,10 +273,9 @@ function findCreativeRoundReviewTask(
   return tasks.find((task) => task.reviewScene === reviewScene) ?? null;
 }
 
-function directionsForRound(directions: CreativeDirectionView[], round: CreativeProposalRoundView | null) {
-  if (!round) return [];
-  const ids = new Set(round.directionIds);
-  return directions.filter((direction) => ids.has(direction.id));
+function directionsForIds(directions: CreativeDirectionView[], ids: string[]) {
+  const idSet = new Set(ids);
+  return directions.filter((direction) => idSet.has(direction.id));
 }
 
 function countSelectedExpansions(expansions: CreativeExpansionView[], selectedDirections: CreativeDirectionView[]) {
@@ -266,6 +286,47 @@ function countSelectedExpansions(expansions: CreativeExpansionView[], selectedDi
 function countSelectedGeneratedImages(images: GeneratedImageView[], selectedDirections: CreativeDirectionView[]) {
   const ids = new Set(selectedDirections.map((direction) => direction.id));
   return images.filter((image) => image.directionId && ids.has(image.directionId) && isGeneratedImageRunningOrDone(image)).length;
+}
+
+function countConfirmedGeneratedImages(images: GeneratedImageView[], selectedDirections: CreativeDirectionView[]) {
+  const ids = new Set(selectedDirections.map((direction) => direction.id));
+  return images.filter((image) => image.directionId && ids.has(image.directionId) && image.reviewStatus === "confirmed").length;
+}
+
+function resolveRetainedDirectionIds(
+  round: CreativeProposalRoundView | null,
+  reviewTask: ClientReviewTaskView | null,
+  reviewReturned: boolean,
+  phase: "round1" | "round2"
+) {
+  const retainedFromRound = extractRetainedDirectionIds(round?.retainedDirectionIds);
+  const retainedFromClientFeedback = extractRetainedDirectionIds(readRetainedDirectionIds(round?.clientFeedback));
+  const retainedFromDecisionPayload = extractRetainedDirectionIds(readRetainedDirectionIds(round?.clientFeedback?.decisionPayload));
+  const retainedFromReviewTask = extractRetainedDirectionIds(readRetainedDirectionIds(reviewTask?.decisionPayload));
+  const fallbackDirectionIds = round?.directionIds ?? [];
+
+  if (phase === "round1" && !reviewReturned) {
+    return fallbackDirectionIds;
+  }
+
+  return (
+    retainedFromRound ??
+    retainedFromClientFeedback ??
+    retainedFromDecisionPayload ??
+    retainedFromReviewTask ??
+    fallbackDirectionIds
+  );
+}
+
+function extractRetainedDirectionIds(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const ids = value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim());
+  return ids.length > 0 ? ids : null;
+}
+
+function readRetainedDirectionIds(value: unknown): unknown {
+  if (!value || typeof value !== "object") return null;
+  return (value as { retainedDirectionIds?: unknown }).retainedDirectionIds ?? null;
 }
 
 function isGeneratedImageRunningOrDone(image: Pick<GeneratedImageView, "status">) {
@@ -301,10 +362,15 @@ function buildProgressNodes(input: {
   currentTaskKey: Sop3CurrentTaskKey;
   selectedExpansionCount: number;
   confirmedImageCount: number;
+  activeDirectionTitles: string[];
 }): Sop3ProgressNodeView[] {
   const selectedCount = input.selectedDirections.length;
   const round1Returned = isClientReviewReturned(input.round1ReviewTask?.status);
   const round2Returned = isClientReviewReturned(input.round2ReviewTask?.status);
+  const activeDirectionTitleText = input.activeDirectionTitles.length > 0 ? input.activeDirectionTitles.join("、") : "暂无可展示方向。";
+  const scopedGeneratedImageCount = input.generatedImages.filter(
+    (image) => image.directionId && input.selectedDirections.some((direction) => direction.id === image.directionId) && isGeneratedImageRunningOrDone(image)
+  ).length;
 
   return [
     {
@@ -338,7 +404,7 @@ function buildProgressNodes(input: {
       label: "方向深化",
       status: progressStatus(input.currentTaskKey, "deepen_confirmed_direction", input.selectedExpansionCount > 0),
       summary: input.selectedExpansionCount > 0 ? `故事大纲 ${input.selectedExpansionCount}，确认图 ${input.confirmedImageCount}` : "待深化",
-      historySummary: `故事大纲 ${input.selectedExpansionCount}，氛围图 ${input.generatedImages.length}，确认采用 ${input.confirmedImageCount}。`,
+      historySummary: `${activeDirectionTitleText}；故事大纲 ${input.selectedExpansionCount}，氛围图 ${scopedGeneratedImageCount}，确认采用 ${input.confirmedImageCount}。`,
       previewMode: "readonly",
     },
     {

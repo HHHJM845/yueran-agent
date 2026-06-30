@@ -187,21 +187,57 @@ test("buildSop3FocusedFlow waits for Round 1 feedback after client review is act
   assert.doesNotMatch(view.currentTask.description, /氛围图/);
 });
 
-test("buildSop3FocusedFlow deepens only confirmed selected directions after Round 1 returns", () => {
+test("buildSop3FocusedFlow keeps Round 1 send action aligned when no review task exists", () => {
   const selected = fourDirections.map((item, index) => ({ ...item, isSelected: index < 2 }));
-  const round1 = round("round-1", 1, ["direction-1", "direction-2"], { clientReviewTaskId: "review-1" });
+  const round1 = round("round-1", 1, ["direction-1", "direction-2"]);
   const view = buildSop3FocusedFlow(
     flowInput({
       directions: selected,
       creativeProposalRounds: [round1],
-      clientReviewTasks: [reviewTask("review-1", "creative_round_1", "submitted")],
+      clientReviewTasks: [],
+    })
+  );
+
+  assert.equal(view.currentTask.key, "wait_round_1_feedback");
+  assert.equal(view.primaryAction.key, "send_round_1_review");
+  assert.equal(view.primaryAction.label, "发送给甲方初筛");
+});
+
+test("buildSop3FocusedFlow deepens only confirmed selected directions after Round 1 returns", () => {
+  const selected = fourDirections.map((item, index) => ({ ...item, isSelected: index < 3 }));
+  const round1 = round("round-1", 1, ["direction-1", "direction-2", "direction-3"], {
+    clientReviewTaskId: "review-1",
+    retainedDirectionIds: ["direction-1", "direction-3"],
+  });
+  const view = buildSop3FocusedFlow(
+    flowInput({
+      directions: selected,
+      creativeProposalRounds: [round1],
+      clientReviewTasks: [
+        reviewTask("review-1", "creative_round_1", "submitted", {
+          decisionPayload: { retainedDirectionIds: ["direction-1", "direction-3"] },
+        }),
+      ],
+      expansions: [
+        expansion("expansion-1", "direction-1"),
+        expansion("expansion-2", "direction-2"),
+        expansion("expansion-3", "direction-3"),
+      ],
+      generatedImages: [
+        generatedImage("image-1", "direction-1", "expansion-1", { reviewStatus: "confirmed" }),
+        generatedImage("image-2", "direction-2", "expansion-2", { reviewStatus: "confirmed" }),
+        generatedImage("image-3", "direction-3", "expansion-3", { reviewStatus: "confirmed" }),
+      ],
     })
   );
 
   assert.equal(view.currentTask.key, "deepen_confirmed_direction");
   assert.equal(view.primaryAction.key, "generate_deepening_assets");
-  assert.deepEqual(view.visibleDirections.map((item) => item.id), ["direction-1", "direction-2"]);
+  assert.deepEqual(view.visibleDirections.map((item) => item.id), ["direction-1", "direction-3"]);
   assert.equal(view.progressNodes.find((node) => node.key === "client_round_1").status, "done");
+  assert.match(view.progressNodes.find((node) => node.key === "direction_deepening").summary, /故事大纲 2，确认图 2/);
+  assert.match(view.progressNodes.find((node) => node.key === "direction_deepening").historySummary, /方向 direction-1、方向 direction-3/);
+  assert.doesNotMatch(view.progressNodes.find((node) => node.key === "direction_deepening").historySummary, /direction-2/);
 });
 
 test("buildSop3FocusedFlow waits for Round 2 feedback and then finalizes proposal", () => {
