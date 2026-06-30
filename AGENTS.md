@@ -209,6 +209,17 @@ MUST NOT 直接把以下内容展示给最终用户：
 
 涉及核心流程的改动，MUST 至少验证一条真实或可连接真实 provider 的路径。不得只验证静态页面渲染。
 
+### Brief / 风险体检基线
+
+`npm run test:baseline` 是当前 SOP 1 Brief 简化工作区与 SOP 2 风险体检卡线性决策流程的回归基线。任何修改以下区域前后都 MUST 运行并保持通过：
+
+- `src/components/workspace/workspace-shell.tsx` 中 Brief 收集、标准化 Brief、风险体检卡、接单结论相关 UI。
+- `src/components/workspace/api.ts` 中风险体检卡生成、决策提交相关 client contract。
+- `src/app/api/projects/[projectId]/risk-check/route.ts` 与 `src/server/use-cases/risk-check-card.ts` 中风险决策校验和状态机流转。
+- `src/components/workspace/risk-check-view-model.ts` 与 `src/components/workspace/risk-check-view-model.test.mjs` 中 SOP 2 风险问题视图模型与回归测试。
+
+该基线保护的行为包括：SOP 2 只常驻展示 `能接（通过）` / `不能接` 两个主操作；`不能接` 后才收集 `Brief 不足` 或 `项目背景/项目本身原因` 与理由补充；`Brief 不足` 回退 SOP 1 补资料，项目本身原因阻塞在 SOP 2。
+
 ## 13. 修改范围约束
 
 - 优先做最小可行实现。
