@@ -40,3 +40,14 @@
 ## Concerns, if any
 
 - The task brief restricted implementation edits to the two script files; this report file is the only extra artifact created because the task explicitly required a written report at this path.
+
+## Fix for commercial document reruns
+
+- Updated the `seedCreativeAndCommercial` rerun path so `proposals`, `quotes`, and `contracts` reuse the stored document version instead of incrementing it on every deterministic seed pass.
+- Kept the returned document version and the linked snapshot version aligned by continuing to write the snapshot with the version returned from the document upsert.
+- Preserved the sample proposal, quote, contract, and snapshot records; only the rerun version churn behavior changed.
+
+## Verification for this fix
+
+- `node --test src/scripts/seed-ui-inspection.test.mjs`
+- `npm run typecheck`

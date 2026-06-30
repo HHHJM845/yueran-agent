@@ -913,7 +913,7 @@ async function seedCreativeAndCommercial(projectId: string, actorId: string): Pr
          title = excluded.title,
          content = excluded.content,
          status = excluded.status,
-         version = proposals.version + 1,
+         version = proposals.version,
          updated_by = excluded.updated_by,
          updated_at = now()
        returning id, version`,
@@ -994,7 +994,7 @@ async function seedCreativeAndCommercial(projectId: string, actorId: string): Pr
          notes = excluded.notes,
          total_amount = excluded.total_amount,
          status = excluded.status,
-         version = quotes.version + 1,
+         version = quotes.version,
          updated_by = excluded.updated_by,
          updated_at = now()
        returning id, version`,
@@ -1045,7 +1045,7 @@ async function seedCreativeAndCommercial(projectId: string, actorId: string): Pr
          template_fields_json = excluded.template_fields_json,
          content = excluded.content,
          status = excluded.status,
-         version = contracts.version + 1,
+         version = contracts.version,
          updated_by = excluded.updated_by,
          updated_at = now()
        returning id, version`,
