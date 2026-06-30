@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { loadEnvConfig } from "@next/env";
 
 loadEnvConfig(process.cwd());
@@ -110,6 +110,10 @@ const SAMPLE_DIMENSIONS = [
 
 function asJson(value: unknown) {
   return JSON.stringify(value);
+}
+
+function sha256(value: string) {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 async function getDb() {
@@ -1546,10 +1550,608 @@ async function seedScriptSetupAndStoryboard(
   });
 }
 
-async function seedReviewCutsAndArchive(_projectId: string, _actorId: string) {
-  const _stageKeys: readonly StageKey[] = stageKeys;
-  void SAMPLE_VIDEO_URL;
-  void _stageKeys;
+async function seedStoryboardImageAndVideo(
+  projectId: string,
+  actorId: string,
+  sceneId: string,
+  shotIds: string[]
+): Promise<void> {
+  const { withTransaction } = await getDb();
+  await withTransaction(async (query) => {
+    const storyboardReviewTitle = "UI 巡检样例：分镜图片审核";
+    const storyboardReviewToken = sha256(`${UI_INSPECTION_MARKER}:${projectId}:storyboard_scene_images:${sceneId}`);
+    const storyboardReviewCode = sha256(`${UI_INSPECTION_MARKER}:${sceneId}:code`);
+    const shotStatuses = ["approved", "needs_revision", "pending"] as const;
+    const selectedImageIds: string[] = [];
+
+    for (const [index, shotId] of shotIds.entries()) {
+      const prompt = `UI 巡检样例镜头 ${index + 1} 分镜图`;
+      const imageId =
+        (await findExistingId(
+          query,
+          `select id
+           from storyboard_images
+           where project_id = $1
+             and shot_id = $2
+             and prompt = $3
+           limit 1`,
+          [projectId, shotId, prompt]
+        )) ?? randomUUID();
+      const imageExists = (await findExistingId(query, `select id from storyboard_images where id = $1`, [imageId])) !== null;
+
+      if (imageExists) {
+        await query(
+          `update storyboard_images
+           set scene_id = $2,
+               prompt = $3,
+               provider = $4,
+               model_name = $5,
+               generation_status = 'succeeded',
+               oss_url = $6,
+               is_selected = true,
+               internal_review_status = 'confirmed',
+               failure_reason = null,
+               retry_count = 0,
+               annotations_json = $7::jsonb,
+               reference_json = $8::jsonb,
+               version = 1,
+               created_by = $9,
+               reviewed_by = $9,
+               reviewed_at = now(),
+               updated_at = now()
+           where id = $1`,
+          [
+            imageId,
+            sceneId,
+            prompt,
+            SAMPLE_PROVIDER,
+            SAMPLE_MODEL,
+            SAMPLE_IMAGE_URL,
+            asJson([{ marker: UI_INSPECTION_MARKER, status: shotStatuses[index] ?? "pending" }]),
+            asJson({ marker: UI_INSPECTION_MARKER, sceneId, shotId }),
+            actorId,
+          ]
+        );
+      } else {
+        await query(
+          `insert into storyboard_images (
+             id, project_id, scene_id, shot_id, prompt, provider, model_name,
+             generation_status, oss_url, is_selected, internal_review_status,
+             annotations_json, reference_json, version, created_by, reviewed_by, reviewed_at
+           )
+           values (
+             $1, $2, $3, $4, $5, $6, $7,
+             'succeeded', $8, true, 'confirmed',
+             $9::jsonb, $10::jsonb, 1, $11, $11, now()
+           )`,
+          [
+            imageId,
+            projectId,
+            sceneId,
+            shotId,
+            prompt,
+            SAMPLE_PROVIDER,
+            SAMPLE_MODEL,
+            SAMPLE_IMAGE_URL,
+            asJson([{ marker: UI_INSPECTION_MARKER, status: shotStatuses[index] ?? "pending" }]),
+            asJson({ marker: UI_INSPECTION_MARKER, sceneId, shotId }),
+            actorId,
+          ]
+        );
+      }
+      selectedImageIds.push(imageId);
+
+      await query(
+        `insert into storyboard_image_versions (
+           project_id, scene_id, shot_id, storyboard_image_id, version, selected_image_ids, status, snapshot_json, created_by
+         )
+         values ($1, $2, $3, $4, 1, $5::jsonb, 'selected', $6::jsonb, $7)
+         on conflict (shot_id, version)
+         do update set
+           scene_id = excluded.scene_id,
+           storyboard_image_id = excluded.storyboard_image_id,
+           selected_image_ids = excluded.selected_image_ids,
+           status = excluded.status,
+           snapshot_json = excluded.snapshot_json,
+           created_by = excluded.created_by,
+           updated_at = now()`,
+        [
+          projectId,
+          sceneId,
+          shotId,
+          imageId,
+          asJson([imageId]),
+          asJson({ marker: UI_INSPECTION_MARKER, batch: 1, shotId }),
+          actorId,
+        ]
+      );
+    }
+
+    const reviewTaskResult = await query<{ id: string }>(
+      `insert into client_review_tasks (
+         project_id, module_key, review_type, target_scope_type, target_scope_id, title, summary,
+         version, status, access_token_hash, verification_code_hash, expires_at, submitted_at,
+         reviewed_at, payload_json, decision_payload_json, reviewer_name, reviewer_contact, feedback, created_by
+       )
+       values (
+         $1, 'storyboard_image_canvas', 'storyboard_scene_images', 'storyboard_scene', $2, $3, $4,
+         1, 'approved', $5, $6, now() + interval '30 days', now(),
+         now(), $7::jsonb, $8::jsonb, 'UI 巡检客户', 'ui-review@example.com', $9, $10
+       )
+       on conflict (access_token_hash)
+       do update set
+         title = excluded.title,
+         summary = excluded.summary,
+         status = excluded.status,
+         expires_at = excluded.expires_at,
+         submitted_at = excluded.submitted_at,
+         reviewed_at = excluded.reviewed_at,
+         payload_json = excluded.payload_json,
+         decision_payload_json = excluded.decision_payload_json,
+         reviewer_name = excluded.reviewer_name,
+         reviewer_contact = excluded.reviewer_contact,
+         feedback = excluded.feedback,
+         created_by = excluded.created_by,
+         updated_at = now()
+       returning id`,
+      [
+        projectId,
+        sceneId,
+        storyboardReviewTitle,
+        "UI 巡检样例分镜图片三批审核任务。",
+        storyboardReviewToken,
+        storyboardReviewCode,
+        asJson({ marker: UI_INSPECTION_MARKER, sceneId, shotIds, selectedImageIds }),
+        asJson({ marker: UI_INSPECTION_MARKER, outcome: "mixed_feedback" }),
+        "已完成第一批审核，含通过与待修改镜头。",
+        actorId,
+      ]
+    );
+    const reviewTaskId = reviewTaskResult.rows[0].id;
+
+    await query(
+      `delete from client_review_items
+       where review_task_id = $1
+         and project_id = $2
+         and item_type = 'storyboard_shot_image'`,
+      [reviewTaskId, projectId]
+    );
+
+    for (const [index, shotId] of shotIds.entries()) {
+      await query(
+        `insert into client_review_items (
+           review_task_id, project_id, item_type, item_id, item_label, decision, score, feedback, metadata_json
+         )
+         values ($1, $2, 'storyboard_shot_image', $3, $4, $5, $6, $7, $8::jsonb)`,
+        [
+          reviewTaskId,
+          projectId,
+          shotId,
+          `UI 巡检样例镜头 ${index + 1}`,
+          shotStatuses[index] === "approved" ? "approved" : shotStatuses[index] === "needs_revision" ? "rejected" : "pending",
+          shotStatuses[index] === "approved" ? 5 : shotStatuses[index] === "needs_revision" ? 2 : null,
+          shotStatuses[index] === "approved"
+            ? "画面可直接进入锁版。"
+            : shotStatuses[index] === "needs_revision"
+              ? "客户希望强化角色动作与产品交互。"
+              : "等待客户进一步确认。",
+          asJson({ marker: UI_INSPECTION_MARKER, sceneId, shotId }),
+        ]
+      );
+    }
+
+    for (const batchNumber of [1, 2, 3] as const) {
+      const batchStatus =
+        batchNumber === 1 ? "client_reviewing" : batchNumber === 2 ? "client_rejected" : "internal_ready";
+      const batchId =
+        (await findExistingId(
+          query,
+          `select id
+           from storyboard_image_batches
+           where project_id = $1
+             and batch_number = $2
+             and version = 1
+           limit 1`,
+          [projectId, batchNumber]
+        )) ?? randomUUID();
+      const batchExists = (await findExistingId(query, `select id from storyboard_image_batches where id = $1`, [batchId])) !== null;
+
+      if (batchExists) {
+        await query(
+          `update storyboard_image_batches
+           set status = $2,
+               scene_ids = $3::jsonb,
+               client_review_task_id = $4,
+               snapshot_json = $5::jsonb,
+               submitted_at = case when $2 in ('client_reviewing', 'client_rejected', 'client_approved', 'locked') then now() else null end,
+               approved_at = case when $2 in ('client_approved', 'locked') then now() else null end,
+               updated_by = $6,
+               updated_at = now()
+           where id = $1`,
+          [batchId, batchStatus, asJson([sceneId]), batchNumber === 1 ? reviewTaskId : null, asJson({ marker: UI_INSPECTION_MARKER, batchNumber }), actorId]
+        );
+      } else {
+        await query(
+          `insert into storyboard_image_batches (
+             id, project_id, batch_number, status, version, scene_ids, client_review_task_id,
+             snapshot_json, submitted_at, approved_at, created_by, updated_by
+           )
+           values (
+             $1, $2, $3, $4, 1, $5::jsonb, $6,
+             $7::jsonb,
+             case when $4 in ('client_reviewing', 'client_rejected', 'client_approved', 'locked') then now() else null end,
+             case when $4 in ('client_approved', 'locked') then now() else null end,
+             $8, $8
+           )`,
+          [batchId, projectId, batchNumber, batchStatus, asJson([sceneId]), batchNumber === 1 ? reviewTaskId : null, asJson({ marker: UI_INSPECTION_MARKER, batchNumber }), actorId]
+        );
+      }
+
+      if (batchNumber === 1) {
+        await query(
+          `delete from storyboard_image_batch_items
+           where batch_id = $1
+             and project_id = $2`,
+          [batchId, projectId]
+        );
+
+        for (const [index, shotId] of shotIds.entries()) {
+          await query(
+            `insert into storyboard_image_batch_items (
+               project_id, batch_id, scene_id, shot_id, status, selected_image_ids, feedback,
+               feedback_payload_json, version, sort_order, created_by, updated_by
+             )
+             values (
+               $1, $2, $3, $4, $5, $6::jsonb, $7,
+               $8::jsonb, 1, $9, $10, $10
+             )`,
+            [
+              projectId,
+              batchId,
+              sceneId,
+              shotId,
+              shotStatuses[index] ?? "pending",
+              asJson([selectedImageIds[index]]),
+              shotStatuses[index] === "approved"
+                ? "构图与动作已通过。"
+                : shotStatuses[index] === "needs_revision"
+                  ? "表情和手势需要再推进一版。"
+                  : "待客户评审会议确认。",
+              asJson({ marker: UI_INSPECTION_MARKER, shotId, status: shotStatuses[index] ?? "pending" }),
+              index + 1,
+              actorId,
+            ]
+          );
+        }
+      }
+    }
+
+    const firstShotId = shotIds[0];
+    const firstImageId = selectedImageIds[0];
+    const videoModes = ["single_image", "start_end_frame"] as const;
+
+    for (const [index, mode] of videoModes.entries()) {
+      const prompt = `UI 巡检样例视频候选 ${index + 1}`;
+      const videoId =
+        (await findExistingId(
+          query,
+          `select id
+           from storyboard_videos
+           where project_id = $1
+             and shot_id = $2
+             and prompt = $3
+           limit 1`,
+          [projectId, firstShotId, prompt]
+        )) ?? randomUUID();
+      const videoExists = (await findExistingId(query, `select id from storyboard_videos where id = $1`, [videoId])) !== null;
+
+      if (videoExists) {
+        await query(
+          `update storyboard_videos
+           set scene_id = $2,
+               image_id = $3,
+               prompt = $4,
+               provider = $5,
+               model_name = $6,
+               generation_status = 'succeeded',
+               oss_url = $7,
+               is_selected = $8,
+               internal_review_status = 'confirmed',
+               failure_reason = null,
+               retry_count = 0,
+               version = 1,
+               created_by = $9,
+               reviewed_by = $9,
+               reviewed_at = now(),
+               updated_at = now()
+           where id = $1`,
+          [videoId, sceneId, firstImageId, prompt, SAMPLE_PROVIDER, SAMPLE_MODEL, SAMPLE_VIDEO_URL, index === 0, actorId]
+        );
+      } else {
+        await query(
+          `insert into storyboard_videos (
+             id, project_id, scene_id, shot_id, image_id, prompt, provider, model_name,
+             generation_status, oss_url, is_selected, internal_review_status, version, created_by, reviewed_by, reviewed_at
+           )
+           values (
+             $1, $2, $3, $4, $5, $6, $7, $8,
+             'succeeded', $9, $10, 'confirmed', 1, $11, $11, now()
+           )`,
+          [videoId, projectId, sceneId, firstShotId, firstImageId, prompt, SAMPLE_PROVIDER, SAMPLE_MODEL, SAMPLE_VIDEO_URL, index === 0, actorId]
+        );
+      }
+
+      await query(
+        `delete from storyboard_video_generation_inputs
+         where storyboard_video_id = $1
+           and project_id = $2`,
+        [videoId, projectId]
+      );
+
+      await query(
+        `insert into storyboard_video_generation_inputs (
+           project_id, storyboard_video_id, shot_id, mode, input_image_ids, prompt, metadata_json, created_by
+         )
+         values ($1, $2, $3, $4, $5::jsonb, $6, $7::jsonb, $8)`,
+        [
+          projectId,
+          videoId,
+          firstShotId,
+          mode,
+          asJson(mode === "single_image" ? [firstImageId] : [firstImageId, selectedImageIds[1] ?? firstImageId]),
+          `${prompt} 输入模式 ${mode}`,
+          asJson({ marker: UI_INSPECTION_MARKER, mode }),
+          actorId,
+        ]
+      );
+    }
+  });
+}
+
+async function seedReviewCutsAndArchive(projectId: string, actorId: string) {
+  const { withTransaction } = await getDb();
+  await withTransaction(async (query) => {
+    const checklist = await query<{ id: string }>(
+      `select id
+       from delivery_checklists
+       where project_id = $1
+       limit 1`,
+      [projectId]
+    );
+    const checklistId = checklist.rows[0]?.id ?? null;
+
+    const reviewCutDefinitions = [
+      {
+        cutType: "a_copy",
+        title: "UI 巡检样例 A Copy",
+        description: "第一版完整成片，进入多轮修改。",
+        status: "revision_required",
+        version: 1,
+      },
+      {
+        cutType: "b_copy",
+        title: "UI 巡检样例 B Copy",
+        description: "最终定稿版本，等待交付清单核对。",
+        status: "client_approved",
+        version: 1,
+      },
+    ] as const;
+
+    for (const [index, cut] of reviewCutDefinitions.entries()) {
+      const assetId = await upsertAsset(query, {
+        projectId,
+        actorId,
+        fileName: `${cut.title}.mp4`,
+        assetType: "video",
+        sourceType: "external",
+        parseStatus: "succeeded",
+        externalUrl: SAMPLE_VIDEO_URL,
+        externalProvider: SAMPLE_PROVIDER,
+        mimeType: "video/mp4",
+      });
+
+      const reviewType = cut.cutType === "a_copy" ? "a_copy_review" : "b_copy_review";
+      const reviewToken = sha256(`${UI_INSPECTION_MARKER}:${projectId}:${reviewType}:${cut.cutType}`);
+      const reviewCode = sha256(`${UI_INSPECTION_MARKER}:${cut.cutType}:code`);
+      const cutResult = await query<{ id: string }>(
+        `insert into review_cuts (
+           project_id, cut_type, title, description, asset_id, video_url, duration_seconds,
+           status, version, created_by, reviewed_by, reviewed_at
+         )
+         values ($1, $2, $3, $4, $5, $6, 45, $7, $8, $9, $9, now())
+         on conflict (project_id, cut_type, version)
+         do update set
+           title = excluded.title,
+           description = excluded.description,
+           asset_id = excluded.asset_id,
+           video_url = excluded.video_url,
+           duration_seconds = excluded.duration_seconds,
+           status = excluded.status,
+           created_by = excluded.created_by,
+           reviewed_by = excluded.reviewed_by,
+           reviewed_at = excluded.reviewed_at,
+           updated_at = now()
+         returning id`,
+        [projectId, cut.cutType, cut.title, cut.description, assetId, SAMPLE_VIDEO_URL, cut.status, cut.version, actorId]
+      );
+      const reviewCutId = cutResult.rows[0].id;
+
+      const taskResult = await query<{ id: string }>(
+        `insert into client_review_tasks (
+           project_id, module_key, review_type, target_scope_type, target_scope_id, title, summary,
+           version, status, access_token_hash, verification_code_hash, expires_at, submitted_at,
+           reviewed_at, payload_json, decision_payload_json, reviewer_name, reviewer_contact, feedback, created_by
+         )
+         values (
+           $1, $2, $3, 'review_cut', $4, $5, $6,
+           1, $7, $8, $9, now() + interval '30 days', now(),
+           case when $7 = 'active' then null else now() end,
+           $10::jsonb, $11::jsonb, 'UI 巡检客户', 'ui-review@example.com', $12, $13
+         )
+         on conflict (access_token_hash)
+         do update set
+           title = excluded.title,
+           summary = excluded.summary,
+           status = excluded.status,
+           expires_at = excluded.expires_at,
+           submitted_at = excluded.submitted_at,
+           reviewed_at = excluded.reviewed_at,
+           payload_json = excluded.payload_json,
+           decision_payload_json = excluded.decision_payload_json,
+           reviewer_name = excluded.reviewer_name,
+           reviewer_contact = excluded.reviewer_contact,
+           feedback = excluded.feedback,
+           created_by = excluded.created_by,
+           updated_at = now()
+         returning id`,
+        [
+          projectId,
+          cut.cutType === "a_copy" ? "a_copy_revision" : "b_copy_final_confirmation",
+          reviewType,
+          reviewCutId,
+          `${cut.title} 客户审核`,
+          cut.cutType === "a_copy" ? "A copy 多轮修改审核任务。" : "B copy 最终确认审核任务。",
+          cut.cutType === "a_copy" ? "submitted" : "approved",
+          reviewToken,
+          reviewCode,
+          asJson({ marker: UI_INSPECTION_MARKER, reviewCutId, cutType: cut.cutType }),
+          asJson({ marker: UI_INSPECTION_MARKER, finalDecision: cut.cutType === "a_copy" ? "revise" : "approve" }),
+          cut.cutType === "a_copy" ? "请优化 12 秒和 28 秒附近的节奏。" : "客户确认可直接交付。",
+          actorId,
+        ]
+      );
+      const reviewTaskId = taskResult.rows[0].id;
+
+      await query(`update review_cuts set client_review_task_id = $2, updated_at = now() where id = $1`, [reviewCutId, reviewTaskId]);
+
+      await query(
+        `delete from client_review_items
+         where review_task_id = $1
+           and project_id = $2
+           and item_type = 'review_cut_video'`,
+        [reviewTaskId, projectId]
+      );
+      await query(
+        `insert into client_review_items (
+           review_task_id, project_id, item_type, item_id, item_label, decision, score, feedback, metadata_json
+         )
+         values (
+           $1, $2, 'review_cut_video', $3, $4, $5, $6, $7, $8::jsonb
+         )`,
+        [
+          reviewTaskId,
+          projectId,
+          reviewCutId,
+          cut.title,
+          cut.cutType === "a_copy" ? "rejected" : "approved",
+          cut.cutType === "a_copy" ? 3 : 5,
+          cut.cutType === "a_copy" ? "整体方向成立，但节奏和字幕层次仍需优化。" : "客户确认最终版可进入交付。",
+          asJson({ marker: UI_INSPECTION_MARKER, cutType: cut.cutType }),
+        ]
+      );
+
+      await query(`delete from review_cut_annotations where project_id = $1 and review_cut_id = $2`, [projectId, reviewCutId]);
+      if (cut.cutType === "a_copy") {
+        const annotations = [
+          { timeSeconds: 12, feedback: "这里角色入镜偏慢，建议提前切入产品动作。", status: "mapped" },
+          { timeSeconds: 28, feedback: "字幕与口播信息密度过高，需要拆分。", status: "resolved" },
+          { timeSeconds: 34, feedback: "收尾品牌露出希望更坚定一点。", status: "needs_triage" },
+        ] as const;
+        for (const annotation of annotations) {
+          await query(
+            `insert into review_cut_annotations (
+               project_id, review_cut_id, review_task_id, time_seconds, feedback,
+               mapping_confidence, status, created_by_name
+             )
+             values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            [projectId, reviewCutId, reviewTaskId, annotation.timeSeconds, annotation.feedback, 0.82, annotation.status, "UI 巡检客户"]
+          );
+        }
+      }
+
+      if (cut.cutType === "a_copy") {
+        await query(
+          `insert into change_requests (
+             project_id, source_sop, source_object_type, source_object_id, status, original_scope,
+             requested_scope, impact_json, decision_reason, decided_by, decided_at, created_by, updated_by
+           )
+           values (
+             $1, 'sop8_a_copy_revision', 'review_cut', $2, 'implemented', $3,
+             $4, $5::jsonb, $6, $7, now(), $7, $7
+           )
+           on conflict do nothing`,
+          [
+            projectId,
+            reviewCutId,
+            "A copy 第一版完整交付。",
+            "优化镜头 12 秒节奏，并降低 28 秒字幕负担。",
+            asJson({ marker: UI_INSPECTION_MARKER, rounds: 2, impact: "minor_edit" }),
+            "客户反馈已纳入 B copy 定稿版本。",
+            actorId,
+          ]
+        );
+      }
+    }
+
+    if (checklistId) {
+      await query(
+        `delete from delivery_checklist_items
+         where project_id = $1
+           and checklist_id = $2
+           and title in ('横版成片', '竖版成片', '无字幕版成片', '封面图', '项目过程文件', 'AI 生成资产归档', '其他补充资料')`,
+        [projectId, checklistId]
+      );
+
+      const archiveChecklistItems = [
+        ["horizontal_final", "横版成片", "最终交付横版视频", "delivered"],
+        ["vertical_final", "竖版成片", "最终交付竖版视频", "delivered"],
+        ["no_subtitle_final", "无字幕版成片", "无字幕清洁版视频", "confirmed"],
+        ["cover", "封面图", "项目交付封面图", "delivered"],
+        ["project_file", "项目过程文件", "工程文件与时间线归档", "confirmed"],
+        ["generated_assets", "AI 生成资产归档", "分镜图与视频素材归档", "confirmed"],
+        ["other", "其他补充资料", "交付说明与归档备注", "planned"],
+      ] as const;
+
+      for (const [index, [itemKind, title, description, status]] of archiveChecklistItems.entries()) {
+        await query(
+          `insert into delivery_checklist_items (
+             project_id, checklist_id, item_kind, title, description, quantity, status, sort_order, metadata_json, created_by, updated_by
+           )
+           values ($1, $2, $3, $4, $5, 1, $6, $7, $8::jsonb, $9, $9)`,
+          [projectId, checklistId, itemKind, title, description, status, index + 10, asJson({ marker: UI_INSPECTION_MARKER, stage: "archive" }), actorId]
+        );
+      }
+    }
+
+    await query(
+      `insert into archive_records (
+         project_id, status, final_files_ready, final_technical_check_passed, tail_payment_confirmed,
+         client_received_confirmed, rights_confirmed, case_study_permission, nas_archive_completed,
+         delivery_channel, archive_location, after_sales_note, created_by, updated_by
+       )
+       values (
+         $1, 'ready', true, true, false,
+         true, true, 'allowed', false,
+         'Feishu + OSS', 'oss://ui-inspection/archive/final-package', $2, $3, $3
+       )
+       on conflict (project_id)
+       do update set
+         status = excluded.status,
+         final_files_ready = excluded.final_files_ready,
+         final_technical_check_passed = excluded.final_technical_check_passed,
+         tail_payment_confirmed = excluded.tail_payment_confirmed,
+         client_received_confirmed = excluded.client_received_confirmed,
+         rights_confirmed = excluded.rights_confirmed,
+         case_study_permission = excluded.case_study_permission,
+         nas_archive_completed = excluded.nas_archive_completed,
+         delivery_channel = excluded.delivery_channel,
+         archive_location = excluded.archive_location,
+         after_sales_note = excluded.after_sales_note,
+         updated_by = excluded.updated_by,
+         updated_at = now()`,
+      [projectId, "尾款待确认，归档卡片应保留一项可执行动作。", actorId]
+    );
+  });
 }
 
 async function main() {
@@ -1562,7 +2164,8 @@ async function main() {
   });
   await seedBriefAndRisk(projectId, actorId);
   const commercial = await seedCreativeAndCommercial(projectId, actorId);
-  await seedScriptSetupAndStoryboard(projectId, actorId, commercial.directionId);
+  const script = await seedScriptSetupAndStoryboard(projectId, actorId, commercial.directionId);
+  await seedStoryboardImageAndVideo(projectId, actorId, script.sceneId, script.shotIds);
   await seedReviewCutsAndArchive(projectId, actorId);
   console.log(JSON.stringify({ ok: true, projectId, marker: UI_INSPECTION_MARKER }, null, 2));
 }
