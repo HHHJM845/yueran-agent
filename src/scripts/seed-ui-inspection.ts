@@ -25,14 +25,18 @@ const stageKeys = [
 ] as const;
 
 type StageKey = (typeof stageKeys)[number];
+type Db = Awaited<ReturnType<typeof getDb>>;
+type QueryRunner = Db["query"];
+
+const PROJECT_NAME = `${PROJECT_NAME_PREFIX} UI 巡检样例`;
 
 async function getDb() {
   const { query, withTransaction } = await import("@/lib/db");
   return { query, withTransaction };
 }
 
-async function ensureSeedActor() {
-  const { query } = await getDb();
+async function ensureSeedActor(runQuery?: QueryRunner) {
+  const query = runQuery ?? (await getDb()).query;
   const email = "ui-inspection@local.invalid";
   const existing = await query<{ id: string }>(`select id from users where email = $1 limit 1`, [email]);
   if (existing.rows[0]) return existing.rows[0].id;
@@ -46,17 +50,17 @@ async function ensureSeedActor() {
   return id;
 }
 
-async function ensureUiInspectionProject(actorId: string) {
-  const { query } = await getDb();
+async function ensureUiInspectionProject(actorId: string, runQuery?: QueryRunner) {
+  const query = runQuery ?? (await getDb()).query;
   const existing = await query<{ id: string }>(
     `select id
      from projects
      where archived_at is null
        and brand_name = $1
-       and project_name like $2
+       and project_name = $2
      order by updated_at desc
      limit 1`,
-    [BRAND_NAME, `${PROJECT_NAME_PREFIX}%`]
+    [BRAND_NAME, PROJECT_NAME]
   );
   const projectId = existing.rows[0]?.id ?? randomUUID();
 
@@ -64,7 +68,7 @@ async function ensureUiInspectionProject(actorId: string) {
     await query(
       `insert into projects (id, brand_name, project_name, current_stage, owner_id, owner_name, due_date, status)
        values ($1, $2, $3, 'settlement_delivery_archive', $4, $5, current_date + interval '14 days', 'in_progress')`,
-      [projectId, BRAND_NAME, `${PROJECT_NAME_PREFIX} UI 巡检样例`, actorId, OWNER_NAME]
+      [projectId, BRAND_NAME, PROJECT_NAME, actorId, OWNER_NAME]
     );
   } else {
     await query(
@@ -88,8 +92,8 @@ async function ensureUiInspectionProject(actorId: string) {
   return projectId;
 }
 
-async function seedStageStates(projectId: string) {
-  const { query } = await getDb();
+async function seedStageStates(projectId: string, runQuery?: QueryRunner) {
+  const query = runQuery ?? (await getDb()).query;
   for (const stageKey of stageKeys) {
     const status = stageKey === "settlement_delivery_archive" ? "in_progress" : "completed";
     await query(
@@ -130,9 +134,13 @@ async function seedReviewCutsAndArchive(_projectId: string, _actorId: string) {
 }
 
 async function main() {
-  const actorId = await ensureSeedActor();
-  const projectId = await ensureUiInspectionProject(actorId);
-  await seedStageStates(projectId);
+  const { withTransaction } = await getDb();
+  const { actorId, projectId } = await withTransaction(async (query) => {
+    const actorId = await ensureSeedActor(query);
+    const projectId = await ensureUiInspectionProject(actorId, query);
+    await seedStageStates(projectId, query);
+    return { actorId, projectId };
+  });
   await seedBriefAndRisk(projectId, actorId);
   await seedCreativeAndCommercial(projectId, actorId);
   await seedScriptSetupAndStoryboard(projectId, actorId);
