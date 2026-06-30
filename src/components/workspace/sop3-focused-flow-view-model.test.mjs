@@ -238,6 +238,7 @@ test("buildSop3FocusedFlow deepens only confirmed selected directions after Roun
   assert.deepEqual(view.visibleDirections.map((item) => item.id), ["direction-1", "direction-3"]);
   assert.equal(view.progressNodes.find((node) => node.key === "internal_selection").summary, "已选 3 个方向");
   assert.equal(view.progressNodes.find((node) => node.key === "client_round_1").status, "done");
+  assert.match(view.progressNodes.find((node) => node.key === "direction_deepening").historySummary, /氛围图 2/);
   assert.match(view.progressNodes.find((node) => node.key === "direction_deepening").summary, /故事大纲 2，确认图 2/);
   assert.match(view.progressNodes.find((node) => node.key === "direction_deepening").historySummary, /方向 direction-1、方向 direction-3/);
   assert.doesNotMatch(view.progressNodes.find((node) => node.key === "direction_deepening").historySummary, /direction-2/);

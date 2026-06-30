@@ -235,6 +235,7 @@ export function buildSop3FocusedFlow(input: Sop3FocusedFlowInput): Sop3FocusedFl
     progressNodes: buildProgressNodes({
       directions: sortedDirections,
       selectedDirections,
+      focusedDirections,
       expansions: input.expansions,
       generatedImages: input.generatedImages,
       round1,
@@ -353,6 +354,7 @@ function clientReviewStatusLabel(status: string) {
 function buildProgressNodes(input: {
   directions: CreativeDirectionView[];
   selectedDirections: CreativeDirectionView[];
+  focusedDirections: CreativeDirectionView[];
   expansions: CreativeExpansionView[];
   generatedImages: GeneratedImageView[];
   round1: CreativeProposalRoundView | null;
@@ -365,11 +367,12 @@ function buildProgressNodes(input: {
   activeDirectionTitles: string[];
 }): Sop3ProgressNodeView[] {
   const selectedCount = input.selectedDirections.length;
+  const focusedCount = input.focusedDirections.length;
   const round1Returned = isClientReviewReturned(input.round1ReviewTask?.status);
   const round2Returned = isClientReviewReturned(input.round2ReviewTask?.status);
   const activeDirectionTitleText = input.activeDirectionTitles.length > 0 ? input.activeDirectionTitles.join("、") : "暂无可展示方向。";
   const scopedGeneratedImageCount = input.generatedImages.filter(
-    (image) => image.directionId && input.selectedDirections.some((direction) => direction.id === image.directionId) && isGeneratedImageRunningOrDone(image)
+    (image) => image.directionId && input.focusedDirections.some((direction) => direction.id === image.directionId) && isGeneratedImageRunningOrDone(image)
   ).length;
 
   return [
