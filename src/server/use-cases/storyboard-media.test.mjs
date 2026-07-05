@@ -19,6 +19,9 @@ test("storyboard image generation uses Ark Seedream with locked setting images a
   // Reference images are passed by presigned OSS URL, not bytes.
   assert.match(source, /createReadUrlFromOssUrl\(reference\.ossUrl/);
   assert.match(source, /referenceImageUrls,/);
+  assert.match(source, /extraReferenceImageUrls/);
+  assert.match(source, /\.\.\.lockedReferenceImageUrls, \.\.\.extraReferenceImageUrls/);
+  assert.match(source, /额外参考图，用于补充构图、色彩、质感或局部视觉参考/);
 
   // The provider sends references in the JSON `image` array.
   assert.match(provider, /body\.image = referenceImageUrls/);

@@ -3,7 +3,9 @@ import { env } from "@/lib/env";
 import { AppError } from "@/lib/errors";
 import { callArkJson } from "@/server/providers/ark";
 import { createArtifact } from "@/server/repositories/artifacts";
+import { listProjectClientReviewTasks } from "@/server/repositories/client-reviews";
 import { appendJobEvent, createJob, getJobInput, updateJobStatus } from "@/server/repositories/jobs";
+import { setProjectCurrentStage } from "@/server/repositories/project-stages";
 import { recordStageProgress } from "@/server/use-cases/stage-progress";
 
 const flexibleString = z.preprocess((value) => {
@@ -71,6 +73,35 @@ function prepareRequirementStructuringInput(value: string) {
   ].join("\n\n");
 }
 
+function extractAnsweredOpenQuestions(input: string) {
+  const match = input.match(/【本轮待补充问题】\s*\n([\s\S]*?)(?:\n\n【|$)/);
+  if (!match) return [];
+  return match[1]
+    .split("\n")
+    .map((line) => normalizeOpenQuestionForComparison(line))
+    .filter(Boolean);
+}
+
+function removeAnsweredOpenQuestions(openQuestions: string[], answeredQuestions: string[]) {
+  const answered = answeredQuestions.map(normalizeOpenQuestionForComparison).filter(Boolean);
+  if (answered.length === 0) return openQuestions;
+  return openQuestions.filter((question) => {
+    const normalized = normalizeOpenQuestionForComparison(question);
+    return !answered.some((answeredQuestion) => (
+      normalized === answeredQuestion ||
+      normalized.includes(answeredQuestion) ||
+      answeredQuestion.includes(normalized)
+    ));
+  });
+}
+
+function normalizeOpenQuestionForComparison(value: string) {
+  return value
+    .replace(/^\s*(?:Q\s*)?\d+\s*[.、．-]?\s*/i, "")
+    .replace(/[？?。.\s]+$/g, "")
+    .trim();
+}
+
 export async function enqueueRequirementStructuring(input: {
   projectId: string;
   requirementText: string;
@@ -115,7 +146,7 @@ export async function runRequirementStructuringJob(jobId: string, options: { wor
   await updateJobStatus(jobId, {
     status: "processing",
     currentStep: "calling_ark_model",
-    userMessage: "正在调用豆包模型整理客户需求。",
+    userMessage: "在生成中",
   });
 
   await appendJobEvent(jobId, {
@@ -164,7 +195,7 @@ export async function runRequirementStructuringJob(jobId: string, options: { wor
         {
           role: "system",
           content:
-            "你是 AIGC 视频商业项目的需求结构化助手。只输出一个严格 JSON 对象，不要 Markdown、解释或代码块。字段必须包括 brandInfo, productOrService, targetAudience, videoGoal, expectedStyle, referenceSamples, keySellingPoints, restrictions, deliverySpecs, timeline, budgetOrQuoteInfo, openQuestions, summary。Brief 的最低推进标准是尽量抽取品牌/客户、项目内容、视频目标、交付形式、时间节点、敏感内容或授权风险；目标受众、风格参考、投放渠道、时长、核心卖点、预算、客户偏好、参考案例属于建议项；角色、场景、特效复杂度、画面细节、文件规格、审核人和反馈规则可后续补充。只根据材料明确出现的信息填写；缺失或不确定项写入 openQuestions，但 openQuestions 只作为待确认提示，不代表 Brief 不可进入下一环节。数组字段输出字符串数组。每个字段保持简洁，summary 控制在 80 字以内。",
+            "你是 AIGC 视频商业项目的需求结构化助手。只输出一个严格 JSON 对象，不要 Markdown、解释或代码块。字段必须包括 brandInfo, productOrService, targetAudience, videoGoal, expectedStyle, referenceSamples, keySellingPoints, restrictions, deliverySpecs, timeline, budgetOrQuoteInfo, openQuestions, summary。Brief 的最低推进标准是尽量抽取品牌/客户、项目内容、视频目标、交付形式、时间节点、敏感内容或授权风险；目标受众、风格参考、投放渠道、时长、核心卖点、预算、客户偏好、参考案例属于建议项；角色、场景、特效复杂度、画面细节、文件规格、审核人和反馈规则可后续补充。只根据材料明确出现的信息填写；缺失或不确定项写入 openQuestions，但 openQuestions 只作为待确认提示，不代表 Brief 不可进入下一环节。如果输入中包含本轮待补充问题和客户针对该问题的回复，已回答的问题不得继续写入 openQuestions，只保留仍未解决的问题。数组字段输出字符串数组。每个字段保持简洁，summary 控制在 80 字以内。",
         },
         {
           role: "user",
@@ -174,6 +205,11 @@ export async function runRequirementStructuringJob(jobId: string, options: { wor
     });
 
     const parsed = structuredRequirementSchema.parse(result);
+    const answeredOpenQuestions = extractAnsweredOpenQuestions(cleanText);
+    const structuredRequirement: StructuredRequirement = {
+      ...parsed,
+      openQuestions: removeAnsweredOpenQuestions(parsed.openQuestions, answeredOpenQuestions),
+    };
 
     await appendJobEvent(jobId, {
       type: "tool.completed",
@@ -182,8 +218,8 @@ export async function runRequirementStructuringJob(jobId: string, options: { wor
       callId: "ark_requirement_structuring",
       title: "豆包模型已返回结构化需求",
       payload: {
-        openQuestionCount: parsed.openQuestions.length,
-        keySellingPointCount: parsed.keySellingPoints.length,
+        openQuestionCount: structuredRequirement.openQuestions.length,
+        keySellingPointCount: structuredRequirement.keySellingPoints.length,
       },
       at: new Date().toISOString(),
     });
@@ -193,7 +229,7 @@ export async function runRequirementStructuringJob(jobId: string, options: { wor
       kind: "structured_requirement",
       title: "标准化客户需求模板",
       status: "draft",
-      data: parsed,
+      data: structuredRequirement,
       sourceJobId: jobId,
     });
 
@@ -214,15 +250,16 @@ export async function runRequirementStructuringJob(jobId: string, options: { wor
     await recordStageProgress({
       projectId: job.projectId,
       stageKey: "brand_requirement_intake",
-      status: "completed",
-      currentStage: "technical_feasibility",
+      status: "in_progress",
+      currentStage: "brand_requirement_intake",
       projectStatus: "in_progress",
       jobId,
-      title: "品牌方需求洽谈已完成",
-      userMessage: "标准化需求已保存，项目已进入技术可行性评估阶段。",
+      title: "品牌方需求洽谈已整理",
+      userMessage: "标准化需求已保存，项目仍停留在 Brief 环节。请补齐缺失项或人工确认 Brief 后再进入接单风险评估。",
       outputRefs: [{ type: "artifact", id: artifact.id, kind: artifact.kind }],
-      snapshot: { artifactId: artifact.id, summary: parsed.summary },
+      snapshot: { artifactId: artifact.id, summary: structuredRequirement.summary },
     });
+    await ensureBriefStageAfterStructuring(job.projectId, "in_progress");
 
     await appendJobEvent(jobId, {
       type: "job.completed",
@@ -257,6 +294,7 @@ export async function runRequirementStructuringJob(jobId: string, options: { wor
       userMessage,
       errorMessage: userMessage,
     });
+    await ensureBriefStageAfterStructuring(job.projectId, "needs_revision");
 
     await appendJobEvent(jobId, {
       type: "step.failed",
@@ -280,4 +318,16 @@ export async function runRequirementStructuringJob(jobId: string, options: { wor
 
     throw error;
   }
+}
+
+async function ensureBriefStageAfterStructuring(projectId: string, status: "in_progress" | "needs_revision") {
+  const tasks = await listProjectClientReviewTasks(projectId);
+  const hasApprovedBriefConfirmation = tasks.some((task) => task.reviewType === "brief_confirmation" && task.status === "approved");
+  if (hasApprovedBriefConfirmation) return;
+
+  await setProjectCurrentStage({
+    projectId,
+    currentStage: "brand_requirement_intake",
+    status,
+  });
 }

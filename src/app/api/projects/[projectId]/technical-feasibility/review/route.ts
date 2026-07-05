@@ -18,7 +18,7 @@ export async function POST(request: Request, context: { params: Promise<{ projec
     requireRole(user, ["business", "creative", "admin"]);
 
     const body = reviewTechnicalFeasibilityRequestSchema.parse(await request.json());
-    if ((body.action === "mark_blocked" || body.action === "approve" || body.action === "reopen") && user.role !== "admin") {
+    if (body.action === "approve" && user.role !== "admin") {
       requireRole(user, ["admin"]);
     }
 

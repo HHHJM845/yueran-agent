@@ -8,7 +8,7 @@ export async function POST(request: Request, context: { params: Promise<{ projec
     const user = await requireUser(request);
     const { projectId, roundId } = await context.params;
     await requireProjectAccess(user, projectId);
-    requireRole(user, ["business", "admin"]);
+    requireRole(user, ["creative", "business", "admin"]);
 
     const url = new URL(request.url);
     const result = await createCreativeProposalRoundClientReview({

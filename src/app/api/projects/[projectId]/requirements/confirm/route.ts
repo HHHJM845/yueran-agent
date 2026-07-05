@@ -28,7 +28,7 @@ export async function POST(request: Request, context: { params: Promise<{ projec
       throw new AppError({
         status: 422,
         code: "structured_requirement_required",
-        userMessage: "请先生成标准化 Brief，再确认是否足够进入风险体检。",
+        userMessage: "请先生成标准化 Brief，再确认是否足够进入接单风险评估。",
       });
     }
 
@@ -38,44 +38,27 @@ export async function POST(request: Request, context: { params: Promise<{ projec
     const stageState = await recordStageProgress({
       projectId,
       stageKey: "brand_requirement_intake",
-      status: "completed",
-      currentStage: "technical_feasibility",
+      status: "in_progress",
+      currentStage: "brand_requirement_intake",
       projectStatus: "in_progress",
-      title: "当前 Brief 已人工确认可推进",
-      userMessage: "已确认当前标准化 Brief 足够进入风险体检；待确认项会继续保留并在后续环节提示人工复核。",
+      title: "标准 Brief 已内部确认",
+      userMessage: "标准 Brief 已内部确认，请生成甲方确认链接，待甲方通过后进入接单风险评估。",
       errorMessage: null,
       outputRefs: [{ type: "artifact", id: latestBrief.id, kind: latestBrief.kind }],
       snapshot: {
         artifactId: latestBrief.id,
         artifactVersion: latestBrief.version,
         openQuestionCount,
+        internalConfirmed: true,
         confirmedBy: user.id,
         confirmedAt,
-      },
-    });
-
-    await recordStageProgress({
-      projectId,
-      stageKey: "technical_feasibility",
-      status: "in_progress",
-      currentStage: "technical_feasibility",
-      projectStatus: "in_progress",
-      title: "风险体检卡可开始",
-      userMessage: "项目已进入风险体检卡环节；请结合 Brief 和待确认项进行风险识别。",
-      errorMessage: null,
-      inputRefs: [{ type: "artifact", id: latestBrief.id, kind: latestBrief.kind }],
-      snapshot: {
-        sourceStage: "brand_requirement_intake",
-        sourceArtifactId: latestBrief.id,
-        sourceArtifactVersion: latestBrief.version,
-        openQuestionCount,
       },
     });
 
     await createAuditLog({
       actorId: user.id,
       projectId,
-      action: "requirement.brief_confirmed_for_risk",
+      action: "requirement.brief_internal_confirmed",
       objectType: "artifact",
       objectId: latestBrief.id,
       before: {
@@ -83,11 +66,12 @@ export async function POST(request: Request, context: { params: Promise<{ projec
         status: project.status,
       },
       after: {
-        currentStage: "technical_feasibility",
+        currentStage: "brand_requirement_intake",
         status: "in_progress",
         artifactId: latestBrief.id,
         artifactVersion: latestBrief.version,
         openQuestionCount,
+        internalConfirmed: true,
       },
     });
 
@@ -95,7 +79,7 @@ export async function POST(request: Request, context: { params: Promise<{ projec
       ok: true,
       data: {
         stageState,
-        message: "已确认当前 Brief 足够推进，项目已进入风险体检卡。待确认项会继续保留为后续风险提示。",
+        message: "标准 Brief 已内部确认，请生成甲方确认链接，待甲方通过后进入接单风险评估。",
       },
     });
   } catch (error) {

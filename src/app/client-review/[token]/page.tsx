@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, Clock3, FileClock, Loader2, Plus, XCircle } from "lucide-react";
+import { CheckCircle2, Clock3, FileClock, Loader2, Plus, Send, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -72,9 +72,11 @@ export default function ClientReviewPage({ params }: { params: ClientReviewPageP
   const [history, setHistory] = useState<ClientReviewHistoryEntry[]>([]);
   const [selectedReviewId, setSelectedReviewId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [unlocking, setUnlocking] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [verificationCode, setVerificationCode] = useState(() => readVerificationCodeFromHash());
   const [timecodeNotes, setTimecodeNotes] = useState<Array<{ id: string; timeSeconds: number; feedback: string }>>([]);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
@@ -101,17 +103,9 @@ export default function ClientReviewPage({ params }: { params: ClientReviewPageP
       setLoading(true);
       setError(null);
       try {
-        const payload = await fetchReviewPayload<{ task: ClientReviewTask; items: ClientReviewItem[]; history: ClientReviewHistoryEntry[] }>(`/api/client-review/${token}`);
+        const payload = await fetchReviewPayload<{ requiresVerification: boolean; message: string }>(`/api/client-review/${token}`);
         if (cancelled) return;
-        if (payload.ok) {
-          setTask(payload.data.task);
-          setItems(payload.data.items);
-          setHistory(payload.data.history ?? []);
-          setSelectedReviewId(payload.data.task.id);
-          setError(null);
-        } else {
-          setError(payload.error.message);
-        }
+        setError(payload.ok ? null : payload.error.message);
       } catch (error) {
         if (cancelled) return;
         setError(toReviewPageError(error, "暂时无法读取审核任务。请刷新页面重试，或联系项目团队重新发送审核链接。"));
@@ -125,6 +119,35 @@ export default function ClientReviewPage({ params }: { params: ClientReviewPageP
     };
   }, [token]);
 
+  async function unlock(formData: FormData) {
+    if (!token) return;
+    const code = String(formData.get("verificationCode") ?? "").trim();
+    setUnlocking(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const payload = await fetchReviewPayload<{ task: ClientReviewTask; items: ClientReviewItem[]; history: ClientReviewHistoryEntry[] }>(`/api/client-review/${token}/unlock`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ verificationCode: code }),
+      });
+      if (payload.ok) {
+        setVerificationCode(code);
+        setTask(payload.data.task);
+        setItems(payload.data.items);
+        setHistory(payload.data.history ?? []);
+        setSelectedReviewId(payload.data.task.id);
+        setError(null);
+      } else {
+        setError(payload.error.message);
+      }
+    } catch (error) {
+      setError(toReviewPageError(error, "暂时无法校验审核密钥。请稍后重试，或联系项目团队重新发送审核链接。"));
+    } finally {
+      setUnlocking(false);
+    }
+  }
+
   const canSubmit = task?.status === "active";
   const reviewItems = useMemo(() => items, [items]);
   async function submit(formData: FormData) {
@@ -133,21 +156,27 @@ export default function ClientReviewPage({ params }: { params: ClientReviewPageP
     setError(null);
     setMessage(null);
     try {
-      const decision = String(formData.get("decision") ?? "approved") as "approved" | "rejected";
+      const isStoryboardImageBatchSubmission = task?.reviewType === "storyboard_image_batch";
+      const isCreativeRound1Submission = task?.reviewType === "project_proposal" && task.reviewScene === "creative_round_1";
+      const submittedDecision = String(formData.get("decision") ?? "approved") as "approved" | "rejected";
       const itemPayload = reviewItems
         .map((item) => {
           const itemDecision = String(formData.get(`decision-${item.itemId}`) ?? "");
-          const scoreValue = String(formData.get(`score-${item.itemId}`) ?? "");
           const feedback = String(formData.get(`feedback-${item.itemId}`) ?? "");
-          if (!itemDecision && !scoreValue && !feedback) return null;
+          if (!itemDecision && !feedback && !isCreativeRound1Submission) return null;
           return {
             itemId: item.itemId,
-            decision: (itemDecision || decision) as "approved" | "rejected",
-            score: scoreValue ? Number(scoreValue) : null,
+            decision: (itemDecision || (isCreativeRound1Submission || isStoryboardImageBatchSubmission ? "rejected" : submittedDecision)) as "approved" | "rejected",
+            score: null,
             feedback,
           };
         })
-        .filter((item): item is { itemId: string; decision: "approved" | "rejected"; score: number | null; feedback: string } => Boolean(item));
+        .filter((item): item is { itemId: string; decision: "approved" | "rejected"; score: null; feedback: string } => Boolean(item));
+      const decision = isStoryboardImageBatchSubmission
+        ? computeStoryboardBatchDecision(itemPayload)
+        : isCreativeRound1Submission
+          ? computeCreativeRound1Decision(itemPayload)
+          : submittedDecision;
       const payload = await fetchReviewPayload<{ message: string; task: ClientReviewTask; items: ClientReviewItem[] }>(`/api/client-review/${token}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -200,6 +229,9 @@ export default function ClientReviewPage({ params }: { params: ClientReviewPageP
   const displayedVideoItem = displayedItems?.find((item) => item.itemType === "review_cut_video");
   const displayedVideoUrl = typeof displayedVideoItem?.metadata.videoUrl === "string" ? displayedVideoItem.metadata.videoUrl : null;
   const displayedIsVideoReview = Boolean(displayedVideoItem && displayedVideoUrl);
+  const isStoryboardImageBatchReview = displayedTask?.reviewType === "storyboard_image_batch";
+  const isCreativeRound1Review = displayedTask?.reviewType === "project_proposal" && displayedTask.reviewScene === "creative_round_1";
+  const isBriefConfirmationReview = displayedTask?.reviewType === "brief_confirmation";
 
   function addTimecodeNote() {
     const current = Math.max(0, Math.floor(videoRef.current?.currentTime ?? 0));
@@ -221,8 +253,8 @@ export default function ClientReviewPage({ params }: { params: ClientReviewPageP
             <Loader2 className="animate-spin" size={18} />
             正在读取审核任务
           </div>
-        ) : error ? (
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">{error}</div>
+        ) : !task ? (
+          <UnlockReviewGate unlocking={unlocking} error={error} initialVerificationCode={verificationCode} onUnlock={unlock} />
         ) : task && displayedTask ? (
           <>
             <div className="flex flex-wrap items-start justify-between gap-4 border-b border-black/10 pb-5">
@@ -246,11 +278,8 @@ export default function ClientReviewPage({ params }: { params: ClientReviewPageP
             )}
             <form action={submit} className="mt-6 grid gap-6">
               {viewingCurrentTask ? (
-                <div className="grid gap-3 rounded-2xl bg-black p-4 text-white md:grid-cols-3">
-                  <label className="grid gap-1 text-xs">
-                    验证码 / 密钥
-                    <Input name="verificationCode" required disabled={!canSubmit || submitting} className="bg-white text-black" />
-                  </label>
+                <div className="grid gap-3 rounded-2xl bg-black p-4 text-white md:grid-cols-2">
+                  <input type="hidden" name="verificationCode" value={verificationCode} />
                   <label className="grid gap-1 text-xs">
                     审核人姓名
                     <Input name="reviewerName" disabled={!canSubmit || submitting} className="bg-white text-black" />
@@ -324,30 +353,58 @@ export default function ClientReviewPage({ params }: { params: ClientReviewPageP
                 </div>
               ) : null}
               {displayedTask.reviewType === "project_proposal" && displayedCreativeProposalItems.length > 0 ? (
-                <CreativeProposalReviewItems groups={displayedCreativeProposalItems} canSubmit={viewingCurrentTask && canSubmit} submitting={submitting} />
+                <CreativeProposalReviewItems
+                  groups={displayedCreativeProposalItems}
+                  canSubmit={viewingCurrentTask && canSubmit}
+                  submitting={submitting}
+                  round1StyleSelection={isCreativeRound1Review}
+                />
               ) : (
                 <div className="grid gap-4">
                   {(displayedItems ?? []).filter((item) => item.itemType !== "review_cut_video").map((item) => (
-                    <GenericReviewItemCard key={item.id} item={item} canSubmit={viewingCurrentTask && canSubmit} submitting={submitting} />
+                    <GenericReviewItemCard
+                      key={item.id}
+                      item={item}
+                      canSubmit={viewingCurrentTask && canSubmit}
+                      submitting={submitting}
+                      variant={isStoryboardImageBatchReview ? "storyboard" : "default"}
+                    />
                   ))}
                 </div>
               )}
               {viewingCurrentTask ? (
                 <>
-                  <label className="grid gap-1 text-xs">
-                    整体意见
-                    <textarea name="feedback" disabled={!canSubmit || submitting} className="min-h-24 rounded-2xl border border-black/10 p-3 text-sm leading-6" />
-                  </label>
-                  <div className="flex flex-wrap gap-3">
-                    <Button type="submit" name="decision" value="approved" disabled={!canSubmit || submitting}>
-                      {submitting ? <Loader2 className="animate-spin" size={15} /> : <CheckCircle2 size={15} />}
-                      整体通过
-                    </Button>
-                    <Button type="submit" name="decision" value="rejected" variant="outline" disabled={!canSubmit || submitting}>
-                      <XCircle size={15} />
-                      整体打回
-                    </Button>
-                  </div>
+                  {isStoryboardImageBatchReview ? (
+                    <div className="rounded-2xl border border-black/10 bg-[#f7f5f0] p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold">分镜逐张审核</p>
+                          <p className="mt-1 text-xs leading-5 text-black/55">请给每张分镜选择 OK 或不 OK；不 OK 的分镜请填写原因和修改意见。系统会根据逐镜结果自动判断本轮是否通过。</p>
+                        </div>
+                        <Button type="submit" disabled={!canSubmit || submitting}>
+                          {submitting ? <Loader2 className="animate-spin" size={15} /> : <Send size={15} />}
+                          提交逐镜审核
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <label className="grid gap-1 text-xs">
+                        {isBriefConfirmationReview ? "审核意见" : "整体意见"}
+                        <textarea name="feedback" disabled={!canSubmit || submitting} className="min-h-24 rounded-2xl border border-black/10 p-3 text-sm leading-6" />
+                      </label>
+                      <div className="flex flex-wrap gap-3">
+                        <Button type="submit" name="decision" value="approved" disabled={!canSubmit || submitting}>
+                          {submitting ? <Loader2 className="animate-spin" size={15} /> : <CheckCircle2 size={15} />}
+                          OK
+                        </Button>
+                        <Button type="submit" name="decision" value="rejected" variant="outline" disabled={!canSubmit || submitting}>
+                          <XCircle size={15} />
+                          不 OK
+                        </Button>
+                      </div>
+                    </>
+                  )}
                 </>
               ) : null}
             </form>
@@ -369,6 +426,64 @@ function reviewStatusLabel(status: string) {
     revoked: "已撤回",
   };
   return labels[status] ?? status;
+}
+
+function UnlockReviewGate({
+  unlocking,
+  error,
+  initialVerificationCode,
+  onUnlock,
+}: {
+  unlocking: boolean;
+  error: string | null;
+  initialVerificationCode: string;
+  onUnlock: (formData: FormData) => void;
+}) {
+  const [codeInput, setCodeInput] = useState(initialVerificationCode);
+
+  return (
+    <div className="mx-auto grid min-h-[420px] max-w-lg content-center gap-5">
+      <div>
+        <p className="text-sm text-black/50">甲方外部审核</p>
+        <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em]">请输入审核密钥</h1>
+        <p className="mt-2 text-sm leading-6 text-black/60">
+          为保护项目资料，审核内容需要先完成密钥校验。校验通过后才会展示本次审核材料。
+        </p>
+      </div>
+      <form action={onUnlock} className="grid gap-3 rounded-2xl border border-black/10 bg-[#f7f5f0] p-4">
+        <label className="grid gap-1 text-sm">
+          审核密钥
+          <Input
+            name="verificationCode"
+            required
+            autoComplete="one-time-code"
+            disabled={unlocking}
+            value={codeInput}
+            onChange={(event) => setCodeInput(event.target.value)}
+            className="bg-white"
+          />
+        </label>
+        {error && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-800">{error}</div>}
+        <Button type="submit" disabled={unlocking}>
+          {unlocking ? <Loader2 className="animate-spin" size={15} /> : <CheckCircle2 size={15} />}
+          查看审核内容
+        </Button>
+      </form>
+    </div>
+  );
+}
+
+function readVerificationCodeFromHash() {
+  if (typeof window === "undefined") return "";
+  const rawHash = window.location.hash.replace(/^#/, "").trim();
+  if (!rawHash) return "";
+
+  try {
+    const params = new URLSearchParams(rawHash.startsWith("?") ? rawHash.slice(1) : rawHash);
+    return params.get("key") ?? params.get("code") ?? params.get("verificationCode") ?? (rawHash.includes("=") ? "" : decodeURIComponent(rawHash));
+  } catch {
+    return rawHash.includes("=") ? "" : rawHash;
+  }
 }
 
 function ReviewNodeNavigator({
@@ -434,8 +549,6 @@ function ReviewNodeNavigator({
 function HistoricalReviewSummary({ task, items }: { task: ClientReviewTask; items: ClientReviewItem[] }) {
   const approvedCount = items.filter((item) => item.decision === "approved").length;
   const rejectedCount = items.filter((item) => item.decision === "rejected").length;
-  const scoredItems = items.filter((item) => typeof item.score === "number");
-  const averageScore = scoredItems.length > 0 ? scoredItems.reduce((total, item) => total + (item.score ?? 0), 0) / scoredItems.length : null;
 
   return (
     <section className="mt-5 rounded-[20px] border border-black/10 bg-white p-4">
@@ -450,7 +563,6 @@ function HistoricalReviewSummary({ task, items }: { task: ClientReviewTask; item
         <div className="flex flex-wrap gap-2 text-xs">
           <span className="rounded-full border border-black/10 px-3 py-1">通过 {approvedCount}</span>
           <span className="rounded-full border border-black/10 px-3 py-1">打回 {rejectedCount}</span>
-          {averageScore !== null && <span className="rounded-full border border-black/10 px-3 py-1">均分 {averageScore.toFixed(1)}</span>}
         </div>
       </div>
       {task.feedback ? (
@@ -594,10 +706,12 @@ function CreativeProposalReviewItems({
   groups,
   canSubmit,
   submitting,
+  round1StyleSelection = false,
 }: {
   groups: Array<{ directionTitle: string; items: ClientReviewItem[] }>;
   canSubmit: boolean;
   submitting: boolean;
+  round1StyleSelection?: boolean;
 }) {
   return (
     <div className="grid gap-5">
@@ -609,16 +723,89 @@ function CreativeProposalReviewItems({
               <h2 className="mt-1 text-xl font-semibold">{group.directionTitle || "未命名创意方向"}</h2>
             </div>
             <span className="rounded-full border border-black/10 bg-white px-3 py-1 text-xs text-black/55">
-              {group.items.length} 个故事场景
+              {round1StyleSelection ? "选择 1 个视觉风格" : `${group.items.length} 个故事场景`}
             </span>
           </div>
-          <div className="mt-4 grid gap-4 xl:grid-cols-2">
-            {group.items.map((item) => (
-              <CreativeProposalReviewItem key={item.id} item={item} canSubmit={canSubmit} submitting={submitting} />
-            ))}
-          </div>
+          {round1StyleSelection ? (
+            <CreativeRound1DirectionStyleSelector group={group} canSubmit={canSubmit} submitting={submitting} />
+          ) : (
+            <div className="mt-4 grid gap-4 xl:grid-cols-2">
+              {group.items.map((item) => (
+                <CreativeProposalReviewItem key={item.id} item={item} canSubmit={canSubmit} submitting={submitting} />
+              ))}
+            </div>
+          )}
         </section>
       ))}
+    </div>
+  );
+}
+
+function CreativeRound1DirectionStyleSelector({
+  group,
+  canSubmit,
+  submitting,
+}: {
+  group: { directionTitle: string; items: ClientReviewItem[] };
+  canSubmit: boolean;
+  submitting: boolean;
+}) {
+  const [selectedItemId, setSelectedItemId] = useState<string>("");
+  const disabled = !canSubmit || submitting;
+  const fieldKey = normalizeFieldKey(group.directionTitle);
+  const storyOutline = readCreativeRound1StoryOutline(group.items);
+
+  return (
+    <div className="mt-4 grid gap-4">
+      <input type="hidden" name={`direction-style-selection-${fieldKey}`} value={selectedItemId} />
+      <div className="rounded-2xl border border-black/10 bg-white p-4">
+        <p className="text-xs font-semibold text-black/45">故事大纲</p>
+        <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-black/70">
+          {storyOutline || "这个方向的故事大纲还没有同步到审核页，请联系项目团队补齐后再确认。"}
+        </p>
+      </div>
+      <div className="grid gap-3 md:grid-cols-3">
+        {group.items.map((item) => {
+          const selected = selectedItemId === item.itemId;
+          return (
+            <label
+              key={item.id}
+              className={[
+                "cursor-pointer rounded-2xl border bg-white p-3 transition",
+                selected ? "border-black shadow-[0_18px_44px_-34px_rgb(0_0_0/0.6)]" : "border-black/10",
+                disabled ? "cursor-not-allowed opacity-70" : "",
+              ].join(" ")}
+            >
+              <input
+                type="radio"
+                name={`style-${fieldKey}`}
+                value={item.itemId}
+                checked={selected}
+                disabled={disabled}
+                onChange={() => setSelectedItemId(item.itemId)}
+                className="sr-only"
+              />
+              <input type="hidden" name={`decision-${item.itemId}`} value={selected ? "approved" : "rejected"} />
+              <p className="text-xs font-semibold text-black/50">{readMetadataString(item.metadata, "styleLabel") || item.itemLabel}</p>
+              <p className="mt-1 line-clamp-2 text-sm font-semibold">{item.itemLabel}</p>
+              <CandidateImageGallery images={getCandidateImages(item.metadata.candidateImages)} title={item.itemLabel} />
+              <span className={["mt-3 inline-flex rounded-full px-3 py-1 text-xs font-medium", selected ? "bg-black text-white" : "bg-black/[0.06] text-black/50"].join(" ")}>
+                {selected ? "已选择这个风格" : "选择这个风格"}
+              </span>
+            </label>
+          );
+        })}
+      </div>
+      <label className="grid gap-1 text-xs">
+        这个方向的补充意见
+        <textarea
+          name={`feedback-${selectedItemId}`}
+          disabled={disabled || !selectedItemId}
+          className="min-h-20 rounded-xl border border-black/10 bg-white p-3 text-sm leading-6"
+          placeholder="可选：说明为什么喜欢这个方向和风格，或希望下一轮深化时注意什么。"
+        />
+      </label>
+      {!selectedItemId && <p className="text-xs leading-5 text-black/45">如果不想保留这个方向，可以不选；至少选择一个方向后即可提交进入深化。</p>}
     </div>
   );
 }
@@ -646,7 +833,7 @@ function CreativeProposalReviewItem({
       </div>
       <p className="mt-2 line-clamp-3 text-sm leading-6 text-black/60">{reviewItemPreview(item)}</p>
       <CandidateImageGallery images={candidateImages} title={item.itemLabel} />
-      <ReviewDecisionFields item={item} canSubmit={canSubmit} submitting={submitting} showScore />
+      <ReviewDecisionFields item={item} canSubmit={canSubmit} submitting={submitting} />
     </article>
   );
 }
@@ -676,24 +863,64 @@ function CandidateImageGallery({ images, title, compact = false }: { images: Rev
   );
 }
 
+function BriefReviewItemCard({ item }: { item: ClientReviewItem }) {
+  const brief = readBriefReviewData(item);
+  if (!brief) return null;
+
+  return (
+    <article className="brief-review-document rounded-2xl border border-black/10 bg-white p-3">
+      <p className="text-sm font-medium text-black">{item.itemLabel}</p>
+      <div className="mt-3 grid gap-2 text-sm md:grid-cols-2">
+        {BRIEF_REVIEW_ROWS.map(([label, field]) => (
+          <div key={label} className="grid gap-1 border-b border-black/10 pb-2 last:border-b-0">
+            <span className="text-xs text-black/45">{label}</span>
+            <span className="leading-6 text-black/80">{formatBriefReviewValue(brief[field])}</span>
+          </div>
+        ))}
+      </div>
+    </article>
+  );
+}
+
 function GenericReviewItemCard({
   item,
   canSubmit,
   submitting,
+  variant = "default",
 }: {
   item: ClientReviewItem;
   canSubmit: boolean;
   submitting: boolean;
+  variant?: "default" | "storyboard";
 }) {
+  if (item.itemType === "brief") {
+    return <BriefReviewItemCard item={item} />;
+  }
   if (item.itemType === "quote") {
     return <QuoteReviewItemCard item={item} canSubmit={canSubmit} submitting={submitting} />;
   }
+  if (item.itemType === "contract") {
+    return <ContractReviewItemCard item={item} canSubmit={canSubmit} submitting={submitting} />;
+  }
+  if (item.itemType === "script_direction") {
+    return <ScriptReviewItemCard item={item} canSubmit={canSubmit} submitting={submitting} />;
+  }
 
   const imageUrl = typeof item.metadata.imageUrl === "string" ? item.metadata.imageUrl : null;
+  const previousDecision = typeof item.metadata.previousDecision === "string" ? item.metadata.previousDecision : null;
+  const previousFeedback = typeof item.metadata.previousFeedback === "string" ? item.metadata.previousFeedback : "";
   const candidateImages = getCandidateImages(item.metadata.candidateImages);
-  const isImageReview = item.itemType === "storyboard_shot_image" || Boolean(imageUrl);
   return (
-    <div className="grid gap-4 rounded-2xl border border-black/10 p-4 md:grid-cols-[260px_minmax(0,1fr)]">
+    <div
+      className={[
+        "grid gap-4 rounded-2xl border p-4 md:grid-cols-[260px_minmax(0,1fr)]",
+        previousDecision === "rejected"
+          ? "border-red-300 bg-red-50"
+          : previousDecision === "approved"
+            ? "border-emerald-200 bg-emerald-50"
+            : "border-black/10",
+      ].join(" ")}
+    >
       <div className="overflow-hidden rounded-xl bg-black/5">
         {imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -708,11 +935,83 @@ function GenericReviewItemCard({
         )}
       </div>
       <div>
-        <p className="font-semibold">{item.itemLabel}</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="font-semibold">{item.itemLabel}</p>
+          {previousDecision === "rejected" ? (
+            <span className="rounded-full bg-red-100 px-2 py-1 text-xs font-medium text-red-700">上一轮不 OK</span>
+          ) : previousDecision === "approved" ? (
+            <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-medium text-emerald-700">上一轮 OK</span>
+          ) : null}
+        </div>
         <p className="mt-2 text-sm leading-6 text-black/60">{reviewItemPreview(item)}</p>
-        <ReviewDecisionFields item={item} canSubmit={canSubmit} submitting={submitting} showScore={isImageReview || candidateImages.length > 0} />
+        {previousDecision === "rejected" && (
+          <p className="mt-3 rounded-xl border border-red-200 bg-white/70 p-3 text-sm leading-6 text-red-700">
+            上一轮批注：{previousFeedback || "甲方未填写单条批注。"}
+          </p>
+        )}
+        <ReviewDecisionFields item={item} canSubmit={canSubmit} submitting={submitting} variant={variant} />
       </div>
     </div>
+  );
+}
+
+function ScriptReviewItemCard({
+  item,
+  canSubmit,
+  submitting,
+}: {
+  item: ClientReviewItem;
+  canSubmit: boolean;
+  submitting: boolean;
+}) {
+  const content = readMetadataString(item.metadata, "content") || reviewItemPreview(item);
+  const concept = readMetadataString(item.metadata, "concept");
+
+  return (
+    <article className="rounded-2xl border border-black/10 bg-white p-4">
+      <div>
+        <p className="text-xs text-black/45">标准剧本</p>
+        <h2 className="mt-1 text-xl font-semibold tracking-[-0.02em]">{item.itemLabel}</h2>
+        {concept && <p className="mt-2 text-sm leading-6 text-black/55">{concept}</p>}
+      </div>
+      <div className="mt-4 max-h-[680px] overflow-auto rounded-2xl border border-black/10 bg-[#faf8f3] p-4">
+        <div className="whitespace-pre-wrap font-mono text-sm leading-7 text-black/75">{content}</div>
+      </div>
+      <ReviewDecisionFields item={item} canSubmit={canSubmit} submitting={submitting} />
+    </article>
+  );
+}
+
+function ContractReviewItemCard({
+  item,
+  canSubmit,
+  submitting,
+}: {
+  item: ClientReviewItem;
+  canSubmit: boolean;
+  submitting: boolean;
+}) {
+  const content = readMetadataString(item.metadata, "content") || reviewItemPreview(item);
+  const version = readMetadataNumber(item.metadata, "version") || 1;
+  const status = readMetadataString(item.metadata, "status");
+
+  return (
+    <article className="rounded-2xl border border-black/10 bg-white p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs text-black/45">完整合同正文</p>
+          <h2 className="mt-1 text-xl font-semibold tracking-[-0.02em]">{item.itemLabel}</h2>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs text-black/55">
+          <span className="rounded-full border border-black/10 px-3 py-1">v{version}</span>
+          {status && <span className="rounded-full border border-black/10 px-3 py-1">{quoteStatusLabel(status)}</span>}
+        </div>
+      </div>
+      <div className="mt-4 max-h-[640px] overflow-auto rounded-2xl border border-black/10 bg-[#faf8f3] p-4">
+        <div className="whitespace-pre-wrap text-sm leading-7 text-black/75">{content}</div>
+      </div>
+      <ReviewDecisionFields item={item} canSubmit={canSubmit} submitting={submitting} />
+    </article>
   );
 }
 
@@ -781,7 +1080,7 @@ function QuoteReviewItemCard({
               {quote.notes}
             </div>
           )}
-          <ReviewDecisionFields item={item} canSubmit={canSubmit} submitting={submitting} showScore={false} />
+          <ReviewDecisionFields item={item} canSubmit={canSubmit} submitting={submitting} />
         </div>
       </div>
     </article>
@@ -792,40 +1091,101 @@ function ReviewDecisionFields({
   item,
   canSubmit,
   submitting,
-  showScore,
+  variant = "default",
 }: {
   item: ClientReviewItem;
   canSubmit: boolean;
   submitting: boolean;
-  showScore: boolean;
+  variant?: "default" | "storyboard";
 }) {
+  const isStoryboard = variant === "storyboard";
+  const initialItemDecision = item.decision === "approved" || item.decision === "rejected" ? item.decision : "";
+  const [itemDecision, setItemDecision] = useState<"" | "approved" | "rejected">(initialItemDecision);
+
+  if (isStoryboard) {
+    const disabled = !canSubmit || submitting;
+    return (
+      <div className="mt-4 grid gap-3">
+        <input type="hidden" name={`decision-${item.itemId}`} value={itemDecision} />
+        <div className="storyboard-review-direct-actions flex flex-wrap items-center gap-2" aria-label={`${item.itemLabel} 审核结论`}>
+          <Button
+            type="button"
+            variant={itemDecision === "approved" ? "default" : "outline"}
+            disabled={disabled}
+            className={itemDecision === "approved" ? "bg-emerald-700 text-white hover:bg-emerald-800" : "border-emerald-200 text-emerald-800 hover:bg-emerald-50"}
+            onClick={() => setItemDecision("approved")}
+          >
+            <CheckCircle2 size={16} />
+            OK
+          </Button>
+          <Button
+            type="button"
+            variant={itemDecision === "rejected" ? "default" : "outline"}
+            disabled={disabled}
+            className={itemDecision === "rejected" ? "bg-red-700 text-white hover:bg-red-800" : "border-red-200 text-red-800 hover:bg-red-50"}
+            onClick={() => setItemDecision("rejected")}
+          >
+            <XCircle size={16} />
+            不 OK
+          </Button>
+          {!itemDecision && <span className="text-xs text-black/45">请直接选择这张分镜是否通过。</span>}
+        </div>
+        {itemDecision === "rejected" && (
+          <label className="grid gap-1 rounded-2xl border border-red-200 bg-red-50 p-3 text-xs text-red-900">
+            不 OK 后请填写原因和修改意见
+            <textarea
+              name={`feedback-${item.itemId}`}
+              required
+              disabled={disabled}
+              className="min-h-24 rounded-xl border border-red-200 bg-white p-3 text-sm leading-6 text-black outline-none focus:border-red-400"
+              placeholder="请说明这张图哪里不 OK，以及希望怎么调整。"
+            />
+          </label>
+        )}
+      </div>
+    );
+  }
+
   return (
-    <div className="mt-4 grid gap-3 md:grid-cols-3">
-      <label className="grid gap-1 text-xs">
-        单条结论（可选）
-        <select name={`decision-${item.itemId}`} disabled={!canSubmit || submitting} className="h-10 rounded-xl border border-black/10 bg-white px-3 text-sm">
-          <option value="">跟随整体结论</option>
-          <option value="approved">OK</option>
-          <option value="rejected">不 OK</option>
-        </select>
-      </label>
-      {showScore && (
-        <label className="grid gap-1 text-xs">
-          评分
-          <select name={`score-${item.itemId}`} disabled={!canSubmit || submitting} className="h-10 rounded-xl border border-black/10 bg-white px-3 text-sm">
-            <option value="">不单独评分</option>
-            {[5, 4, 3, 2, 1].map((score) => (
-              <option key={score} value={score}>{score} 分</option>
-            ))}
-          </select>
-        </label>
-      )}
-      <label className="grid gap-1 text-xs md:col-span-3">
+    <div className="mt-4 grid gap-3">
+      <input type="hidden" name={`decision-${item.itemId}`} value={itemDecision} />
+      <div className="client-review-direct-actions flex flex-wrap items-center gap-2" aria-label={`${item.itemLabel} 审核结论`}>
+        <Button
+          type="button"
+          variant={itemDecision === "approved" ? "default" : "outline"}
+          disabled={!canSubmit || submitting}
+          className={itemDecision === "approved" ? "bg-emerald-700 text-white hover:bg-emerald-800" : "border-emerald-200 text-emerald-800 hover:bg-emerald-50"}
+          onClick={() => setItemDecision((current) => (current === "approved" ? "" : "approved"))}
+        >
+          <CheckCircle2 size={16} />
+          OK
+        </Button>
+        <Button
+          type="button"
+          variant={itemDecision === "rejected" ? "default" : "outline"}
+          disabled={!canSubmit || submitting}
+          className={itemDecision === "rejected" ? "bg-red-700 text-white hover:bg-red-800" : "border-red-200 text-red-800 hover:bg-red-50"}
+          onClick={() => setItemDecision((current) => (current === "rejected" ? "" : "rejected"))}
+        >
+          <XCircle size={16} />
+          不 OK
+        </Button>
+        {!itemDecision && <span className="text-xs text-black/45">未单独选择时，会跟随底部整体 OK / 不 OK。</span>}
+      </div>
+      <label className="grid gap-1 text-xs md:col-span-2">
         修改意见
         <textarea name={`feedback-${item.itemId}`} disabled={!canSubmit || submitting} className="min-h-20 rounded-xl border border-black/10 p-3 text-sm leading-6" />
       </label>
     </div>
   );
+}
+
+function computeStoryboardBatchDecision(items: Array<{ decision: "approved" | "rejected" }>) {
+  return items.some((item) => item.decision === "rejected") ? "rejected" : "approved";
+}
+
+function computeCreativeRound1Decision(items: Array<{ decision: "approved" | "rejected" }>) {
+  return items.some((item) => item.decision === "approved") ? "approved" : "rejected";
 }
 
 function itemTypeLabel(type: string) {
@@ -860,6 +1220,72 @@ function groupCreativeProposalItems(items: ClientReviewItem[]) {
     directionTitle,
     items: groupItems.sort((left, right) => readMetadataNumber(left.metadata, "sceneIndex") - readMetadataNumber(right.metadata, "sceneIndex")),
   }));
+}
+
+const BRIEF_REVIEW_ROWS: Array<[string, string]> = [
+  ["品牌信息", "brandInfo"],
+  ["产品/服务", "productOrService"],
+  ["目标受众", "targetAudience"],
+  ["视频目标", "videoGoal"],
+  ["期望风格", "expectedStyle"],
+  ["参考样片", "referenceSamples"],
+  ["核心卖点", "keySellingPoints"],
+  ["禁忌点", "restrictions"],
+  ["交付规格", "deliverySpecs"],
+  ["时间节点", "timeline"],
+  ["预算/报价", "budgetOrQuoteInfo"],
+  ["项目摘要", "summary"],
+];
+
+function readBriefReviewData(item: ClientReviewItem) {
+  const directBrief = readBriefRecord(item.metadata.brief);
+  if (directBrief) return directBrief;
+
+  const previewText = readMetadataString(item.metadata, "previewText");
+  const parsedPreview = parseBriefPreviewText(previewText);
+  if (parsedPreview) return parsedPreview;
+
+  return null;
+}
+
+function readBriefRecord(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function parseBriefPreviewText(value: string) {
+  if (!value.trim().startsWith("{")) return null;
+  try {
+    return readBriefRecord(JSON.parse(value));
+  } catch {
+    return null;
+  }
+}
+
+function formatBriefReviewValue(value: unknown) {
+  if (Array.isArray(value)) {
+    const text = value.map(formatBriefReviewScalar).filter(Boolean).join("、");
+    return text || "未提及";
+  }
+  return formatBriefReviewScalar(value) || "未提及";
+}
+
+function formatBriefReviewScalar(value: unknown) {
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return "";
+}
+
+function normalizeFieldKey(value: string) {
+  return value.replace(/[^a-zA-Z0-9_\u4e00-\u9fa5-]+/g, "-");
+}
+
+function readCreativeRound1StoryOutline(items: ClientReviewItem[]) {
+  return (
+    items.map((item) => readMetadataString(item.metadata, "storyContent")).find(Boolean) ||
+    items.map((item) => readMetadataString(item.metadata, "previewText")).find(Boolean) ||
+    ""
+  );
 }
 
 function getCandidateImages(value: unknown): ReviewCandidateImage[] {

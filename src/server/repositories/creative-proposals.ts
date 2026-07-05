@@ -390,11 +390,13 @@ export async function updateCreativeProposalRoundClientDecision(input: {
   approved: boolean;
   feedback: string;
   decisionPayload: Record<string, unknown>;
+  retainedDirectionIds?: string[];
 }) {
   await query(
     `update creative_proposal_rounds
      set status = $3,
          client_feedback_json = $4::jsonb,
+         retained_direction_ids = $5::jsonb,
          updated_at = now()
      where project_id = $1
        and id = $2`,
@@ -406,6 +408,7 @@ export async function updateCreativeProposalRoundClientDecision(input: {
         feedback: input.feedback,
         decisionPayload: input.decisionPayload,
       }),
+      JSON.stringify(input.retainedDirectionIds ?? []),
     ]
   );
 }

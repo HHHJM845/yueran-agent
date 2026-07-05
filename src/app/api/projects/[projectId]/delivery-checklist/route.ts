@@ -102,7 +102,9 @@ export async function POST(request: Request, context: { params: Promise<{ projec
             ? "交付清单已根据工作量估算生成，请在签约前逐项核对。"
             : body.action === "update_item_status"
               ? "交付清单项状态已更新，B copy 定稿确认会读取最新结果。"
-            : "交付清单已保存，后续合同和归档会读取这版清单。",
+              : deliveryChecklist.status === "confirmed"
+                ? "交付清单已确认，项目进入脚本、人物场景设定与文字分镜确认。"
+                : "交付清单已保存为草稿，确认清单前项目会继续停留在 SOP4。",
       },
     });
   } catch (error) {

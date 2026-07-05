@@ -92,6 +92,24 @@ test("buildRiskIssues prioritizes redlines, high risk, medium risk, and fact gap
   assert.doesNotMatch(issues.map((issue) => issue.title).join("、"), /付款条件/);
 });
 
+test("buildRiskIssues keeps dimension order stable within the same severity", () => {
+  const issues = buildRiskIssues(
+    makeRiskCheck({
+      dimensions: [
+        dimension("requirement_completeness", "high", "需求边界不清。", 0.4),
+        dimension("compliance_delivery", "medium", "授权和交付条款待确认。", 0.9),
+        dimension("material_readiness", "high", "素材授权和清晰度未确认。", 0.95),
+        dimension("production_complexity", "medium", "复杂特效范围待确认。", 0.3),
+      ],
+    })
+  );
+
+  assert.deepEqual(
+    issues.map((issue) => issue.title),
+    ["需求完整度不足", "素材可用性不足", "合规与交付待确认", "生产复杂度待确认"]
+  );
+});
+
 test("buildRiskIssues falls back to a single empty-state issue when no risk is found", () => {
   const issues = buildRiskIssues(
     makeRiskCheck({
@@ -123,6 +141,29 @@ test("buildRiskIssues skips fact rows that duplicate an already surfaced dimensi
   assert.equal(issues.length, 1);
   assert.deepEqual(issues.map((issue) => issue.key), ["dimension-material_readiness"]);
   assert.doesNotMatch(issues.map((issue) => issue.title).join("、"), /素材可用性待确认/);
+});
+
+test("buildRiskIssues keeps legacy dimension keys readable and compact", () => {
+  const issues = buildRiskIssues(
+    makeRiskCheck({
+      dimensions: [
+        dimension(
+          "compliance",
+          "high",
+          "版权限制：不得出现真实球星、世界杯官方Logo、FIFA标志、国家队队徽等侵权敏感元素；品牌露出限制：严格遵循测试阶段露出规则。",
+        ),
+        dimension("decision_chain", "high", "未明确审核对接人、反馈周期规则和品牌手册确认路径。"),
+        dimension("schedule", "high", "上线时间紧张，最好在世界杯正式开赛前两周完成所有物料。"),
+      ],
+    })
+  );
+
+  assert.deepEqual(
+    issues.map((issue) => issue.title),
+    ["合规与交付风险偏高", "需求链路风险偏高", "周期排期风险偏高"]
+  );
+  assert.ok(issues.every((issue) => issue.reason.length <= 72));
+  assert.doesNotMatch(issues.map((issue) => issue.title).join("、"), /compliance|decision_chain|schedule/);
 });
 
 test("risk panel summary and decision labels stay concise", () => {

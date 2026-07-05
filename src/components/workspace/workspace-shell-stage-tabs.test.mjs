@@ -1,0 +1,67 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+const source = readFileSync(new URL("./workspace-shell.tsx", import.meta.url), "utf8");
+const styles = readFileSync(new URL("../../app/globals.css", import.meta.url), "utf8");
+
+test("stage navigator renders page-splitting sub tags for multi-stage modules", () => {
+  assert.match(source, /module-nav-subtabs/);
+  assert.match(source, /module-nav-subtab/);
+  assert.match(source, /\.replace\(\/\^Brief 收集与\/, "Brief "\)/);
+  assert.doesNotMatch(source, /Brief \/ /);
+  assert.match(source, /script_storyboard_confirmation[^]*script_storyboard_split/);
+  assert.doesNotMatch(source, /module-nav-subtab-kicker/);
+  assert.doesNotMatch(source, /formatSopShortLabel/);
+  assert.doesNotMatch(source, /module-nav-subtab-spine/);
+  assert.match(source, /moduleSubStages\.length > 1 &&/);
+  assert.doesNotMatch(source, /isSelectedModule && module\.stages\.length > 1/);
+  assert.match(source, /moduleSubStages\.map\(\(stage\)/);
+  assert.doesNotMatch(source, /selectedSubtabGridStart/);
+  assert.doesNotMatch(source, /className="module-nav-subtabs-row"/);
+  assert.doesNotMatch(source, /gridColumn: `\$\{selectedSubtabGridStart\} \/ span \$\{selectedModule\.stages\.length\}`/);
+  assert.doesNotMatch(source, /hasSubTabs && \(\s*<div className="module-nav-subtabs"/);
+  assert.match(source, /aria-label=\{`\$\{moduleTitle\} 子流程页签`\}/);
+  assert.match(source, /onClick=\{\(\) => onStageSelect\(stage\)\}/);
+  assert.match(source, /onMouseUp=\{\(event\) => event\.currentTarget\.blur\(\)\}/);
+  assert.match(source, /resolveStageFromSubStage\(stage\)/);
+  assert.match(source, /stageStepLabels\[stage\]/);
+  assert.match(source, /data-subtab-count=\{moduleSubStages\.length\}/);
+  assert.match(styles, /\.module-nav-subtabs/);
+  assert.doesNotMatch(styles, /\.module-nav-subtabs-row/);
+  assert.match(styles, /\.module-nav-subtabs-shell/);
+  assert.match(styles, /\.module-nav-subtab\.is-selected/);
+  assert.doesNotMatch(styles, /\.module-nav-subtab-spine/);
+  assert.doesNotMatch(styles, /\.module-nav-subtab-kicker/);
+  assert.match(styles, /\.module-nav-subtab \{[\s\S]*background: var\(--accent-foreground\)/);
+  assert.match(styles, /\.module-nav-subtab\.is-selected \{[\s\S]*background: var\(--accent\)/);
+  const subtabShellRule = styles.match(/\.module-nav-subtabs-shell \{([\s\S]*?)\}/)?.[1] ?? "";
+  const subtabListRule = styles.match(/\.module-nav-subtabs \{([\s\S]*?)\}/)?.[1] ?? "";
+  assert.match(subtabShellRule, /width: 100%/);
+  assert.match(subtabShellRule, /position: absolute/);
+  assert.match(subtabShellRule, /opacity: 0/);
+  assert.match(subtabShellRule, /pointer-events: none/);
+  assert.match(styles, /\.module-nav-item:hover \.module-nav-subtabs-shell,\n\.module-nav-item:focus-within \.module-nav-subtabs-shell \{[\s\S]*opacity: 1/);
+  assert.match(styles, /\.module-nav-subtabs-shell::before/);
+  assert.doesNotMatch(subtabListRule, /grid-template-columns/);
+  assert.match(styles, /\.workspace-main-area > section:not\(\[hidden\]\)/);
+  const currentSubtabRule = styles.match(/\.module-nav-subtab\.is-current:not\(\.is-selected\) \{([\s\S]*?)\}/)?.[1] ?? "";
+  const workspaceMainAreaRule = styles.match(/\.workspace-main-area \{([\s\S]*?)\}/)?.[1] ?? "";
+  const workspaceVisibleSectionRule = styles.match(/\.workspace-main-area > section:not\(\[hidden\]\) \{([\s\S]*?)\}/)?.[1] ?? "";
+  assert.doesNotMatch(currentSubtabRule, /var\(--accent\)/);
+  assert.match(workspaceMainAreaRule, /margin-top: 0\.85rem/);
+  assert.doesNotMatch(workspaceMainAreaRule, /border-top:/);
+  assert.match(workspaceVisibleSectionRule, /background: transparent/);
+  assert.match(workspaceVisibleSectionRule, /box-shadow: none/);
+  assert.doesNotMatch(workspaceVisibleSectionRule, /background: var\(--surface-card\)/);
+  assert.doesNotMatch(workspaceVisibleSectionRule, /border-top: 0/);
+  const stageCardRule = styles.match(/\.ds-stage-card \{([\s\S]*?)\}/)?.[1] ?? "";
+  assert.match(stageCardRule, /background: var\(--surface-card\)/);
+  assert.match(stageCardRule, /box-shadow: var\(--shadow-card\)/);
+});
+
+test("workspace body is bound to the selected stage tab", () => {
+  assert.match(source, /data-active-stage=\{selectedStage\}/);
+  assert.match(source, /data-stage=\{stage\}/);
+  assert.match(source, /aria-label=\{`\$\{stageStepLabels\[stage\]\} 工作区`\}/);
+});

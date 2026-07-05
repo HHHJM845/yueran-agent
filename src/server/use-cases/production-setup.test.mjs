@@ -64,6 +64,16 @@ test("production setup supports confirmable active and ignored entity lists", as
   assert.match(route, /action: z\.literal\("confirm_list"\)/);
 });
 
+test("production setup confirmation is gated by confirmed storyboard sequence", async () => {
+  const source = await readFile(new URL("./production-setup.ts", import.meta.url), "utf8");
+
+  assert.match(source, /assertStoryboardSequenceConfirmed/);
+  assert.match(source, /storyboard_sequence_not_confirmed/);
+  assert.match(source, /请先确认文字分镜/);
+  const confirmListSource = source.match(/export async function confirmProductionEntityList[\s\S]*?export async function generateProductionReferencePrompts/)?.[0] ?? "";
+  assert.ok(confirmListSource.indexOf("assertStoryboardSequenceConfirmed") < confirmListSource.indexOf("confirmProductionEntities"));
+});
+
 test("production setup prompts are visible editable and style-aware", async () => {
   const source = await readFile(new URL("./production-setup.ts", import.meta.url), "utf8");
   const repository = await readFile(new URL("../repositories/production-entities.ts", import.meta.url), "utf8");

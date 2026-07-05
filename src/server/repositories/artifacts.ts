@@ -72,6 +72,24 @@ export async function createArtifact(input: {
   return mapArtifact(result.rows[0]);
 }
 
+export async function updateArtifactStatus(input: {
+  projectId: string;
+  artifactId: string;
+  status: string;
+}) {
+  const result = await query<ArtifactRow>(
+    `update artifacts
+     set status = $3,
+         updated_at = now()
+     where project_id = $1
+       and id = $2
+     returning id, project_id, kind, title, status, data_json, oss_url, source_job_id, version, updated_at`,
+    [input.projectId, input.artifactId, input.status]
+  );
+
+  return result.rows[0] ? mapArtifact(result.rows[0]) : null;
+}
+
 function mapArtifact(row: ArtifactRow): ArtifactSummary {
   return {
     id: row.id,

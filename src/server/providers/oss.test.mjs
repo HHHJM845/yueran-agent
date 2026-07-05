@@ -46,3 +46,17 @@ test("createReadUrl signs response content disposition and type overrides", asyn
 
   assert.equal(url.searchParams.get("Signature"), expectedSignature);
 });
+
+test("createUploadUrl signs the content type used by browser PUT uploads", async () => {
+  const { createUploadUrl } = await import("./oss.ts");
+
+  const url = new URL(createUploadUrl("projects/project-1/assets/video-1/a-copy.mp4", { contentType: "video/mp4" }));
+  const expires = url.searchParams.get("Expires");
+  assert.ok(expires);
+
+  const expectedSignature = createHmac("sha1", "test-access-key-secret")
+    .update(["PUT", "", "video/mp4", expires, "/augc-flow-test/projects/project-1/assets/video-1/a-copy.mp4"].join("\n"))
+    .digest("base64");
+
+  assert.equal(url.searchParams.get("Signature"), expectedSignature);
+});

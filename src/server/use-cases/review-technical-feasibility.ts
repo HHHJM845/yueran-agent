@@ -5,7 +5,7 @@ import { createAuditLog } from "@/server/repositories/audit-logs";
 import { getProjectById } from "@/server/repositories/projects";
 import { recordStageProgress } from "@/server/use-cases/stage-progress";
 
-export const technicalFeasibilityActionSchema = z.enum(["mark_blocked", "request_revision", "approve", "reopen"]);
+export const technicalFeasibilityActionSchema = z.enum(["request_revision", "approve"]);
 export type TechnicalFeasibilityAction = z.infer<typeof technicalFeasibilityActionSchema>;
 
 export const reviewTechnicalFeasibilityInputSchema = z.object({
@@ -35,14 +35,6 @@ export async function reviewTechnicalFeasibility(input: {
     reason: input.reason ?? "",
     nextStep: input.nextStep ?? "",
   });
-
-  if (parsed.action === "mark_blocked" && !parsed.reason) {
-    throw new AppError({
-      status: 400,
-      code: "technical_block_reason_required",
-      userMessage: "请填写技术不可行或暂时阻塞的原因，方便管理团队复核和后续恢复。",
-    });
-  }
 
   if (parsed.action === "request_revision" && !parsed.reason) {
     throw new AppError({
@@ -83,8 +75,8 @@ export async function reviewTechnicalFeasibility(input: {
       currentStage: "brand_requirement_intake",
       projectStatus: "needs_revision",
       title: "需求资料需要补充",
-      userMessage: "技术评估已退回需求补充，商务团队补齐资料后可以重新发起评估。",
-      errorMessage: parsed.reason || "技术评估需要补充资料后重新提交。",
+      userMessage: "接单风险评估已退回需求补充，商务团队补齐资料后可以重新发起评估。",
+      errorMessage: parsed.reason || "接单风险评估需要补充资料后重新提交。",
       snapshot: {
         sourceStage: "technical_feasibility",
         action: parsed.action,
@@ -102,7 +94,7 @@ export async function reviewTechnicalFeasibility(input: {
       currentStage: "creative_direction_proposal",
       projectStatus: "in_progress",
       title: "创意方向提案可继续推进",
-      userMessage: "技术评估已通过，创意团队可以继续提交或完善创意方向。",
+      userMessage: "接单风险评估已通过，创意团队可以继续提交或完善创意方向。",
       errorMessage: null,
       snapshot: {
         sourceStage: "technical_feasibility",
@@ -147,25 +139,14 @@ export function mapTechnicalFeasibilityStageProgress(input: {
   const nextStepSuffix = input.nextStep ? `下一步：${input.nextStep}` : "";
   const combinedDetail = [reasonSuffix, nextStepSuffix].filter(Boolean).join(" ");
 
-  if (input.action === "mark_blocked") {
-    return {
-      stageStatus: "blocked" as StageStatus,
-      currentStage: "technical_feasibility" as ProjectStage,
-      projectStatus: "blocked" as StageStatus,
-      title: "技术可行性评估已阻塞",
-      userMessage: `已将技术可行性评估标记为不可行/阻塞。${combinedDetail || "请管理团队复核后决定补资料、调整方案或终止。"}`,
-      errorMessage: combinedDetail || "技术可行性评估已阻塞，等待管理团队复核。",
-    };
-  }
-
   if (input.action === "request_revision") {
     return {
       stageStatus: "needs_revision" as StageStatus,
       currentStage: "brand_requirement_intake" as ProjectStage,
       projectStatus: "needs_revision" as StageStatus,
-      title: "技术评估退回补充资料",
-      userMessage: `技术评估已退回需求补充。${combinedDetail || "请商务团队补充资料后重新发起评估。"}`,
-      errorMessage: combinedDetail || "技术评估需要补充资料后重新提交。",
+      title: "接单风险评估退回补充资料",
+      userMessage: `接单风险评估已退回需求补充。${combinedDetail || "请商务团队补充资料后重新发起评估。"}`,
+      errorMessage: combinedDetail || "接单风险评估需要补充资料后重新提交。",
     };
   }
 
@@ -174,18 +155,18 @@ export function mapTechnicalFeasibilityStageProgress(input: {
       stageStatus: "approved" as StageStatus,
       currentStage: "creative_direction_proposal" as ProjectStage,
       projectStatus: "in_progress" as StageStatus,
-      title: "技术可行性评估已人工复核通过",
-      userMessage: "技术可行性评估已人工复核通过，项目可继续推进创意方向提案。",
+      title: "接单风险评估已通过",
+      userMessage: "接单风险评估已通过，项目可继续推进创意方向提案。",
       errorMessage: null,
     };
   }
 
   return {
-    stageStatus: "in_progress" as StageStatus,
-    currentStage: "technical_feasibility" as ProjectStage,
+    stageStatus: "approved" as StageStatus,
+    currentStage: "creative_direction_proposal" as ProjectStage,
     projectStatus: "in_progress" as StageStatus,
-    title: "技术可行性评估已解除阻塞",
-    userMessage: `技术可行性评估已解除阻塞。${combinedDetail || "请重新发起评估或继续生成 4 个创意方向。"}`,
+    title: "接单风险评估已通过",
+    userMessage: "接单风险评估已通过，项目可继续推进创意方向提案。",
     errorMessage: null,
   };
 }

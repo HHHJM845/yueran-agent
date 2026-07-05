@@ -358,6 +358,24 @@ create table if not exists script_direction_packages (
 create index if not exists script_direction_packages_project_idx
   on script_direction_packages (project_id, status, updated_at desc);
 
+alter table script_direction_packages
+  add column if not exists plain_script text not null default '',
+  add column if not exists standardized_script text not null default '';
+
+create table if not exists script_revision_messages (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  package_id uuid not null references script_direction_packages(id) on delete cascade,
+  role text not null check (role in ('user', 'assistant')),
+  input_mode text not null default 'text' check (input_mode in ('text', 'voice')),
+  content text not null,
+  created_by uuid references users(id),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists script_revision_messages_package_idx
+  on script_revision_messages (package_id, created_at asc);
+
 create table if not exists script_reference_assets (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references projects(id) on delete cascade,
@@ -512,8 +530,8 @@ create table if not exists client_review_tasks (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references projects(id) on delete cascade,
   module_key text not null,
-  review_type text not null check (review_type in ('brief_confirmation', 'project_proposal', 'quote_confirmation', 'contract_confirmation', 'script_package', 'storyboard_scene_images', 'a_copy_review', 'b_copy_review')),
-  target_scope_type text not null check (target_scope_type in ('project', 'proposal', 'quote', 'contract', 'script_package', 'storyboard_scene', 'review_cut')),
+  review_type text not null check (review_type in ('brief_confirmation', 'project_proposal', 'quote_confirmation', 'contract_confirmation', 'script_package', 'storyboard_scene_images', 'storyboard_image_batch', 'a_copy_review', 'b_copy_review')),
+  target_scope_type text not null check (target_scope_type in ('project', 'proposal', 'quote', 'contract', 'script_package', 'storyboard_scene', 'storyboard_image_batch', 'review_cut')),
   target_scope_id uuid not null,
   title text not null,
   summary text not null default '',
@@ -619,6 +637,8 @@ create table if not exists contracts (
   proposal_id uuid references proposals(id) on delete set null,
   quote_id uuid references quotes(id) on delete set null,
   client_contract_asset_id uuid references assets(id) on delete set null,
+  signed_contract_asset_id uuid references assets(id) on delete set null,
+  mode text not null default 'vendor_provided' check (mode in ('vendor_provided', 'client_provided')),
   title text not null,
   template_key text not null default 'default_aigc_video_contract',
   template_fields_json jsonb not null default '{}'::jsonb,
@@ -888,6 +908,38 @@ alter table client_review_items
   add column if not exists target_version integer,
   add column if not exists feedback_payload_json jsonb not null default '{}'::jsonb;
 
+do $$
+begin
+  if exists (
+    select 1
+    from pg_constraint
+    where conname = 'client_review_tasks_review_type_check'
+      and conrelid = 'client_review_tasks'::regclass
+  ) then
+    alter table client_review_tasks
+      drop constraint client_review_tasks_review_type_check;
+  end if;
+  alter table client_review_tasks
+    add constraint client_review_tasks_review_type_check
+    check (review_type in ('brief_confirmation', 'project_proposal', 'quote_confirmation', 'contract_confirmation', 'script_package', 'storyboard_scene_images', 'storyboard_image_batch', 'a_copy_review', 'b_copy_review'));
+
+  if exists (
+    select 1
+    from pg_constraint
+    where conname = 'client_review_tasks_target_scope_type_check'
+      and conrelid = 'client_review_tasks'::regclass
+  ) then
+    alter table client_review_tasks
+      drop constraint client_review_tasks_target_scope_type_check;
+  end if;
+  alter table client_review_tasks
+    add constraint client_review_tasks_target_scope_type_check
+    check (target_scope_type in ('project', 'proposal', 'quote', 'contract', 'script_package', 'storyboard_scene', 'storyboard_image_batch', 'review_cut'));
+exception
+  when duplicate_object then null;
+end
+$$;
+
 alter table review_cuts
   add column if not exists round_number integer not null default 1,
   add column if not exists snapshot_json jsonb not null default '{}'::jsonb,
@@ -1137,7 +1189,7 @@ $$;
 create table if not exists storyboard_image_batches (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references projects(id) on delete cascade,
-  batch_number integer not null check (batch_number in (1, 2, 3)),
+  batch_number integer not null check (batch_number >= 1),
   status text not null default 'draft' check (status in ('draft', 'internal_ready', 'client_reviewing', 'client_rejected', 'client_approved', 'locked')),
   version integer not null default 1,
   scene_ids jsonb not null default '[]'::jsonb,
@@ -1151,6 +1203,25 @@ create table if not exists storyboard_image_batches (
   updated_at timestamptz not null default now(),
   unique (project_id, batch_number, version)
 );
+
+do $$
+begin
+  if exists (
+    select 1
+    from pg_constraint
+    where conname = 'storyboard_image_batches_batch_number_check'
+      and conrelid = 'storyboard_image_batches'::regclass
+  ) then
+    alter table storyboard_image_batches
+      drop constraint storyboard_image_batches_batch_number_check;
+  end if;
+  alter table storyboard_image_batches
+    add constraint storyboard_image_batches_batch_number_check
+    check (batch_number >= 1);
+exception
+  when duplicate_object then null;
+end
+$$;
 
 create table if not exists storyboard_image_batch_items (
   id uuid primary key default gen_random_uuid(),

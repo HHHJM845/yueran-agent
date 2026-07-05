@@ -1,11 +1,14 @@
 import { z } from "zod";
+import { buildSop4ContractTemplateContent } from "@/domain/contract-template";
+import { AppError } from "@/lib/errors";
 import { createArtifact } from "@/server/repositories/artifacts";
 import { createAuditLog } from "@/server/repositories/audit-logs";
-import { upsertProjectContract, updateContractLatestSnapshot, type ContractTemplateFields, type ContractView } from "@/server/repositories/contracts";
+import { upsertProjectContract, updateContractLatestSnapshot, type ContractMode, type ContractTemplateFields, type ContractView } from "@/server/repositories/contracts";
 import { createDocumentSnapshot } from "@/server/repositories/proposals";
 import { recordStageProgress } from "@/server/use-cases/stage-progress";
 
 const contractStatusSchema = z.enum(["draft", "waiting_review", "needs_revision", "confirmed", "sent", "signed", "terminated"]);
+const contractModeSchema = z.enum(["vendor_provided", "client_provided"]);
 
 const contractTemplateFieldsSchema = z.object({
   partyAName: z.string().trim().min(1, "请输入甲方名称"),
@@ -19,15 +22,59 @@ const contractTemplateFieldsSchema = z.object({
   effectiveDate: z.string().trim().min(4, "请输入合同生效日期"),
 });
 
-export const saveContractInputSchema = z.object({
+const contractTemplateFieldsBaseSchema = contractTemplateFieldsSchema.partial({
+  deliveryScope: true,
+  paymentTerms: true,
+  effectiveDate: true,
+}).extend({
+  partyAName: z.string().trim().min(1, "请输入甲方名称"),
+  partyBName: z.string().trim().min(1, "请输入乙方名称"),
+  projectName: z.string().trim().min(1, "请输入项目名称"),
+  quoteTitle: z.string().trim().default(""),
+  quoteTotalAmount: z.coerce.number().nonnegative().default(0),
+  quoteCurrency: z.string().trim().min(3).max(8).default("CNY"),
+  deliveryScope: z.string().trim().default(""),
+  paymentTerms: z.string().trim().default(""),
+  effectiveDate: z.string().trim().default(""),
+});
+
+const saveContractBaseInputSchema = z.object({
+  mode: contractModeSchema.default("vendor_provided"),
   title: z.string().trim().min(2, "请输入合同标题"),
   templateKey: z.string().trim().min(2).default("default_aigc_video_contract"),
-  templateFields: contractTemplateFieldsSchema,
+  templateFields: contractTemplateFieldsBaseSchema,
   content: z.string().trim().optional(),
   status: contractStatusSchema.default("draft"),
   proposalId: z.string().uuid().nullable().optional(),
   quoteId: z.string().uuid().nullable().optional(),
   clientContractAssetId: z.string().uuid().nullable().optional(),
+  signedContractAssetId: z.string().uuid().nullable().optional(),
+});
+
+export const saveContractInputSchema = saveContractBaseInputSchema.superRefine((value, context) => {
+  if (value.mode === "vendor_provided") {
+    if (value.templateFields.deliveryScope.trim().length < 4) {
+      context.addIssue({
+        code: "custom",
+        path: ["templateFields", "deliveryScope"],
+        message: "请输入交付范围",
+      });
+    }
+    if (value.templateFields.paymentTerms.trim().length < 4) {
+      context.addIssue({
+        code: "custom",
+        path: ["templateFields", "paymentTerms"],
+        message: "请输入付款条款",
+      });
+    }
+    if (value.templateFields.effectiveDate.trim().length < 4) {
+      context.addIssue({
+        code: "custom",
+        path: ["templateFields", "effectiveDate"],
+        message: "请输入合同生效日期",
+      });
+    }
+  }
 });
 
 export function buildContractStageProgressInput(input: {
@@ -76,8 +123,11 @@ export async function saveProjectContract(input: {
   proposalId?: string | null;
   quoteId?: string | null;
   clientContractAssetId?: string | null;
+  signedContractAssetId?: string | null;
+  mode?: ContractMode;
 }) {
-  const parsed = saveContractInputSchema.parse({
+  const rawParsed = saveContractBaseInputSchema.parse({
+    mode: input.mode ?? "vendor_provided",
     title: input.title,
     templateKey: input.templateKey ?? "default_aigc_video_contract",
     templateFields: input.templateFields,
@@ -86,10 +136,41 @@ export async function saveProjectContract(input: {
     proposalId: input.proposalId ?? null,
     quoteId: input.quoteId ?? null,
     clientContractAssetId: input.clientContractAssetId ?? null,
+    signedContractAssetId: input.signedContractAssetId ?? null,
   });
-  const content = parsed.content?.trim() || buildContractContent({
+  if (rawParsed.status === "signed" && !rawParsed.signedContractAssetId) {
+    throw new AppError({
+      status: 422,
+      code: "contract_signed_proof_required",
+      userMessage: "请先上传已签署的合同文件再标记为已签署。",
+    });
+  }
+
+  const parsed = saveContractInputSchema.parse({
+    mode: rawParsed.mode,
+    title: rawParsed.title,
+    templateKey: rawParsed.templateKey,
+    templateFields: rawParsed.templateFields,
+    content: rawParsed.content,
+    status: rawParsed.status,
+    proposalId: rawParsed.proposalId ?? null,
+    quoteId: rawParsed.quoteId ?? null,
+    clientContractAssetId: rawParsed.clientContractAssetId ?? null,
+    signedContractAssetId: rawParsed.signedContractAssetId ?? null,
+  });
+  if (parsed.status === "signed" && !parsed.signedContractAssetId) {
+    throw new AppError({
+      status: 422,
+      code: "contract_signed_proof_required",
+      userMessage: "请先上传已签署的合同文件再标记为已签署。",
+    });
+  }
+
+  const content = buildPersistedContractContent({
+    mode: parsed.mode,
     title: parsed.title,
-    ...parsed.templateFields,
+    fields: parsed.templateFields,
+    content: parsed.content,
   });
 
   const contract = await upsertProjectContract({
@@ -97,6 +178,8 @@ export async function saveProjectContract(input: {
     proposalId: parsed.proposalId ?? null,
     quoteId: parsed.quoteId ?? null,
     clientContractAssetId: parsed.clientContractAssetId ?? null,
+    signedContractAssetId: parsed.signedContractAssetId ?? null,
+    mode: parsed.mode,
     title: parsed.title,
     templateKey: parsed.templateKey,
     templateFields: parsed.templateFields,
@@ -137,6 +220,8 @@ export async function saveProjectContract(input: {
       content: contract.content,
       status: contract.status,
       version: contract.version,
+      mode: contract.mode,
+      signedContractAssetId: contract.signedContractAssetId,
       summary: snapshot.summary,
     },
   });
@@ -167,6 +252,8 @@ export async function saveProjectContract(input: {
       quoteId: contract.quoteId,
       proposalId: contract.proposalId,
       clientContractAssetId: contract.clientContractAssetId,
+      signedContractAssetId: contract.signedContractAssetId,
+      mode: contract.mode,
     },
   });
 
@@ -181,27 +268,24 @@ export async function saveProjectContract(input: {
 }
 
 export function buildContractContent(input: { title: string } & ContractTemplateFields) {
-  return [
-    input.title,
-    "",
-    `甲方：${input.partyAName}`,
-    `乙方：${input.partyBName}`,
-    `项目名称：${input.projectName}`,
-    `关联报价：${input.quoteTitle || "待确认"}`,
-    `报价金额：${formatMoney(input.quoteTotalAmount, input.quoteCurrency)}`,
-    "",
-    "一、交付范围",
-    input.deliveryScope,
-    "",
-    "二、付款条款",
-    input.paymentTerms,
-    "",
-    "三、生效日期",
-    input.effectiveDate,
-    "",
-    "四、补充约定",
-    "双方确认，本合同所涉 AIGC 视频创意、生成素材、修改轮次和交付方式以后续确认版本为准。",
-  ].join("\n");
+  return buildSop4ContractTemplateContent(input);
+}
+
+export function buildPersistedContractContent(input: {
+  mode: ContractMode;
+  title: string;
+  fields: ContractTemplateFields;
+  content?: string | null;
+}) {
+  const trimmedContent = input.content?.trim();
+  if (trimmedContent) return trimmedContent;
+  if (input.mode === "client_provided") {
+    return "本合同以甲方上传的合同文件为准；系统仅保存签署状态、合同元数据与已签署文件凭证。";
+  }
+  return buildContractContent({
+    title: input.title,
+    ...input.fields,
+  });
 }
 
 export function buildContractSnapshotData(input: Pick<ContractView, "id" | "title" | "templateKey" | "templateFields" | "content" | "status" | "version"> | {
@@ -234,8 +318,4 @@ function buildContractSummary(content: string) {
   if (normalized.length <= 24) return normalized;
   const maxLength = Math.min(120, normalized.length - 4);
   return `${normalized.slice(0, maxLength)}...`;
-}
-
-function formatMoney(amount: number, currency: string) {
-  return `${currency} ${amount.toLocaleString("zh-CN", { maximumFractionDigits: 2 })}`;
 }

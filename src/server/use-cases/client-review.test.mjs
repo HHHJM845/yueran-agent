@@ -75,6 +75,268 @@ test("builds default client review task metadata when optional values are omitte
   );
 });
 
+test("client review links require server-side key unlock before exposing payload", async () => {
+  const { readFileSync } = await import("node:fs");
+  const useCaseSource = readFileSync(new URL("./client-review.ts", import.meta.url), "utf8");
+  const routeSource = readFileSync(new URL("../../app/api/client-review/[token]/route.ts", import.meta.url), "utf8");
+  const unlockRouteSource = readFileSync(new URL("../../app/api/client-review/[token]/unlock/route.ts", import.meta.url), "utf8");
+
+  assert.match(routeSource, /loadClientReviewUnlockPrompt/);
+  assert.doesNotMatch(routeSource, /loadClientReviewByToken/);
+  assert.match(unlockRouteSource, /unlockClientReviewByToken/);
+  assert.match(useCaseSource, /getClientReviewSecretByTaskId/);
+  assert.match(useCaseSource, /hashSecretWithSalt/);
+  assert.match(useCaseSource, /timingSafeEqual/);
+  assert.match(useCaseSource, /assertClientReviewVerificationCode\(baseTask\.id/);
+  assert.match(useCaseSource, /loadClientReviewContent\(baseTask\)/);
+});
+
+test("new client review links include the verification code hash fragment", async () => {
+  const { buildReviewUrlWithVerificationCode } = await import("./client-review.ts");
+  const { readFileSync } = await import("node:fs");
+  const useCaseSource = readFileSync(new URL("./client-review.ts", import.meta.url), "utf8");
+
+  assert.equal(
+    buildReviewUrlWithVerificationCode("http://localhost:3000", "review-token", "AB CD"),
+    "http://localhost:3000/client-review/review-token#key=AB%20CD"
+  );
+  assert.match(useCaseSource, /reviewUrl: buildReviewUrlWithVerificationCode\(input\.origin, credentials\.token, credentials\.code\)/);
+  assert.doesNotMatch(useCaseSource, /reviewUrl: `\$\{getLocalReviewOrigin\(input\.origin\)\}\/client-review\/\$\{credentials\.token\}`/);
+});
+
+test("brief confirmation approval auto-generates risk check after client approval", async () => {
+  const { readFileSync } = await import("node:fs");
+  const useCaseSource = readFileSync(new URL("./client-review.ts", import.meta.url), "utf8");
+
+  assert.match(useCaseSource, /generateRiskCheckAfterBriefApproval/);
+  assert.match(useCaseSource, /generateRiskCheckFromProject/);
+  assert.match(useCaseSource, /input\.reviewType === "brief_confirmation" && approved/);
+  assert.match(useCaseSource, /risk_check_auto_generation_failed/);
+  assert.match(useCaseSource, /接单风险评估已自动生成/);
+});
+
+test("script package client review only requires non-empty standardized script", async () => {
+  const { assertScriptPackageReviewReady } = await import("./client-review.ts");
+
+  assert.doesNotThrow(() =>
+    assertScriptPackageReviewReady({
+      standardizedScript: "《示例片》\n第一场：办公室 / 日 / 内\n画面：产品亮相。",
+    })
+  );
+
+  assert.throws(
+    () => assertScriptPackageReviewReady({ standardizedScript: "   " }),
+    (error) =>
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === "script_package_standardized_script_required" &&
+      "userMessage" in error &&
+      /请先生成标准剧本/.test(String(error.userMessage))
+  );
+});
+
+test("production setup client review excludes ignored entities from external payload", async () => {
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync(new URL("./client-review.ts", import.meta.url), "utf8");
+
+  const productionSetupBranch = source.match(/if \(input\.reviewType === "script_package" && input\.reviewScene === "production_setup"\) \{[\s\S]*?\n  \}/)?.[0] ?? "";
+  assert.match(productionSetupBranch, /const activeEntities = entities\.filter\(\(entity\) => entity\.inclusionStatus !== "ignored"\)/);
+  assert.match(productionSetupBranch, /const activeEntityIds = new Set\(activeEntities\.map\(\(entity\) => entity\.id\)\)/);
+  assert.match(productionSetupBranch, /const activeReferenceSets = referenceSets\.filter\(\(set\) => activeEntityIds\.has\(set\.entityId\)\)/);
+  assert.match(productionSetupBranch, /payload: \{ project, productionEntities: activeEntities, productionReferenceSets: activeReferenceSets \}/);
+  assert.match(productionSetupBranch, /items: activeEntities\.map\(\(entity\) =>/);
+  assert.match(productionSetupBranch, /targetScopeId = input\.targetScopeId && activeEntityIds\.has\(input\.targetScopeId\) \? input\.targetScopeId : activeEntities\[0\]\.id/);
+  assert.doesNotMatch(productionSetupBranch, /items: entities\.map/);
+
+  const hydrateSource = source.match(/async function hydrateClientReviewItems[\s\S]*?const round = await getCreativeProposalRound/)?.[0] ?? "";
+  assert.match(hydrateSource, /task\.reviewType === "script_package" && task\.reviewScene === "production_setup"/);
+  assert.match(hydrateSource, /const activeEntityIds = new Set\(entities\.filter\(\(entity\) => entity\.inclusionStatus !== "ignored"\)\.map\(\(entity\) => entity\.id\)\)/);
+  assert.match(hydrateSource, /return items\.filter\(\(item\) => activeEntityIds\.has\(item\.itemId\)\)/);
+});
+
+test("creative Round 1 review items are scene concepts with candidate images", async () => {
+  const { buildCreativeProposalReviewItems } = await import("./client-review.ts");
+
+  const items = buildCreativeProposalReviewItems({
+    round: {
+      id: "round-1",
+      roundNumber: 1,
+      directionIds: ["direction-2", "direction-1"],
+      concepts: [
+        {
+          id: "concept-1",
+          title: "故事卡 1",
+          directionId: "direction-1",
+          sceneIndex: 1,
+          requiredImageCount: 1,
+          description: "用轻盈画面表达产品效率。",
+          sourceText: "故事内容：主角进入办公室，产品让工作流变轻。",
+          imagePrompt: "清透科技感办公室",
+          snapshot: { directionTitle: "清透科技", storyContent: "主角进入办公室，产品让工作流变轻。" },
+          images: [
+            {
+              id: "scene-image-1",
+              ossUrl: null,
+              prompt: "清透科技感办公室",
+              status: "generated",
+              isSelected: true,
+              sortOrder: 1,
+            },
+          ],
+        },
+      ],
+    },
+    directions: [
+      {
+        id: "direction-1",
+        title: "清透科技",
+        coreIdea: "用轻盈画面表达产品效率。",
+        fitReason: "匹配客户想要的清爽感。",
+        riskNotes: "需要避免过度抽象。",
+        sortOrder: 1,
+      },
+      {
+        id: "direction-2",
+        title: "真实生活",
+        coreIdea: "用真实办公场景建立信任。",
+        fitReason: "适合 B 端客户决策链路。",
+        riskNotes: "",
+        sortOrder: 2,
+      },
+    ],
+    generatedImages: [],
+    expansions: [],
+  });
+
+  assert.deepEqual(items.map((item) => item.itemId), ["concept-1"]);
+  assert.equal(items[0].itemLabel, "故事卡 1");
+  assert.equal(items[0].metadata.directionId, "direction-1");
+  assert.equal(items[0].metadata.roundNumber, 1);
+  assert.equal(items[0].metadata.sceneIndex, 1);
+  assert.deepEqual(items[0].metadata.candidateImages, []);
+  assert.match(items[0].metadata.storyContent, /工作流变轻/);
+  assert.match(items[0].metadata.previewText, /轻盈画面/);
+  assert.match(items[0].metadata.previewText, /主角进入办公室/);
+});
+
+test("creative Round 1 review items recover story content from existing outlines for older proposal snapshots", async () => {
+  const { buildCreativeProposalReviewItems } = await import("./client-review.ts");
+
+  const items = buildCreativeProposalReviewItems({
+    round: {
+      id: "round-1",
+      roundNumber: 1,
+      directionIds: ["direction-1"],
+      concepts: [
+        {
+          id: "concept-1",
+          title: "清透科技 - 写实风格",
+          directionId: "direction-1",
+          sceneIndex: 1,
+          requiredImageCount: 1,
+          description: "写实风格：用真实办公场景建立信任。",
+          sourceText: "",
+          imagePrompt: "清透办公室",
+          snapshot: { directionTitle: "清透科技", styleVariant: "realistic", styleLabel: "写实风格" },
+          images: [],
+        },
+      ],
+    },
+    directions: [],
+    generatedImages: [],
+    expansions: [
+      {
+        id: "expansion-1",
+        projectId: "project-1",
+        directionId: "direction-1",
+        title: "办公室开场",
+        oneLiner: "客户经理进入办公室，产品让复杂流程变清晰。",
+        storyArc: { beginning: "推门进入", development: "流程自动归档", turn: "风险提醒出现", ending: "团队快速决策" },
+        visualStyle: "真实办公广告片",
+        visualHighlights: ["办公室", "屏幕信息流"],
+        productionDifficulty: "中",
+        riskNotes: "",
+        sortOrder: 1,
+        sourceJobId: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ],
+  });
+
+  assert.match(items[0].metadata.storyContent, /办公室开场/);
+  assert.match(items[0].metadata.previewText, /复杂流程变清晰/);
+});
+
+test("creative Round 2 review items stay scoped to scene concepts", async () => {
+  const { buildCreativeProposalReviewItems } = await import("./client-review.ts");
+
+  const items = buildCreativeProposalReviewItems({
+    round: {
+      id: "round-2",
+      roundNumber: 2,
+      directionIds: ["direction-1"],
+      concepts: [
+        {
+          id: "concept-1",
+          title: "开场吸引",
+          directionId: "direction-1",
+          sceneIndex: 1,
+          requiredImageCount: 4,
+          description: "开场先建立产品场景。",
+          sourceText: "完整剧本拆出的第一场。",
+          imagePrompt: "清透科技感办公室",
+          snapshot: { directionTitle: "清透科技" },
+          images: [],
+        },
+      ],
+    },
+    directions: [],
+    generatedImages: [],
+    expansions: [],
+  });
+
+  assert.deepEqual(items.map((item) => item.itemId), ["concept-1"]);
+  assert.equal(items[0].metadata.directionId, "direction-1");
+  assert.equal(items[0].metadata.sceneIndex, 1);
+  assert.match(items[0].metadata.previewText, /开场先建立产品场景/);
+});
+
+test("storyboard image batch review shots are ordered by scene and storyboard sequence", async () => {
+  const { sortStoryboardBatchReviewShots } = await import("./client-review.ts");
+
+  const shots = sortStoryboardBatchReviewShots(
+    [
+      { id: "shot-2-1", sceneId: "scene-2", shotNumber: "2-1-1", sortOrder: 0 },
+      { id: "shot-1-2", sceneId: "scene-1", shotNumber: "1-1-2", sortOrder: 2 },
+      { id: "shot-1-1", sceneId: "scene-1", shotNumber: "1-1-1", sortOrder: 1 },
+    ],
+    [
+      { id: "scene-2", sceneNumber: 2 },
+      { id: "scene-1", sceneNumber: 1 },
+    ],
+    ["scene-2", "scene-1"],
+  );
+
+  assert.deepEqual(shots.map((shot) => shot.id), ["shot-1-1", "shot-1-2", "shot-2-1"]);
+});
+
+test("storyboard review items are exposed in shot number order for existing links", async () => {
+  const { sortExternalReviewItemsForDisplay } = await import("./client-review.ts");
+
+  const items = sortExternalReviewItemsForDisplay(
+    { reviewType: "storyboard_image_batch" },
+    [
+      { itemLabel: "1-2-1｜球场", metadata: { shotNumber: "1-2-1" } },
+      { itemLabel: "1-1-2｜进车", metadata: { shotNumber: "1-1-2" } },
+      { itemLabel: "1-1-1｜开门", metadata: { shotNumber: "1-1-1" } },
+    ],
+  );
+
+  assert.deepEqual(items.map((item) => item.metadata.shotNumber), ["1-1-1", "1-1-2", "1-2-1"]);
+});
+
 test("storyboard scene review keeps per-shot scores when the whole scene is rejected", async () => {
   const { normalizeReviewItemsForSubmission } = await import("./client-review.ts");
 
@@ -120,6 +382,66 @@ test("storyboard scene review defaults missing item decisions from the scene dec
   assert.equal(result[0].score, 5);
 });
 
+test("storyboard image batch review requires every shot decision without scores", async () => {
+  const { normalizeReviewItemsForSubmission } = await import("./client-review.ts");
+
+  const result = normalizeReviewItemsForSubmission({
+    reviewType: "storyboard_image_batch",
+    decision: "rejected",
+    existingItems: [{ itemId: "11111111-1111-4111-8111-111111111111" }, { itemId: "22222222-2222-4222-8222-222222222222" }],
+    submittedItems: [
+      {
+        itemId: "11111111-1111-4111-8111-111111111111",
+        decision: "approved",
+        score: 5,
+        feedback: "",
+      },
+      {
+        itemId: "22222222-2222-4222-8222-222222222222",
+        decision: "rejected",
+        score: 2,
+        feedback: "鞋身角度不对，需要重生成。",
+      },
+    ],
+  });
+
+  assert.deepEqual(result.map((item) => item.decision), ["approved", "rejected"]);
+  assert.deepEqual(result.map((item) => item.score), [null, null]);
+  assert.match(result[1].feedback, /重生成/);
+});
+
+test("storyboard image batch review rejects missing shot decisions and rejected feedback", async () => {
+  const { normalizeReviewItemsForSubmission } = await import("./client-review.ts");
+
+  assert.throws(
+    () =>
+      normalizeReviewItemsForSubmission({
+        reviewType: "storyboard_image_batch",
+        decision: "approved",
+        existingItems: [{ itemId: "11111111-1111-4111-8111-111111111111" }],
+        submittedItems: [],
+      }),
+    /请逐张分镜选择 OK 或不 OK/,
+  );
+
+  assert.throws(
+    () =>
+      normalizeReviewItemsForSubmission({
+        reviewType: "storyboard_image_batch",
+        decision: "rejected",
+        existingItems: [{ itemId: "11111111-1111-4111-8111-111111111111" }],
+        submittedItems: [
+          {
+            itemId: "11111111-1111-4111-8111-111111111111",
+            decision: "rejected",
+            feedback: "",
+          },
+        ],
+      }),
+    /请为不 OK 的分镜填写原因和修改意见/,
+  );
+});
+
 test("full cut review defaults missing item decisions without per-shot scores", async () => {
   const { normalizeReviewItemsForSubmission } = await import("./client-review.ts");
 
@@ -158,6 +480,19 @@ test("setting-image (production_setup) approval advances into storyboard image p
   // Rejection keeps the project in SOP5 for revision.
   const rejected = reviewSubmittedStage("script_package", "rejected", "production_setup");
   assert.equal(rejected.currentStage, "script_storyboard_confirmation");
+});
+
+test("contract client approval returns to SOP4 delivery checklist", async () => {
+  const { reviewSubmittedStage, workflowReviewDocumentStatus } = await import("./client-review.ts");
+
+  const approved = reviewSubmittedStage("contract_confirmation", "approved");
+
+  assert.equal(approved.stageKey, "selection_quote_contract");
+  assert.equal(approved.status, "in_progress");
+  assert.equal(approved.currentStage, "selection_quote_contract");
+  assert.equal(approved.projectStatus, "in_progress");
+  assert.match(approved.userMessage, /交付清单/);
+  assert.equal(workflowReviewDocumentStatus("contract_confirmation", true), "signed");
 });
 
 test("timecode annotations map to storyboard shots by accumulated duration", async () => {

@@ -48,6 +48,7 @@ export type ClientReviewTaskView = {
   reviewerName: string | null;
   reviewerContact: string | null;
   feedback: string | null;
+  createdBy: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -90,6 +91,7 @@ type ClientReviewTaskRow = {
   reviewer_name: string | null;
   reviewer_contact: string | null;
   feedback: string | null;
+  created_by: string;
   created_at: string;
   updated_at: string;
 };
@@ -114,7 +116,7 @@ export async function listProjectClientReviewTasks(projectId: string) {
             title, summary, version, status, expires_at, submitted_at, reviewed_at,
             sop_key, review_scene, round_number, batch_number, review_payload_version,
             payload_json, decision_payload_json, reviewer_name, reviewer_contact, feedback,
-            created_at, updated_at
+            created_by, created_at, updated_at
      from client_review_tasks
      where project_id = $1
      order by updated_at desc
@@ -171,7 +173,7 @@ export async function getClientReviewTaskByTokenHash(accessTokenHash: string) {
             title, summary, version, status, expires_at, submitted_at, reviewed_at,
             sop_key, review_scene, round_number, batch_number, review_payload_version,
             payload_json, decision_payload_json, reviewer_name, reviewer_contact, feedback,
-            created_at, updated_at
+            created_by, created_at, updated_at
      from client_review_tasks
      where access_token_hash = $1
      limit 1`,
@@ -231,7 +233,7 @@ export async function createClientReviewTask(input: {
                  title, summary, version, status, expires_at, submitted_at, reviewed_at,
                  sop_key, review_scene, round_number, batch_number, review_payload_version,
                  payload_json, decision_payload_json, reviewer_name, reviewer_contact, feedback,
-                 created_at, updated_at`,
+                 created_by, created_at, updated_at`,
       [
         input.projectId,
         input.moduleKey,
@@ -316,7 +318,7 @@ export async function submitClientReviewTaskRecord(input: {
               title, summary, version, status, expires_at, submitted_at, reviewed_at,
               sop_key, review_scene, round_number, batch_number, review_payload_version,
               payload_json, decision_payload_json, reviewer_name, reviewer_contact, feedback,
-              created_at, updated_at
+              created_by, created_at, updated_at
        from client_review_tasks
        where id = $1
        for update`,
@@ -361,7 +363,7 @@ export async function submitClientReviewTaskRecord(input: {
                  title, summary, version, status, expires_at, submitted_at, reviewed_at,
                  sop_key, review_scene, round_number, batch_number, review_payload_version,
                  payload_json, decision_payload_json, reviewer_name, reviewer_contact, feedback,
-                 created_at, updated_at`,
+                 created_by, created_at, updated_at`,
       [
         input.taskId,
         input.decision,
@@ -439,6 +441,7 @@ function mapTask(row: ClientReviewTaskRow): ClientReviewTaskView {
     reviewerName: row.reviewer_name,
     reviewerContact: row.reviewer_contact,
     feedback: row.feedback,
+    createdBy: row.created_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

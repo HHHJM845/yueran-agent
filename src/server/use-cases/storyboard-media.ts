@@ -1,9 +1,10 @@
+import { Buffer } from "node:buffer";
 import { z } from "zod";
 import { env } from "@/lib/env";
 import { AppError } from "@/lib/errors";
 import { assertArkVideoGenerationReady, generateArkImageToVideo } from "@/server/providers/ark-video";
 import { assertArkImageReady, generateArkSeedreamImage } from "@/server/providers/ark-image";
-import { createGeneratedImageObjectKey, createReadUrl, createReadUrlFromOssUrl, createStoryboardVideoObjectKey, uploadOssObject } from "@/server/providers/oss";
+import { createGeneratedImageObjectKey, createReadUrl, createReadUrlFromOssUrl, createStoryboardVideoObjectKey, downloadOssObject, getOssObjectKeyFromUrl, uploadOssObject } from "@/server/providers/oss";
 import { createArtifact } from "@/server/repositories/artifacts";
 import { appendJobEvent, createJob, getJobInput, updateJobStatus } from "@/server/repositories/jobs";
 import { listProductionEntities } from "@/server/repositories/production-entities";
@@ -19,6 +20,7 @@ import {
   getSelectedStoryboardImage,
   getStoryboardShot,
   listStoryboardImagesByIds,
+  listStoryboardShotsByIds,
   markStoryboardImageFailed,
   markStoryboardImageProcessing,
   markStoryboardImageSucceeded,
@@ -27,6 +29,7 @@ import {
   markStoryboardVideoSucceeded,
   selectStoryboardImage,
   selectStoryboardVideo,
+  listStoryboardVideosByIds,
   updateStoryboardImageSourceJob,
   updateStoryboardVideoSourceJob,
   listStoryboardShots,
@@ -39,6 +42,7 @@ const storyboardImageJobInputSchema = z.object({
   storyboardImageId: z.string().uuid(),
   requestedBy: z.string().uuid(),
   size: z.string().optional(),
+  extraReferenceImageUrls: z.array(z.string().url()).optional(),
 });
 
 const storyboardVideoJobInputSchema = z.object({
@@ -48,6 +52,7 @@ const storyboardVideoJobInputSchema = z.object({
   mode: z.enum(["single_image", "start_end_frame", "multi_reference"]).optional(),
   imageIds: z.array(z.string().uuid()).optional(),
   prompt: z.string().optional(),
+  durationSeconds: z.number().int().positive().optional(),
 });
 
 export type StoryboardVideoInputMode = "single_image" | "start_end_frame" | "multi_reference";
@@ -80,6 +85,17 @@ export function validateStoryboardVideoInput(input: { mode: StoryboardVideoInput
       userMessage: "多图参考生成至少需要 2 张图。",
     });
   }
+}
+
+function isStoryboardImageUsableForVideo(
+  image: { ossUrl: string | null; generationStatus: string; internalReviewStatus: string; isSelected: boolean },
+  shot: { status: string }
+) {
+  return Boolean(
+    image.ossUrl &&
+      image.generationStatus === "succeeded" &&
+      (image.isSelected || shot.status === "client_approved" || image.internalReviewStatus === "confirmed")
+  );
 }
 
 export function resolveStoryboardVideoInputCandidate(input: {
@@ -134,6 +150,7 @@ export async function enqueueStoryboardImageGeneration(input: {
   requestedBy: string;
   ratio?: StoryboardImageRatio;
   count?: number;
+  extraReferenceImageUrls?: string[];
 }) {
   const config = assertArkImageReady();
   const shot = await getStoryboardShot({ projectId: input.projectId, shotId: input.shotId });
@@ -157,10 +174,12 @@ export async function enqueueStoryboardImageGeneration(input: {
   const ratio = input.ratio ?? "16:9";
   const size = resolveStoryboardImageSize(ratio);
   const count = clampStoryboardImageCount(input.count);
-  const prompt = buildStoryboardImagePrompt(shot, references);
+  const extraReferenceImageUrls = (input.extraReferenceImageUrls ?? []).filter(Boolean).slice(0, 6);
+  const prompt = buildStoryboardImagePrompt(shot, references, extraReferenceImageUrls.length);
   const referenceSnapshot = {
     referenceImageIds: references.map((reference) => reference.imageId),
     referenceEntityIds: references.map((reference) => reference.entityId),
+    extraReferenceImageUrls,
     references: references.map((reference) => ({
       entityId: reference.entityId,
       entityType: reference.entityType,
@@ -194,6 +213,7 @@ export async function enqueueStoryboardImageGeneration(input: {
         storyboardImageId: image.id,
         requestedBy: input.requestedBy,
         size,
+        extraReferenceImageUrls,
       },
       createdBy: input.requestedBy,
       maxAttempts: 2,
@@ -268,10 +288,12 @@ export async function runStoryboardImageGenerationJob(jobId: string) {
 
   try {
     const { references } = await resolveShotReferenceImages({ projectId: job.projectId, shotId: shot.id });
-    const referenceImageUrls = references.map((reference) => createReadUrlFromOssUrl(reference.ossUrl, 3600));
+    const lockedReferenceImageUrls = references.map((reference) => createReadUrlFromOssUrl(reference.ossUrl, 3600));
+    const extraReferenceImageUrls = (input.extraReferenceImageUrls ?? []).map((url) => createReadUrlFromOssUrl(url, 3600));
+    const referenceImageUrls = [...lockedReferenceImageUrls, ...extraReferenceImageUrls];
     const image = await generateArkSeedreamImage({
       model: env.ARK_IMAGE_GENERATION_MODEL,
-      prompt: buildStoryboardImagePrompt(shot, references),
+      prompt: buildStoryboardImagePrompt(shot, references, extraReferenceImageUrls.length),
       referenceImageUrls,
       size: input.size,
       timeoutMs: 180_000,
@@ -281,7 +303,13 @@ export async function runStoryboardImageGenerationJob(jobId: string) {
         callId: "ark_storyboard_image_generation",
         provider: env.STORYBOARD_IMAGE_PROVIDER,
         operation: "storyboard_image_generation",
-        metadata: { shotId: shot.id, storyboardImageId: input.storyboardImageId, referenceCount: references.length },
+        metadata: {
+          shotId: shot.id,
+          storyboardImageId: input.storyboardImageId,
+          lockedReferenceCount: references.length,
+          extraReferenceCount: extraReferenceImageUrls.length,
+          referenceCount: referenceImageUrls.length,
+        },
       },
     });
     const objectKey = createGeneratedImageObjectKey(job.projectId, input.storyboardImageId, image.extension);
@@ -412,6 +440,7 @@ export async function enqueueStoryboardVideoGeneration(input: {
   mode: StoryboardVideoInputMode;
   imageIds: string[];
   prompt?: string;
+  durationSeconds?: number;
   requestedBy: string;
 }) {
   const config = assertArkVideoGenerationReady();
@@ -441,11 +470,11 @@ export async function enqueueStoryboardVideoGeneration(input: {
         userMessage: "视频输入图片必须来自同一条分镜。请只选择当前分镜下已确认的图片。",
       });
     }
-    if (!image.ossUrl || image.generationStatus !== "succeeded" || image.internalReviewStatus !== "confirmed") {
+    if (!isStoryboardImageUsableForVideo(image, shot)) {
       throw new AppError({
         status: 422,
         code: "storyboard_video_input_image_unavailable",
-        userMessage: "视频输入图片必须是已生成且已确认的正式图片。请先在模块二确认图片。",
+        userMessage: "视频输入图片必须是已生成且已确认通过的分镜图片。请先在 SOP 6 确认图片。",
       });
     }
   }
@@ -472,6 +501,7 @@ export async function enqueueStoryboardVideoGeneration(input: {
     metadata: {
       providerSupports: "single_image",
       primaryImageId: primaryImage.id,
+      durationSeconds: input.durationSeconds,
       note: "当前视频 provider 仅接收单张 imageUrl，完整输入图片列表已持久化保存。",
     },
     actorId: input.requestedBy,
@@ -488,6 +518,7 @@ export async function enqueueStoryboardVideoGeneration(input: {
       mode: input.mode,
       imageIds: uniqueImageIds,
       prompt: videoPrompt,
+      durationSeconds: input.durationSeconds,
       requestedBy: input.requestedBy,
     },
     createdBy: input.requestedBy,
@@ -506,7 +537,7 @@ export async function enqueueStoryboardVideoGeneration(input: {
       ...uniqueImageIds.map((imageId) => ({ type: "storyboard_image", id: imageId })),
     ],
     outputRefs: [{ type: "storyboard_video", id: video.id }],
-    snapshot: { shotId: shot.id, storyboardVideoId: video.id, videoInputId: videoInput.id, mode: input.mode, imageIds: uniqueImageIds, prompt: videoPrompt },
+    snapshot: { shotId: shot.id, storyboardVideoId: video.id, videoInputId: videoInput.id, mode: input.mode, imageIds: uniqueImageIds, prompt: videoPrompt, durationSeconds: input.durationSeconds },
   });
 
   return {
@@ -589,10 +620,14 @@ export async function runStoryboardVideoGenerationJob(jobId: string) {
 
   try {
     const videoPrompt = input.prompt?.trim() || persistedInput?.prompt || buildStoryboardVideoPrompt(shot);
+    const persistedDurationSeconds =
+      typeof persistedInput?.metadata.durationSeconds === "number" ? persistedInput.metadata.durationSeconds : undefined;
+    const durationSeconds = input.durationSeconds ?? persistedDurationSeconds ?? 5;
     const generatedVideo = await generateArkImageToVideo({
       model: env.ARK_VIDEO_GENERATION_MODEL,
       prompt: videoPrompt,
       imageUrl: selectedImage.ossKey ? createReadUrl(selectedImage.ossKey, 60 * 60) : selectedImage.ossUrl,
+      durationSeconds,
       timeoutMs: 12 * 60_000,
       telemetry: {
         projectId: job.projectId,
@@ -605,6 +640,7 @@ export async function runStoryboardVideoGenerationJob(jobId: string) {
           selectedImageId: selectedImage.id,
           mode,
           imageIds,
+          durationSeconds,
           providerInputImageId: selectedImage.id,
         },
       },
@@ -641,6 +677,7 @@ export async function runStoryboardVideoGenerationJob(jobId: string) {
         imageId: selectedImage.id,
         inputMode: mode,
         inputImageIds: imageIds,
+        durationSeconds,
         providerTaskId: generatedVideo.providerTaskId,
         ossUrl: uploaded.ossUrl,
       },
@@ -668,7 +705,7 @@ export async function runStoryboardVideoGenerationJob(jobId: string) {
         ...imageIds.map((imageId) => ({ type: "storyboard_image", id: imageId })),
       ],
       outputRefs: [{ type: "storyboard_video", id: savedVideo.id }],
-      snapshot: { shotId: shot.id, storyboardVideoId: savedVideo.id, mode, imageIds },
+      snapshot: { shotId: shot.id, storyboardVideoId: savedVideo.id, mode, imageIds, durationSeconds },
     });
     await updateJobStatus(jobId, {
       status: "succeeded",
@@ -718,16 +755,74 @@ export async function confirmStoryboardVideo(input: {
   await recordStageProgress({
     projectId: input.projectId,
     stageKey: "ai_video_canvas",
-    status: "in_progress",
-    currentStage: "ai_video_canvas",
+    status: "completed",
+    currentStage: "a_copy_revision",
     projectStatus: "in_progress",
-    userMessage: "视频候选已内部确认。模块三不会触发甲方审核，后续会服务 A copy 粗剪。",
+    userMessage: "视频素材已确认，项目进入 A-copy 环节。",
     outputRefs: [{ type: "storyboard_video", id: video.id }],
     snapshot: { storyboardVideoId: video.id },
   });
   return {
     video,
-    message: "视频候选已设为该分镜的正式内部资产。",
+    message: "视频素材已确认，项目进入 A-copy 环节。",
+  };
+}
+
+export async function createStoryboardVideoZipDownload(input: {
+  projectId: string;
+  videoIds: string[];
+}) {
+  const videoIds = Array.from(new Set(input.videoIds)).filter(Boolean);
+  if (videoIds.length === 0) {
+    throw new AppError({
+      status: 422,
+      code: "storyboard_video_zip_empty",
+      userMessage: "请先勾选要下载的视频素材。",
+    });
+  }
+  const videos = await listStoryboardVideosByIds({ projectId: input.projectId, videoIds });
+  if (videos.length !== videoIds.length) {
+    throw new AppError({
+      status: 404,
+      code: "storyboard_video_zip_missing",
+      userMessage: "部分视频素材已经不存在。请刷新后重新勾选。",
+    });
+  }
+  const unavailable = videos.find((video) => !video.ossUrl || video.generationStatus !== "succeeded");
+  if (unavailable) {
+    throw new AppError({
+      status: 422,
+      code: "storyboard_video_zip_unavailable",
+      userMessage: "只能打包已生成成功的视频素材。请取消未完成的视频后再下载。",
+    });
+  }
+  const shots = await listStoryboardShotsByIds({
+    projectId: input.projectId,
+    shotIds: Array.from(new Set(videos.map((video) => video.shotId))),
+  });
+  const shotById = new Map(shots.map((shot) => [shot.id, shot]));
+  const files = await Promise.all(
+    videos.map(async (video, index) => {
+      const objectKey = video.ossKey ?? (video.ossUrl ? getOssObjectKeyFromUrl(video.ossUrl) : null);
+      if (!objectKey) {
+        throw new AppError({
+          status: 422,
+          code: "storyboard_video_zip_object_missing",
+          userMessage: "有视频素材缺少 OSS 文件路径。请刷新后重试，或联系管理员检查视频任务结果。",
+        });
+      }
+      const shot = shotById.get(video.shotId);
+      return {
+        name: `${sanitizeZipFileName(shot?.shotNumber || `video-${index + 1}`)}_v${video.version}.mp4`,
+        data: await downloadOssObject(objectKey),
+      };
+    })
+  );
+  return {
+    fileName: `storyboard-videos-${new Date().toISOString().slice(0, 10)}.zip`,
+    contentType: "application/zip",
+    buffer: createStoredZip(files),
+    message: `视频素材 ZIP 已生成，共 ${files.length} 条。`,
   };
 }
 
@@ -739,7 +834,8 @@ function buildStoryboardImagePrompt(
     cameraMovement: string;
     imagePrompt: string;
   },
-  references: ShotReferenceImage[] = []
+  references: ShotReferenceImage[] = [],
+  extraReferenceCount = 0
 ) {
   return [
     "生成一张横版正式分镜图片，用于 AIGC 广告片创作。",
@@ -750,6 +846,9 @@ function buildStoryboardImagePrompt(
     shot.cameraMovement ? `机位与运镜：${shot.cameraMovement}` : "",
     shot.imagePrompt ? `分镜 Prompt：${shot.imagePrompt}` : "",
     buildReferenceInstruction(references),
+    extraReferenceCount > 0
+      ? `另有 ${extraReferenceCount} 张额外参考图，用于补充构图、色彩、质感或局部视觉参考；不得覆盖已锁定的人物/场景设定。`
+      : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -782,4 +881,74 @@ function buildStoryboardVideoPrompt(shot: {
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function sanitizeZipFileName(value: string) {
+  return value.replace(/[^\w.\-\u4e00-\u9fa5]+/g, "_") || "video";
+}
+
+function createStoredZip(files: Array<{ name: string; data: Buffer }>) {
+  const localParts: Buffer[] = [];
+  const centralParts: Buffer[] = [];
+  let offset = 0;
+  for (const file of files) {
+    const name = Buffer.from(file.name, "utf8");
+    const crc = crc32(file.data);
+    const localHeader = Buffer.alloc(30);
+    localHeader.writeUInt32LE(0x04034b50, 0);
+    localHeader.writeUInt16LE(20, 4);
+    localHeader.writeUInt16LE(0x0800, 6);
+    localHeader.writeUInt16LE(0, 8);
+    localHeader.writeUInt16LE(0, 10);
+    localHeader.writeUInt16LE(0, 12);
+    localHeader.writeUInt32LE(crc, 14);
+    localHeader.writeUInt32LE(file.data.length, 18);
+    localHeader.writeUInt32LE(file.data.length, 22);
+    localHeader.writeUInt16LE(name.length, 26);
+    localHeader.writeUInt16LE(0, 28);
+    localParts.push(localHeader, name, file.data);
+
+    const centralHeader = Buffer.alloc(46);
+    centralHeader.writeUInt32LE(0x02014b50, 0);
+    centralHeader.writeUInt16LE(20, 4);
+    centralHeader.writeUInt16LE(20, 6);
+    centralHeader.writeUInt16LE(0x0800, 8);
+    centralHeader.writeUInt16LE(0, 10);
+    centralHeader.writeUInt16LE(0, 12);
+    centralHeader.writeUInt16LE(0, 14);
+    centralHeader.writeUInt32LE(crc, 16);
+    centralHeader.writeUInt32LE(file.data.length, 20);
+    centralHeader.writeUInt32LE(file.data.length, 24);
+    centralHeader.writeUInt16LE(name.length, 28);
+    centralHeader.writeUInt16LE(0, 30);
+    centralHeader.writeUInt16LE(0, 32);
+    centralHeader.writeUInt16LE(0, 34);
+    centralHeader.writeUInt16LE(0, 36);
+    centralHeader.writeUInt32LE(0, 38);
+    centralHeader.writeUInt32LE(offset, 42);
+    centralParts.push(centralHeader, name);
+    offset += localHeader.length + name.length + file.data.length;
+  }
+  const centralDirectory = Buffer.concat(centralParts);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(0, 4);
+  end.writeUInt16LE(0, 6);
+  end.writeUInt16LE(files.length, 8);
+  end.writeUInt16LE(files.length, 10);
+  end.writeUInt32LE(centralDirectory.length, 12);
+  end.writeUInt32LE(offset, 16);
+  end.writeUInt16LE(0, 20);
+  return Buffer.concat([...localParts, centralDirectory, end]);
+}
+
+function crc32(buffer: Buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) {
+    crc ^= byte;
+    for (let index = 0; index < 8; index += 1) {
+      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
 }

@@ -8,6 +8,7 @@ const generateSchema = z.object({
   shotId: z.string().uuid(),
   ratio: z.enum(["16:9", "9:16", "1:1", "4:3", "3:4"]).optional(),
   count: z.union([z.literal(1), z.literal(2), z.literal(4)]).optional(),
+  extraReferenceImageUrls: z.array(z.string().url()).max(6).optional(),
 });
 
 export async function POST(request: Request, context: { params: Promise<{ projectId: string }> }) {
@@ -24,6 +25,7 @@ export async function POST(request: Request, context: { params: Promise<{ projec
       requestedBy: user.id,
       ratio: body.ratio,
       count: body.count,
+      extraReferenceImageUrls: body.extraReferenceImageUrls,
     });
 
     return Response.json({ ok: true, data: result }, { status: 202 });

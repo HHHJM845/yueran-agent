@@ -271,8 +271,22 @@ export async function restoreProductionEntity(input: {
   return { entity, message: "已恢复到设定清单。" };
 }
 
+export function assertStoryboardSequenceConfirmed(storyboardShots: Array<Pick<StoryboardShotView, "id" | "status">>) {
+  if (storyboardShots.length === 0 || storyboardShots.some((shot) => shot.status === "draft")) {
+    throw new AppError({
+      status: 422,
+      code: "storyboard_sequence_not_confirmed",
+      userMessage: "请先确认文字分镜，再确认人物和场景设定。",
+    });
+  }
+}
+
 export async function confirmProductionEntityList(input: { projectId: string; actorId: string }) {
-  const setup = await getProductionSetup(input.projectId);
+  const [setup, storyboardShots] = await Promise.all([
+    getProductionSetup(input.projectId),
+    listStoryboardShots(input.projectId),
+  ]);
+  assertStoryboardSequenceConfirmed(storyboardShots);
   const activeEntities = setup.entities.filter((entity) => entity.inclusionStatus !== "ignored");
   if (activeEntities.length === 0) {
     throw new AppError({

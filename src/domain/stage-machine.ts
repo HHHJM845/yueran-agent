@@ -2,7 +2,7 @@ import { type ProjectStage, projectStages, type StageStatus } from "@/domain/typ
 
 export const stageLabels: Record<ProjectStage, string> = {
   brand_requirement_intake: "品牌方需求洽谈",
-  technical_feasibility: "技术可行性评估",
+  technical_feasibility: "接单风险评估",
   creative_direction_proposal: "创意方向提案",
   selection_quote_contract: "方向初选、报价与签约",
   script_storyboard_confirmation: "脚本创意与文字分镜确认",
@@ -15,11 +15,11 @@ export const stageLabels: Record<ProjectStage, string> = {
 
 export const stageStepLabels: Record<ProjectStage, string> = {
   brand_requirement_intake: "Brief 收集与需求结构化",
-  technical_feasibility: "风险体检卡",
+  technical_feasibility: "接单风险评估",
   creative_direction_proposal: "两轮创意视觉提案",
   selection_quote_contract: "工作量估算、报价合同与交付清单",
   script_storyboard_confirmation: "脚本、人物场景设定与文字分镜确认",
-  storyboard_image_canvas: "分镜图片生产与三批审核",
+  storyboard_image_canvas: "分镜图片生产与全量审核",
   ai_video_canvas: "AI 视频生成与导演下发",
   a_copy_revision: "A-copy 生成与多轮修改",
   b_copy_final_confirmation: "B-copy 定稿确认与交付清单核对",
@@ -30,7 +30,7 @@ export const workflowModules = [
   {
     key: "brief_and_risk_decision",
     label: "功能模块一：Brief 与风险决策",
-    detail: "覆盖资料进入、Brief 结构化、缺失信息澄清、风险体检卡和人工接单决策。",
+    detail: "覆盖资料进入、Brief 结构化、缺失信息澄清、接单风险评估和人工接单决策。",
     stages: ["brand_requirement_intake", "technical_feasibility"] as ProjectStage[],
   },
   {
@@ -47,8 +47,8 @@ export const workflowModules = [
   },
   {
     key: "storyboard_image_batches",
-    label: "功能模块四：分镜图片生产与三批审核",
-    detail: "逐分镜生成候选图片池，按三批提交甲方逐镜审核，并保存批次和版本快照。",
+    label: "功能模块四：分镜图片生产与全量审核",
+    detail: "逐分镜生成候选图片池，不限轮次全量提交甲方逐镜审核，并保存批次和版本快照。",
     stages: ["storyboard_image_canvas"] as ProjectStage[],
   },
   {

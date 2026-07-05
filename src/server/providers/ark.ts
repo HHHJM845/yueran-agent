@@ -31,6 +31,22 @@ type AiTelemetryContext = {
   metadata?: Record<string, unknown>;
 };
 
+type ArkAudioTranscriptionResponse = {
+  text?: string;
+  transcript?: string;
+  transcription?: string;
+  data?: {
+    text?: string;
+    transcript?: string;
+  };
+  error?: {
+    code?: string;
+    message?: string;
+  };
+  id?: string;
+  usage?: Record<string, unknown>;
+};
+
 export async function callArkJson<T>(input: {
   model: string;
   messages: ChatMessage[];
@@ -117,6 +133,136 @@ export async function callArkJson<T>(input: {
       inputChars: countMessagesChars(input.messages),
     });
     throw mapArkError(arkError.code);
+  }
+}
+
+export async function transcribeArkAudio(input: {
+  model: string;
+  audio: Buffer;
+  mimeType: string;
+  timeoutMs?: number;
+  telemetry?: AiTelemetryContext;
+}) {
+  if (!env.ARK_API_KEY) {
+    throw new AppError({
+      status: 503,
+      code: "ark_not_configured",
+      userMessage: "火山方舟 API Key 还没有配置。请配置后再使用语音输入。",
+    });
+  }
+
+  if (input.audio.length === 0) {
+    throw new AppError({
+      status: 422,
+      code: "speech_audio_empty",
+      userMessage: "没有收到可转写的语音内容。请重新录音后再试。",
+    });
+  }
+
+  const startedAt = Date.now();
+  try {
+    const response = await fetch(`${env.ARK_BASE_URL.replace(/\/$/, "")}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.ARK_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: input.model,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "请将这段中文语音准确转写为普通文本，只输出转写文字，不要解释，不要加标点说明。",
+              },
+              {
+                type: "input_audio",
+                input_audio: {
+                  data: input.audio.toString("base64"),
+                  format: normalizeAudioFormat(input.mimeType),
+                },
+              },
+            ],
+          },
+        ],
+        temperature: 0,
+      }),
+      signal: AbortSignal.timeout(input.timeoutMs ?? 90_000),
+    });
+    const payload = (await response.json().catch(() => ({}))) as ArkAudioTranscriptionResponse & {
+      choices?: Array<{ message?: { content?: unknown } }>;
+    };
+
+    if (!response.ok || payload.error) {
+      const normalized = normalizeArkSdkError({
+        status: response.status,
+        error: payload.error,
+        message: payload.error?.message ?? "Ark audio transcription request failed",
+      });
+      await recordArkTelemetry({
+        telemetry: input.telemetry,
+        model: input.model,
+        status: "failed",
+        startedAt,
+        response: payload,
+        errorCode: normalized.code?.toString(),
+        errorMessage: normalized.message,
+        metadata: { audioBytes: input.audio.length, mimeType: input.mimeType },
+      });
+      throw mapArkError(normalized.code?.toString());
+    }
+
+    const transcript = extractAudioTranscript(payload);
+    if (!transcript) {
+      throw new AppError({
+        status: 502,
+        code: "ark_speech_empty_response",
+        userMessage: "豆包语音转写没有返回可用文字。请靠近麦克风重新录一遍，或改用文字输入。",
+      });
+    }
+
+    await recordArkTelemetry({
+      telemetry: input.telemetry,
+      model: input.model,
+      status: "succeeded",
+      startedAt,
+      response: payload,
+      inputChars: null,
+      outputChars: transcript.length,
+      metadata: { audioBytes: input.audio.length, mimeType: input.mimeType },
+    });
+    return transcript;
+  } catch (error) {
+    if (error instanceof AppError) {
+      await recordArkTelemetry({
+        telemetry: input.telemetry,
+        model: input.model,
+        status: "failed",
+        startedAt,
+        error,
+        metadata: { audioBytes: input.audio.length, mimeType: input.mimeType },
+      });
+      throw error;
+    }
+
+    const arkError = normalizeArkSdkError(error);
+    console.error("Ark audio transcription request failed", {
+      status: arkError.status,
+      code: arkError.code,
+      message: arkError.message?.slice(0, 240),
+    });
+    await recordArkTelemetry({
+      telemetry: input.telemetry,
+      model: input.model,
+      status: "failed",
+      startedAt,
+      errorCode: arkError.code?.toString(),
+      errorMessage: arkError.message,
+      metadata: { audioBytes: input.audio.length, mimeType: input.mimeType },
+    });
+    throw mapArkError(arkError.code?.toString());
   }
 }
 
@@ -537,20 +683,116 @@ function extractResponseOutputText(response: unknown) {
   return "";
 }
 
-function parseJsonContent<T>(content: string) {
+export function parseJsonContent<T>(content: string) {
   const trimmed = content.trim();
-  const jsonBlock = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)?.[1] ?? trimmed;
+  const jsonBlock = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)?.[1]?.trim();
+  const candidates = [jsonBlock, trimmed, extractEmbeddedJson(trimmed)].filter(
+    (candidate): candidate is string => Boolean(candidate)
+  );
 
-  try {
-    return JSON.parse(jsonBlock) as T;
-  } catch {
-    console.error("Ark returned non-json content", { contentLength: trimmed.length });
-    throw new AppError({
-      status: 502,
-      code: "ark_invalid_json",
-      userMessage: "豆包模型返回的结构化内容格式不正确。请稍后重试，或减少输入中的无关内容。",
-    });
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate) as T;
+    } catch {
+      // Try the next candidate before surfacing a user-facing provider error.
+    }
   }
+
+  console.error("Ark returned non-json content", { contentLength: trimmed.length });
+  throw new AppError({
+    status: 502,
+    code: "ark_invalid_json",
+    userMessage: "豆包模型返回的结构化内容格式不正确。请稍后重试，或减少输入中的无关内容。",
+  });
+}
+
+function extractEmbeddedJson(content: string) {
+  const starts = [...content.matchAll(/[\[{]/g)].map((match) => match.index ?? -1).filter((index) => index >= 0);
+
+  for (const start of starts) {
+    const candidate = readBalancedJsonValue(content, start);
+    if (!candidate) continue;
+    try {
+      JSON.parse(candidate);
+      return candidate;
+    } catch {
+      // Keep scanning in case an earlier bracket belonged to normal prose.
+    }
+  }
+
+  return null;
+}
+
+function readBalancedJsonValue(content: string, start: number) {
+  const opening = content[start];
+  if (opening !== "{" && opening !== "[") return null;
+
+  const stack: string[] = [opening === "{" ? "}" : "]"];
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start + 1; index < content.length; index += 1) {
+    const char = content[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{" || char === "[") {
+      stack.push(char === "{" ? "}" : "]");
+      continue;
+    }
+
+    if (char === "}" || char === "]") {
+      if (stack.pop() !== char) return null;
+      if (stack.length === 0) return content.slice(start, index + 1);
+    }
+  }
+
+  return null;
+}
+
+function normalizeAudioFormat(mimeType: string) {
+  const normalized = mimeType.toLowerCase();
+  if (normalized.includes("wav")) return "wav";
+  if (normalized.includes("mpeg") || normalized.includes("mp3")) return "mp3";
+  if (normalized.includes("ogg")) return "ogg";
+  if (normalized.includes("mp4") || normalized.includes("m4a")) return "mp4";
+  return "webm";
+}
+
+function extractAudioTranscript(payload: ArkAudioTranscriptionResponse & { choices?: Array<{ message?: { content?: unknown } }> }) {
+  const direct = payload.text ?? payload.transcript ?? payload.transcription ?? payload.data?.text ?? payload.data?.transcript;
+  if (typeof direct === "string" && direct.trim()) return direct.trim();
+  const content = payload.choices?.[0]?.message?.content;
+  if (typeof content === "string" && content.trim()) return content.trim();
+  if (Array.isArray(content)) {
+    const joined = content
+      .map((item) => {
+        if (typeof item === "string") return item;
+        if (item && typeof item === "object" && "text" in item) {
+          const text = (item as { text?: unknown }).text;
+          return typeof text === "string" ? text : "";
+        }
+        return "";
+      })
+      .join("")
+      .trim();
+    if (joined) return joined;
+  }
+  return "";
 }
 
 async function recordArkTelemetry(input: {

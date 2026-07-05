@@ -42,6 +42,8 @@ export type StoryboardShotStatus =
 export type StoryboardImageStatus = "queued" | "processing" | "succeeded" | "failed" | "retrying" | "cancelled";
 export type InternalReviewStatus = "pending" | "confirmed" | "discarded" | "needs_revision";
 export type StoryboardVideoInputMode = "single_image" | "start_end_frame" | "multi_reference";
+export type ScriptRevisionRole = "user" | "assistant";
+export type ScriptRevisionInputMode = "text" | "voice";
 
 export type ScriptDirectionPackageView = {
   id: string;
@@ -50,11 +52,24 @@ export type ScriptDirectionPackageView = {
   title: string;
   concept: string;
   fullScript: string;
+  plainScript: string;
+  standardizedScript: string;
   status: ScriptPackageStatus;
   version: number;
   selectedAt: string | null;
   lockedAt: string | null;
   updatedAt: string;
+};
+
+export type ScriptRevisionMessageView = {
+  id: string;
+  projectId: string;
+  packageId: string;
+  role: ScriptRevisionRole;
+  inputMode: ScriptRevisionInputMode;
+  content: string;
+  createdBy: string | null;
+  createdAt: string;
 };
 
 export type ScriptReferenceAssetView = {
@@ -183,11 +198,24 @@ type ScriptPackageRow = {
   title: string;
   concept: string;
   full_script: string;
+  plain_script: string;
+  standardized_script: string;
   status: ScriptPackageStatus;
   version: number;
   selected_at: string | null;
   locked_at: string | null;
   updated_at: string;
+};
+
+type ScriptRevisionMessageRow = {
+  id: string;
+  project_id: string;
+  package_id: string;
+  role: ScriptRevisionRole;
+  input_mode: ScriptRevisionInputMode;
+  content: string;
+  created_by: string | null;
+  created_at: string;
 };
 
 type ReferenceRow = {
@@ -309,10 +337,15 @@ type StoryboardSceneVideoBundleRow = {
   file_name: string | null;
 };
 
+const SCRIPT_PACKAGE_COLUMNS = `id, project_id, direction_id, title, concept, full_script,
+            plain_script, standardized_script, status, version,
+            selected_at, locked_at, updated_at`;
+
 export async function listStoryProduction(projectId: string) {
-  const [packages, references, scenes, shots, storyboardImages, storyboardVideos] = await Promise.all([
+  const [packages, references, revisionMessages, scenes, shots, storyboardImages, storyboardVideos] = await Promise.all([
     listScriptDirectionPackages(projectId),
     listScriptReferenceAssets(projectId),
+    listScriptRevisionMessages(projectId),
     listStoryboardScenes(projectId),
     listStoryboardShots(projectId),
     listStoryboardImages(projectId),
@@ -322,6 +355,7 @@ export async function listStoryProduction(projectId: string) {
   return {
     scriptPackages: packages,
     scriptReferences: references,
+    scriptRevisionMessages: revisionMessages,
     storyboardScenes: scenes,
     storyboardShots: shots,
     storyboardImages,
@@ -331,8 +365,7 @@ export async function listStoryProduction(projectId: string) {
 
 export async function listScriptDirectionPackages(projectId: string) {
   const result = await query<ScriptPackageRow>(
-    `select id, project_id, direction_id, title, concept, full_script, status, version,
-            selected_at, locked_at, updated_at
+    `select ${SCRIPT_PACKAGE_COLUMNS}
      from script_direction_packages
      where project_id = $1
        and status <> 'archived'
@@ -345,8 +378,7 @@ export async function listScriptDirectionPackages(projectId: string) {
 
 export async function getScriptDirectionPackage(input: { projectId: string; packageId: string }) {
   const result = await query<ScriptPackageRow>(
-    `select id, project_id, direction_id, title, concept, full_script, status, version,
-            selected_at, locked_at, updated_at
+    `select ${SCRIPT_PACKAGE_COLUMNS}
      from script_direction_packages
      where project_id = $1
        and id = $2
@@ -372,8 +404,7 @@ export async function updateScriptDirectionPackageStatus(input: {
      where project_id = $1
        and id = $2
        and status <> 'archived'
-     returning id, project_id, direction_id, title, concept, full_script, status, version,
-               selected_at, locked_at, updated_at`,
+     returning ${SCRIPT_PACKAGE_COLUMNS}`,
     [input.projectId, input.packageId, input.status, input.actorId ?? null]
   );
   return result.rows[0] ? mapPackage(result.rows[0]) : null;
@@ -400,8 +431,7 @@ export async function updateScriptDirectionPackageScript(input: {
      where project_id = $1
        and id = $2
        and status <> 'archived'
-     returning id, project_id, direction_id, title, concept, full_script, status, version,
-               selected_at, locked_at, updated_at`,
+     returning ${SCRIPT_PACKAGE_COLUMNS}`,
     [
       input.projectId,
       input.packageId,
@@ -413,6 +443,188 @@ export async function updateScriptDirectionPackageScript(input: {
     ]
   );
   return result.rows[0] ? mapPackage(result.rows[0]) : null;
+}
+
+export async function createScriptPackageWithPlainScript(input: {
+  projectId: string;
+  directionId?: string | null;
+  title: string;
+  concept: string;
+  plainScript: string;
+  actorId: string;
+}) {
+  const result = await query<ScriptPackageRow>(
+    `insert into script_direction_packages (
+       project_id, direction_id, title, concept, plain_script, full_script, status, created_by, updated_by
+     )
+     values ($1, $2, $3, $4, $5, $5, 'draft', $6, $6)
+     returning ${SCRIPT_PACKAGE_COLUMNS}`,
+    [input.projectId, input.directionId ?? null, input.title, input.concept, input.plainScript, input.actorId]
+  );
+  return mapPackage(result.rows[0]);
+}
+
+export async function updateScriptPackagePlainAndFullScript(input: {
+  projectId: string;
+  packageId: string;
+  plainScript: string;
+  title?: string | null;
+  concept?: string | null;
+  status?: ScriptPackageStatus;
+  actorId?: string | null;
+}) {
+  const result = await query<ScriptPackageRow>(
+    `update script_direction_packages
+     set title = coalesce(nullif($4, ''), title),
+         concept = coalesce(nullif($5, ''), concept),
+         plain_script = $3,
+         full_script = $3,
+         status = coalesce($6, status),
+         version = version + 1,
+         updated_by = coalesce($7, updated_by),
+         updated_at = now()
+     where project_id = $1
+       and id = $2
+       and status <> 'archived'
+     returning ${SCRIPT_PACKAGE_COLUMNS}`,
+    [
+      input.projectId,
+      input.packageId,
+      input.plainScript,
+      input.title ?? null,
+      input.concept ?? null,
+      input.status ?? null,
+      input.actorId ?? null,
+    ]
+  );
+  return result.rows[0] ? mapPackage(result.rows[0]) : null;
+}
+
+export async function updateScriptPackageStandardizedAndFullScript(input: {
+  projectId: string;
+  packageId: string;
+  standardizedScript: string;
+  title?: string | null;
+  concept?: string | null;
+  status?: ScriptPackageStatus;
+  actorId?: string | null;
+}) {
+  const result = await query<ScriptPackageRow>(
+    `update script_direction_packages
+     set title = coalesce(nullif($4, ''), title),
+         concept = coalesce(nullif($5, ''), concept),
+         standardized_script = $3,
+         full_script = $3,
+         status = coalesce($6, status),
+         version = version + 1,
+         updated_by = coalesce($7, updated_by),
+         updated_at = now()
+     where project_id = $1
+       and id = $2
+       and status <> 'archived'
+     returning ${SCRIPT_PACKAGE_COLUMNS}`,
+    [
+      input.projectId,
+      input.packageId,
+      input.standardizedScript,
+      input.title ?? null,
+      input.concept ?? null,
+      input.status ?? null,
+      input.actorId ?? null,
+    ]
+  );
+  return result.rows[0] ? mapPackage(result.rows[0]) : null;
+}
+
+export async function updateScriptPackagePlainScript(input: {
+  projectId: string;
+  packageId: string;
+  plainScript: string;
+  actorId?: string | null;
+}) {
+  const result = await query<ScriptPackageRow>(
+    `update script_direction_packages
+     set plain_script = $3,
+         version = version + 1,
+         updated_by = coalesce($4, updated_by),
+         updated_at = now()
+     where project_id = $1
+       and id = $2
+       and status <> 'archived'
+     returning ${SCRIPT_PACKAGE_COLUMNS}`,
+    [input.projectId, input.packageId, input.plainScript, input.actorId ?? null]
+  );
+  return result.rows[0] ? mapPackage(result.rows[0]) : null;
+}
+
+export async function updateScriptPackageStandardizedScript(input: {
+  projectId: string;
+  packageId: string;
+  standardizedScript: string;
+  actorId?: string | null;
+}) {
+  const result = await query<ScriptPackageRow>(
+    `update script_direction_packages
+     set standardized_script = $3,
+         version = version + 1,
+         updated_by = coalesce($4, updated_by),
+         updated_at = now()
+     where project_id = $1
+       and id = $2
+       and status <> 'archived'
+     returning ${SCRIPT_PACKAGE_COLUMNS}`,
+    [input.projectId, input.packageId, input.standardizedScript, input.actorId ?? null]
+  );
+  return result.rows[0] ? mapPackage(result.rows[0]) : null;
+}
+
+export async function appendScriptRevisionMessage(input: {
+  projectId: string;
+  packageId: string;
+  role: ScriptRevisionRole;
+  inputMode?: ScriptRevisionInputMode;
+  content: string;
+  actorId?: string | null;
+}) {
+  const result = await query<ScriptRevisionMessageRow>(
+    `insert into script_revision_messages (
+       project_id, package_id, role, input_mode, content, created_by
+     )
+     select package.project_id, package.id, $3, $4, $5, $6
+     from script_direction_packages package
+     where package.project_id = $1
+       and package.id = $2
+       and package.status <> 'archived'
+     returning id, project_id, package_id, role, input_mode, content, created_by, created_at`,
+    [
+      input.projectId,
+      input.packageId,
+      input.role,
+      input.inputMode ?? "text",
+      input.content,
+      input.actorId ?? null,
+    ]
+  );
+  if (!result.rows[0]) {
+    throw new AppError({
+      status: 404,
+      code: "script_revision_package_not_found",
+      userMessage: "没有找到可编辑的脚本包。请刷新项目后重试，或确认这个脚本包还未归档。",
+    });
+  }
+  return mapScriptRevisionMessage(result.rows[0]);
+}
+
+export async function listScriptRevisionMessages(projectId: string) {
+  const result = await query<ScriptRevisionMessageRow>(
+    `select id, project_id, package_id, role, input_mode, content, created_by, created_at
+     from script_revision_messages
+     where project_id = $1
+     order by created_at asc
+     limit 300`,
+    [projectId]
+  );
+  return result.rows.map(mapScriptRevisionMessage);
 }
 
 export async function listScriptReferenceAssets(projectId: string) {
@@ -518,6 +730,7 @@ export async function updateStoryboardShotOrder(input: {
     `update storyboard_shots
      set scene_id = $3,
          sort_order = $4,
+         status = 'draft',
          updated_by = coalesce($5, updated_by),
          updated_at = now()
      where project_id = $1 and id = $2
@@ -564,6 +777,7 @@ export async function updateStoryboardShotContent(input: {
          image_prompt = $14,
          video_prompt = $15,
          sort_order = $16,
+         status = 'draft',
          version = version + 1,
          updated_by = coalesce($17, updated_by),
          updated_at = now()
@@ -592,6 +806,26 @@ export async function updateStoryboardShotContent(input: {
     ]
   );
   return result.rows[0] ? mapShot(result.rows[0]) : null;
+}
+
+export async function updateStoryboardShotsStatus(input: {
+  projectId: string;
+  status: StoryboardShotStatus;
+  actorId?: string | null;
+}) {
+  const result = await query<ShotRow>(
+    `update storyboard_shots
+     set status = $2,
+         updated_by = coalesce($3, updated_by),
+         updated_at = now()
+     where project_id = $1
+       and status not in ('client_approved', 'image_selected', 'video_selected', 'locked')
+     returning id, project_id, scene_id, package_id, shot_number, visual_description, shot_size,
+               action_expression, camera_movement, duration_seconds, sound_transition, notes,
+               character_refs, scene_refs, image_prompt, video_prompt, status, version, sort_order, updated_at`,
+    [input.projectId, input.status, input.actorId ?? null]
+  );
+  return result.rows.map(mapShot);
 }
 
 export async function deleteStoryboardShotIfUnused(input: {
@@ -677,6 +911,37 @@ export async function listStoryboardVideos(projectId: string) {
   return result.rows.map(mapStoryboardVideo);
 }
 
+export async function listStoryboardVideosByIds(input: { projectId: string; videoIds: string[] }) {
+  if (input.videoIds.length === 0) return [];
+  const result = await query<StoryboardVideoRow>(
+    `select id, project_id, scene_id, shot_id, image_id, prompt, provider, model_name, generation_status,
+            oss_key, oss_url, asset_id, is_selected, internal_review_status, failure_reason,
+            retry_count, source_job_id, version, reviewed_by, reviewed_at, updated_at
+     from storyboard_videos
+     where project_id = $1
+       and id = any($2::uuid[])
+     order by scene_id, shot_id, updated_at desc
+     limit 100`,
+    [input.projectId, input.videoIds]
+  );
+  return result.rows.map(mapStoryboardVideo);
+}
+
+export async function listStoryboardShotsByIds(input: { projectId: string; shotIds: string[] }) {
+  if (input.shotIds.length === 0) return [];
+  const result = await query<ShotRow>(
+    `select id, project_id, scene_id, package_id, shot_number, visual_description, shot_size,
+            action_expression, camera_movement, duration_seconds, sound_transition, notes,
+            character_refs, scene_refs, image_prompt, video_prompt, status, version, sort_order, updated_at
+     from storyboard_shots
+     where project_id = $1
+       and id = any($2::uuid[])
+     order by sort_order asc, shot_number asc`,
+    [input.projectId, input.shotIds]
+  );
+  return result.rows.map(mapShot);
+}
+
 export async function createOrUpdateScriptPackage(input: {
   projectId: string;
   directionId?: string | null;
@@ -691,8 +956,7 @@ export async function createOrUpdateScriptPackage(input: {
      )
      values ($1, $2, $3, $4, $5, 'draft', $6, $6)
      on conflict do nothing
-     returning id, project_id, direction_id, title, concept, full_script, status, version,
-               selected_at, locked_at, updated_at`,
+     returning ${SCRIPT_PACKAGE_COLUMNS}`,
     [input.projectId, input.directionId ?? null, input.title, input.concept, input.fullScript, input.actorId]
   );
 
@@ -703,8 +967,7 @@ export async function createOrUpdateScriptPackage(input: {
        project_id, direction_id, title, concept, full_script, status, created_by, updated_by
      )
      values ($1, $2, $3, $4, $5, 'draft', $6, $6)
-     returning id, project_id, direction_id, title, concept, full_script, status, version,
-               selected_at, locked_at, updated_at`,
+     returning ${SCRIPT_PACKAGE_COLUMNS}`,
     [input.projectId, input.directionId ?? null, input.title, input.concept, input.fullScript, input.actorId]
   );
   return mapPackage(updated.rows[0]);
@@ -1221,11 +1484,26 @@ function mapPackage(row: ScriptPackageRow): ScriptDirectionPackageView {
     title: row.title,
     concept: row.concept,
     fullScript: row.full_script,
+    plainScript: row.plain_script,
+    standardizedScript: row.standardized_script,
     status: row.status,
     version: row.version,
     selectedAt: row.selected_at,
     lockedAt: row.locked_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function mapScriptRevisionMessage(row: ScriptRevisionMessageRow): ScriptRevisionMessageView {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    packageId: row.package_id,
+    role: row.role,
+    inputMode: row.input_mode,
+    content: row.content,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
   };
 }
 

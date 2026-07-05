@@ -1,5 +1,7 @@
 import { query } from "@/lib/db";
 
+export type ContractMode = "vendor_provided" | "client_provided";
+
 export type ContractTemplateFields = {
   partyAName: string;
   partyBName: string;
@@ -18,6 +20,8 @@ export type ContractView = {
   proposalId: string | null;
   quoteId: string | null;
   clientContractAssetId: string | null;
+  signedContractAssetId: string | null;
+  mode: ContractMode;
   title: string;
   templateKey: string;
   templateFields: ContractTemplateFields;
@@ -34,6 +38,8 @@ type ContractRow = {
   proposal_id: string | null;
   quote_id: string | null;
   client_contract_asset_id: string | null;
+  signed_contract_asset_id: string | null;
+  mode: ContractMode;
   title: string;
   template_key: string;
   template_fields_json: unknown;
@@ -46,7 +52,8 @@ type ContractRow = {
 
 export async function getProjectContract(projectId: string) {
   const result = await query<ContractRow>(
-    `select id, project_id, proposal_id, quote_id, client_contract_asset_id, title,
+    `select id, project_id, proposal_id, quote_id, client_contract_asset_id,
+            signed_contract_asset_id, mode, title,
             template_key, template_fields_json, content, status, version,
             latest_snapshot_id, updated_at
      from contracts
@@ -63,6 +70,8 @@ export async function upsertProjectContract(input: {
   proposalId?: string | null;
   quoteId?: string | null;
   clientContractAssetId?: string | null;
+  signedContractAssetId?: string | null;
+  mode?: ContractMode;
   title: string;
   templateKey: string;
   templateFields: ContractTemplateFields;
@@ -72,20 +81,23 @@ export async function upsertProjectContract(input: {
 }) {
   const result = await query<ContractRow>(
     `insert into contracts (
-       project_id, proposal_id, quote_id, client_contract_asset_id, title,
+       project_id, proposal_id, quote_id, client_contract_asset_id,
+       signed_contract_asset_id, mode, title,
        template_key, template_fields_json, content, status, version,
        created_by, updated_by
      )
      values (
-       $1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, 1,
-       case when exists (select 1 from users where id = $10::uuid) then $10::uuid else null end,
-       case when exists (select 1 from users where id = $10::uuid) then $10::uuid else null end
+       $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, 1,
+       case when exists (select 1 from users where id = $12::uuid) then $12::uuid else null end,
+       case when exists (select 1 from users where id = $12::uuid) then $12::uuid else null end
      )
      on conflict (project_id)
      do update set
        proposal_id = excluded.proposal_id,
        quote_id = excluded.quote_id,
        client_contract_asset_id = excluded.client_contract_asset_id,
+       signed_contract_asset_id = excluded.signed_contract_asset_id,
+       mode = excluded.mode,
        title = excluded.title,
        template_key = excluded.template_key,
        template_fields_json = excluded.template_fields_json,
@@ -95,6 +107,7 @@ export async function upsertProjectContract(input: {
        updated_by = excluded.updated_by,
        updated_at = now()
      returning id, project_id, proposal_id, quote_id, client_contract_asset_id,
+               signed_contract_asset_id, mode,
                title, template_key, template_fields_json, content, status, version,
                latest_snapshot_id, updated_at`,
     [
@@ -102,6 +115,8 @@ export async function upsertProjectContract(input: {
       input.proposalId ?? null,
       input.quoteId ?? null,
       input.clientContractAssetId ?? null,
+      input.signedContractAssetId ?? null,
+      input.mode ?? "vendor_provided",
       input.title,
       input.templateKey,
       JSON.stringify(input.templateFields),
@@ -124,18 +139,26 @@ export async function updateContractLatestSnapshot(input: { contractId: string; 
   );
 }
 
-export async function updateContractStatus(input: { projectId: string; contractId: string; status: string; actorId?: string | null }) {
+export async function updateContractStatus(input: {
+  projectId: string;
+  contractId: string;
+  status: string;
+  signedContractAssetId?: string | null;
+  actorId?: string | null;
+}) {
   const result = await query<ContractRow>(
     `update contracts
      set status = $3,
-         updated_by = case when exists (select 1 from users where id = $4::uuid) then $4::uuid else updated_by end,
+         signed_contract_asset_id = coalesce($4, signed_contract_asset_id),
+         updated_by = case when exists (select 1 from users where id = $5::uuid) then $5::uuid else updated_by end,
          updated_at = now()
      where project_id = $1
        and id = $2
      returning id, project_id, proposal_id, quote_id, client_contract_asset_id,
+               signed_contract_asset_id, mode,
                title, template_key, template_fields_json, content, status, version,
                latest_snapshot_id, updated_at`,
-    [input.projectId, input.contractId, input.status, input.actorId ?? null]
+    [input.projectId, input.contractId, input.status, input.signedContractAssetId ?? null, input.actorId ?? null]
   );
 
   return result.rows[0] ? mapContract(result.rows[0]) : null;
@@ -148,6 +171,8 @@ function mapContract(row: ContractRow): ContractView {
     proposalId: row.proposal_id,
     quoteId: row.quote_id,
     clientContractAssetId: row.client_contract_asset_id,
+    signedContractAssetId: row.signed_contract_asset_id,
+    mode: row.mode ?? "vendor_provided",
     title: row.title,
     templateKey: row.template_key,
     templateFields: normalizeTemplateFields(row.template_fields_json),

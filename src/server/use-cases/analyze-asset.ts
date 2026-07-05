@@ -146,13 +146,13 @@ export async function runAssetUnderstandingJob(jobId: string, options: { workerM
     await updateAssetParseStatus({ assetId: asset.id, parseStatus: "succeeded", failureReason: null });
     await recordStageProgress({
       projectId: job.projectId,
-      stageKey: "technical_feasibility",
+      stageKey: "brand_requirement_intake",
       status: "in_progress",
-      currentStage: "technical_feasibility",
+      currentStage: "brand_requirement_intake",
       projectStatus: "in_progress",
       jobId,
-      title: "技术可行性评估资料已更新",
-      userMessage: rules.length > 0 ? "资料解析和标签评分已保存，技术可行性评估正在推进。" : "资料解析已保存，配置评分规则后可继续完成技术评估。",
+      title: "Brief 资料解析已更新",
+      userMessage: rules.length > 0 ? "资料解析和标签评分已保存，项目仍停留在 Brief 环节。" : "资料解析已保存，项目仍停留在 Brief 环节。",
       inputRefs: [{ type: "asset", id: asset.id }],
       outputRefs: [
         { type: "asset_analysis", id: savedAnalysis.id },
@@ -192,12 +192,12 @@ export async function runAssetUnderstandingJob(jobId: string, options: { workerM
     const userMessage = error instanceof AppError ? error.userMessage : "资料解析失败。请稍后重试，或检查资料格式是否受支持。";
     await recordStageProgress({
       projectId: job.projectId,
-      stageKey: "technical_feasibility",
-      status: "blocked",
-      currentStage: "technical_feasibility",
-      projectStatus: "blocked",
+      stageKey: "brand_requirement_intake",
+      status: "needs_revision",
+      currentStage: "brand_requirement_intake",
+      projectStatus: "needs_revision",
       jobId,
-      title: "技术可行性评估资料解析失败",
+      title: "Brief 资料解析失败",
       userMessage,
       errorMessage: userMessage,
       inputRefs: [{ type: "asset", id: asset.id }],

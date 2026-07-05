@@ -30,3 +30,43 @@ test("legacy storyboard video jobs defer count validation until selected image f
     /单图生成需要且只需要 1 张图/,
   );
 });
+
+test("storyboard video input accepts selected or client-approved storyboard images", async () => {
+  const source = await import("node:fs/promises").then((fs) => fs.readFile(new URL("./storyboard-media.ts", import.meta.url), "utf8"));
+  assert.match(source, /function isStoryboardImageUsableForVideo/);
+  assert.match(source, /image\.isSelected \|\| shot\.status === "client_approved" \|\| image\.internalReviewStatus === "confirmed"/);
+  assert.match(source, /!isStoryboardImageUsableForVideo\(image, shot\)/);
+});
+
+test("confirming storyboard video advances the project to A-copy revision", async () => {
+  const source = await import("node:fs/promises").then((fs) => fs.readFile(new URL("./storyboard-media.ts", import.meta.url), "utf8"));
+  assert.match(source, /stageKey: "ai_video_canvas"/);
+  assert.match(source, /status: "completed"/);
+  assert.match(source, /currentStage: "a_copy_revision"/);
+  assert.doesNotMatch(source, /视频候选已内部确认/);
+  assert.doesNotMatch(source, /正式内部资产/);
+});
+
+test("storyboard video generation persists selected duration and passes it to provider", async () => {
+  const mediaSource = await import("node:fs/promises").then((fs) => fs.readFile(new URL("./storyboard-media.ts", import.meta.url), "utf8"));
+  assert.match(mediaSource, /durationSeconds\?: number/);
+  assert.match(mediaSource, /durationSeconds: input\.durationSeconds/);
+  assert.match(mediaSource, /durationSeconds: input\.durationSeconds/);
+  assert.match(mediaSource, /durationSeconds: input\.durationSeconds/);
+  assert.match(mediaSource, /durationSeconds: input\.durationSeconds/);
+  assert.match(mediaSource, /persistedInput\?\.metadata\.durationSeconds/);
+  assert.match(mediaSource, /const durationSeconds = input\.durationSeconds \?\? persistedDurationSeconds \?\? 5/);
+
+  const providerSource = await import("node:fs/promises").then((fs) => fs.readFile(new URL("../providers/ark-video.ts", import.meta.url), "utf8"));
+  assert.match(providerSource, /durationSeconds\?: number/);
+  assert.match(providerSource, /duration: input\.durationSeconds \?\? 5/);
+});
+
+test("storyboard video zip download builds a server-side archive from selected videos", async () => {
+  const mediaSource = await import("node:fs/promises").then((fs) => fs.readFile(new URL("./storyboard-media.ts", import.meta.url), "utf8"));
+  assert.match(mediaSource, /export async function createStoryboardVideoZipDownload/);
+  assert.match(mediaSource, /videoIds: string\[\]/);
+  assert.match(mediaSource, /downloadOssObject/);
+  assert.match(mediaSource, /createStoredZip/);
+  assert.match(mediaSource, /视频素材 ZIP/);
+});

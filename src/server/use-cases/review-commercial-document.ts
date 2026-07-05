@@ -2,7 +2,7 @@ import { z } from "zod";
 import { AppError } from "@/lib/errors";
 import type { StageStatus } from "@/domain/types";
 import { createAuditLog } from "@/server/repositories/audit-logs";
-import { updateContractStatus } from "@/server/repositories/contracts";
+import { getProjectContract, updateContractStatus } from "@/server/repositories/contracts";
 import { updateQuoteStatus } from "@/server/repositories/quotes";
 import { recordStageProgress } from "@/server/use-cases/stage-progress";
 
@@ -50,6 +50,24 @@ export async function reviewCommercialDocument(input: {
     reason: input.reason ?? "",
   });
   const nextStatus = actionToStatus[parsed.action];
+
+  if (parsed.documentType === "contract" && parsed.action === "mark_signed") {
+    const contract = await getProjectContract(input.projectId);
+    if (!contract || contract.id !== parsed.documentId) {
+      throw new AppError({
+        status: 404,
+        code: "commercial_document_not_found",
+        userMessage: "没有找到这份合同。请刷新项目后再试。",
+      });
+    }
+    if (!contract.signedContractAssetId) {
+      throw new AppError({
+        status: 422,
+        code: "contract_signed_proof_required",
+        userMessage: "请先上传已签署的合同文件再标记为已签署。",
+      });
+    }
+  }
 
   const document =
     parsed.documentType === "quote"

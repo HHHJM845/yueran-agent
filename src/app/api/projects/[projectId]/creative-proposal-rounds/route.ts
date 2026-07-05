@@ -30,7 +30,7 @@ export async function POST(request: Request, context: { params: Promise<{ projec
         round,
         message:
           body.roundNumber === 1
-            ? "第一轮创意视觉提案已保存。每个方向已生成 2 个视觉场景，候选图会按真实生成记录展示。"
+            ? "第一轮完整创意视觉提案包已保存。每个方向包含 2 个故事卡和候选氛围图记录，可继续发给甲方确认。"
             : "第二轮创意视觉提案已保存。保留方向已生成 4 个深化视觉场景，候选图会按真实生成记录展示。",
       },
     });

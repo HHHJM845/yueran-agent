@@ -1,7 +1,8 @@
 import type { ClaimedJob } from "@/server/repositories/jobs";
 import { appendJobEvent, extendJobLock, scheduleJobRetry } from "@/server/repositories/jobs";
 import { runAssetUnderstandingJob } from "@/server/use-cases/analyze-asset";
-import { runAtmosphereImageGenerationJob } from "@/server/use-cases/generate-atmosphere-image";
+import { markGeneratedImageFailed } from "@/server/repositories/generated-images";
+import { readAtmosphereGeneratedImageIdFromInput, runAtmosphereImageGenerationJob } from "@/server/use-cases/generate-atmosphere-image";
 import { runCreativeDirectionGenerationJob } from "@/server/use-cases/generate-creative-directions";
 import { runCreativeExpansionGenerationJob } from "@/server/use-cases/generate-creative-expansions";
 import { runDocumentDraftGenerationJob } from "@/server/use-cases/generate-document-drafts";
@@ -96,16 +97,25 @@ export async function runClaimedJob(job: ClaimedJob, workerId: string) {
     const userMessage =
       error instanceof AppError
         ? error.userMessage
-        : "任务处理失败。系统已保存失败状态，你可以稍后重试或联系管理员。";
+        : "任务处理出现异常，系统会自动重试。若再次失败，再提示你手动重试或联系管理员。";
     const errorCode = error instanceof AppError ? error.code : "worker_job_failed";
 
-    await scheduleJobRetry({
+    const retryResult = await scheduleJobRetry({
       jobId: job.id,
       projectId: job.projectId,
       userMessage,
       errorCode,
       delaySeconds: 90,
     });
+    if (job.type === "atmosphere_image_generation" && retryResult?.status === "failed") {
+      const generatedImageId = readAtmosphereGeneratedImageIdFromInput(job.input);
+      if (generatedImageId) {
+        await markGeneratedImageFailed({
+          id: generatedImageId,
+          failureReason: userMessage,
+        });
+      }
+    }
   } finally {
     clearInterval(heartbeat);
   }

@@ -6,8 +6,8 @@ import { listStoryboardImageBatches } from "@/server/repositories/storyboard-ima
 import { createStoryboardImageBatch } from "@/server/use-cases/storyboard-image-batches";
 
 const createBatchSchema = z.object({
-  batchNumber: z.union([z.literal(1), z.literal(2), z.literal(3)]),
-  sceneIds: z.array(z.string().uuid()).min(1, "请至少选择一个场次。"),
+  batchNumber: z.number().int().min(1).optional().nullable(),
+  sceneIds: z.array(z.string().uuid()).optional(),
 });
 
 export async function GET(request: Request, context: { params: Promise<{ projectId: string }> }) {
@@ -31,7 +31,7 @@ export async function POST(request: Request, context: { params: Promise<{ projec
     const input = createBatchSchema.parse(await request.json());
     const batch = await createStoryboardImageBatch({
       projectId,
-      batchNumber: input.batchNumber,
+      batchNumber: input.batchNumber ?? null,
       sceneIds: input.sceneIds,
       actorId: user.id,
     });
@@ -39,7 +39,7 @@ export async function POST(request: Request, context: { params: Promise<{ projec
       ok: true,
       data: {
         batch,
-        message: `第 ${batch.batchNumber} 批分镜图片已创建，请确认本批正式图片后提交甲方审核。`,
+        message: `第 ${batch.batchNumber} 次分镜图片全量提交批次已创建，请确认当前图片后提交甲方审核。`,
       },
     });
   } catch (error) {

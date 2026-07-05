@@ -142,6 +142,18 @@ export async function markGeneratedImageProcessing(input: { id: string }) {
   );
 }
 
+export async function markGeneratedImageRetrying(input: { id: string; failureReason: string }) {
+  await query(
+    `update generated_images
+     set status = 'retrying',
+         failure_reason = $2,
+         retry_count = retry_count + 1,
+         updated_at = now()
+     where id = $1`,
+    [input.id, input.failureReason]
+  );
+}
+
 export async function markGeneratedImageSucceeded(input: { id: string; ossKey: string; ossUrl: string }) {
   const result = await query<GeneratedImageRow>(
     `update generated_images

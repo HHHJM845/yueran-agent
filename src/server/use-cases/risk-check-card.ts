@@ -7,7 +7,8 @@ import type { StructuredRequirement } from "@/server/use-cases/structure-require
 
 export type RiskLevel = "low" | "medium" | "high";
 export type OverallRiskAlert = "low" | "medium" | "high" | "redline";
-export type RiskCheckDecision = "accept" | "reject" | "conditional_accept";
+export type RiskCheckDecision = "accept" | "reject";
+export type RiskCheckRejectionCategory = "brief_insufficient" | "project_blocked";
 export type RiskCheckCardStatus = "draft" | "in_review" | "needs_revision" | "approved" | "archived";
 
 export type RiskCheckFactDraft = {
@@ -54,58 +55,78 @@ const sensitiveIndustryKeywords = [
   "烟",
 ];
 
+export const riskCheckDecisionSchema = z.enum(["accept", "reject"]);
+export const riskCheckRejectionCategorySchema = z.enum(["brief_insufficient", "project_blocked"]);
+
 const decisionSchema = z.object({
   projectId: z.string().uuid("项目 ID 不合法"),
   cardId: z.string().uuid("风险卡 ID 不合法"),
-  decision: z.enum(["accept", "reject", "conditional_accept"]),
-  reason: z.string().trim().min(1, "请填写人工判断原因"),
+  decision: riskCheckDecisionSchema,
+  rejectionCategory: riskCheckRejectionCategorySchema.optional(),
+  reason: z.string().trim().max(800, "原因最多 800 字").optional().default(""),
   actorId: z.string().uuid("操作人 ID 不合法"),
+}).superRefine((value, context) => {
+  if (value.decision === "reject" && !value.rejectionCategory) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["rejectionCategory"],
+      message: "请选择不能接的核心原因",
+    });
+  }
+
+  if (value.decision === "reject" && !value.reason.trim()) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["reason"],
+      message: "请填写不能接的理由补充",
+    });
+  }
 });
 
 const dimensionDefinitions = [
   {
-    key: "decision_chain",
-    label: "甲方决策链与需求确定性",
+    key: "requirement_completeness",
+    label: "需求完整度",
     anchors: {
-      low: "关键信息齐全，需求边界基本明确，可直接进入创意提案。",
-      medium: "仍有少量待确认项，需要商务在提案前补一次关键信息。",
-      high: "关键决策链或需求边界不清，继续推进会放大返工风险。",
+      low: "品牌、项目目标、交付形式和时间节点基本清楚，可进入风险判断。",
+      medium: "仍有少量待补充信息，需要商务在提案前补一次关键问题。",
+      high: "核心需求边界不清，继续推进会放大返工和误判风险。",
     },
   },
   {
-    key: "compliance",
-    label: "内容合规及监管风险",
+    key: "material_readiness",
+    label: "素材可用性",
     anchors: {
-      low: "未见明显监管敏感点，授权信息基本清楚。",
-      medium: "存在敏感行业、IP、logo 或表述限制，需要先补齐合规确认。",
-      high: "存在强监管领域、授权不明或明显禁忌，需重点评估甚至暂缓接单。",
+      low: "已有可用参考样片、产品资料或素材说明，能支撑后续创意和生产。",
+      medium: "素材方向存在，但授权、清晰度或完整度仍需补齐。",
+      high: "关键素材缺失或授权不明，短期内难以支撑稳定落地。",
     },
   },
   {
-    key: "visual_reproduction",
-    label: "特效技能复刻与视觉还原",
+    key: "creative_expression",
+    label: "创意表达风险",
     anchors: {
-      low: "画面目标和制作方式常规，现有能力基本可覆盖。",
-      medium: "存在一定风格还原或特效难度，需要提前锁定方案与资源。",
+      low: "目标表达、受众和核心卖点较清楚，创意方向可控。",
+      medium: "表达目标或风格有歧义，需要提案前补一次创意口径。",
+      high: "创意目标冲突或高度依赖不可控表达，可能导致方案反复。",
+    },
+  },
+  {
+    key: "production_complexity",
+    label: "生产复杂度",
+    anchors: {
+      low: "画面目标和制作方式常规，现有生产能力基本可覆盖。",
+      medium: "存在风格还原、三维、写实或特效要求，需要提前锁定方案与资源。",
       high: "明显依赖高强度特效、复杂写实还原或超出现阶段稳定交付边界。",
     },
   },
   {
-    key: "commercial",
-    label: "商业风险",
+    key: "compliance_delivery",
+    label: "合规与交付风险",
     anchors: {
-      low: "预算、付款和商务条款较清楚，风险可控。",
-      medium: "预算或付款条件仍不完整，需在报价前补齐并确认。",
-      high: "违约、付款或客户条款明显偏高风险，可能影响项目回款或交付边界。",
-    },
-  },
-  {
-    key: "schedule",
-    label: "周期紧张程度",
-    anchors: {
-      low: "周期与交付要求匹配，排期压力可控。",
-      medium: "档期偏紧，需要精确排产并控制变更。",
-      high: "交付周期明显紧张，叠加复杂制作会显著提高失败概率。",
+      low: "授权、禁忌点、周期、预算和付款条件整体清楚，交付风险可控。",
+      medium: "合规、周期、预算或付款仍有缺口，需要接单前确认。",
+      high: "存在强监管、授权不明、紧急周期、违约或付款风险，可能影响订单落地。",
     },
   },
 ] as const;
@@ -190,7 +211,7 @@ export async function generateRiskCheckFromProject(input: { projectId: string; a
     throw new AppError({
       status: 409,
       code: "risk_check_brief_required",
-      userMessage: "还没有找到可用的 Brief 结构化结果。请先完成 Brief 结构化，再生成风险体检卡。",
+      userMessage: "还没有找到可用的 Brief 结构化结果。请先完成 Brief 结构化，再生成接单风险评估。",
     });
   }
 
@@ -200,7 +221,7 @@ export async function generateRiskCheckFromProject(input: { projectId: string; a
     throw new AppError({
       status: 409,
       code: "risk_check_brief_empty",
-      userMessage: "当前 Brief 结构化结果内容太少，暂时无法做风险体检。请先补充需求信息后再试。",
+      userMessage: "当前 Brief 结构化结果内容太少，暂时无法做接单风险评估。请先补充需求信息后再试。",
     });
   }
 
@@ -216,8 +237,8 @@ export async function generateRiskCheckFromProject(input: { projectId: string; a
     riskCheck,
     message:
       riskCheck.card.overallAlert === "redline"
-        ? "风险体检卡已生成，并标出红线风险。请商务或管理员先人工确认后再决定是否继续。"
-        : "风险体检卡已根据当前 Brief 生成并保存，接下来可以人工确认接单结论。",
+        ? "接单风险评估已生成，并标出红线风险。请商务或管理员先人工确认后再决定是否继续。"
+        : "接单风险评估已根据当前 Brief 生成并保存，接下来可以人工确认接单结论。",
   };
 }
 
@@ -225,7 +246,8 @@ export async function saveRiskCheckDecision(input: {
   projectId: string;
   cardId: string;
   decision: RiskCheckDecision;
-  reason: string;
+  rejectionCategory?: RiskCheckRejectionCategory;
+  reason?: string;
   actorId: string;
 }) {
   const parsed = decisionSchema.parse(input);
@@ -235,7 +257,7 @@ export async function saveRiskCheckDecision(input: {
     throw new AppError({
       status: 404,
       code: "risk_check_not_found",
-      userMessage: "没有找到这张风险体检卡。请刷新工作台后再试。",
+      userMessage: "没有找到这份接单风险评估。请刷新工作台后再试。",
     });
   }
 
@@ -243,6 +265,7 @@ export async function saveRiskCheckDecision(input: {
     projectId: parsed.projectId,
     cardId: card.id,
     decision: parsed.decision,
+    rejectionCategory: parsed.rejectionCategory,
     reason: parsed.reason,
     overallAlert: card.overallAlert,
   });
@@ -258,23 +281,149 @@ async function recordRiskDecisionStageProgress(input: {
   projectId: string;
   cardId: string;
   decision: RiskCheckDecision;
+  rejectionCategory?: RiskCheckRejectionCategory;
   reason: string;
   overallAlert: OverallRiskAlert;
 }) {
-  const decisionLabel =
-    input.decision === "accept" ? "可以接" : input.decision === "conditional_accept" ? "条件接" : "暂不接";
+  const mapped = mapRiskDecisionStageProgress(input);
+
+  await recordStageProgress({
+    projectId: mapped.primary.projectId,
+    stageKey: "technical_feasibility",
+    status: mapped.primary.stageStatus,
+    currentStage: mapped.primary.currentStage,
+    projectStatus: mapped.primary.projectStatus,
+    title: mapped.primary.title,
+    userMessage: mapped.primary.userMessage,
+    errorMessage: mapped.primary.errorMessage,
+    outputRefs: mapped.primary.outputRefs,
+    snapshot: mapped.primary.snapshot,
+  });
+
+  if (mapped.nextStage) {
+    await recordStageProgress({
+      projectId: mapped.nextStage.projectId,
+      stageKey: "creative_direction_proposal",
+      status: mapped.nextStage.stageStatus,
+      currentStage: mapped.nextStage.currentStage,
+      projectStatus: mapped.nextStage.projectStatus,
+      title: mapped.nextStage.title,
+      userMessage: mapped.nextStage.userMessage,
+      errorMessage: mapped.nextStage.errorMessage,
+      inputRefs: mapped.nextStage.inputRefs,
+      snapshot: mapped.nextStage.snapshot,
+    });
+  }
+
+  if (mapped.backStage) {
+    await recordStageProgress({
+      projectId: mapped.backStage.projectId,
+      stageKey: "brand_requirement_intake",
+      status: mapped.backStage.stageStatus,
+      currentStage: mapped.backStage.currentStage,
+      projectStatus: mapped.backStage.projectStatus,
+      title: mapped.backStage.title,
+      userMessage: mapped.backStage.userMessage,
+      errorMessage: mapped.backStage.errorMessage,
+      inputRefs: mapped.backStage.inputRefs,
+      snapshot: mapped.backStage.snapshot,
+    });
+  }
+}
+
+function mapRiskDecisionStageProgress(input: {
+  projectId: string;
+  cardId: string;
+  decision: RiskCheckDecision;
+  rejectionCategory?: RiskCheckRejectionCategory;
+  reason: string;
+  overallAlert: OverallRiskAlert;
+}) {
+  const decisionLabel = input.decision === "accept" ? "能接（通过）" : "不能接";
   const reason = input.reason.trim();
+  const decidedAt = new Date().toISOString();
+
+  if (input.decision === "reject" && input.rejectionCategory === "brief_insufficient") {
+    return {
+      primary: {
+        projectId: input.projectId,
+        stageStatus: "needs_revision" as const,
+        currentStage: "brand_requirement_intake" as const,
+        projectStatus: "needs_revision" as const,
+        title: "接单风险评估判断为 Brief 不足",
+        userMessage: "已记录不能接原因：Brief 不足。项目已退回 Brief 收集与需求结构化，请补齐关键信息后生成接单风险评估。",
+        errorMessage: reason,
+        outputRefs: [{ type: "risk_check_card", id: input.cardId }],
+        snapshot: {
+          riskCheckCardId: input.cardId,
+          decision: input.decision,
+          decisionLabel,
+          rejectionCategory: input.rejectionCategory,
+          rejectionCategoryLabel: "Brief 不足",
+          reason,
+          overallAlert: input.overallAlert,
+          decidedAt,
+        },
+      },
+      nextStage: null,
+      backStage: {
+        projectId: input.projectId,
+        stageStatus: "needs_revision" as const,
+        currentStage: "brand_requirement_intake" as const,
+        projectStatus: "needs_revision" as const,
+        title: "Brief 需要补充后重评风险",
+        userMessage: "接单风险评估已退回到 Brief 环节。请在 SOP 1 补充预算、素材授权、交付规格等缺失信息。",
+        errorMessage: reason,
+        inputRefs: [{ type: "risk_check_card", id: input.cardId }],
+        snapshot: {
+          sourceStage: "technical_feasibility",
+          sourceRiskCheckCardId: input.cardId,
+          decision: input.decision,
+          rejectionCategory: input.rejectionCategory,
+          reason,
+          overallAlert: input.overallAlert,
+          decidedAt,
+        },
+      },
+    };
+  }
 
   if (input.decision === "reject") {
-    await recordStageProgress({
+    return {
+      primary: {
+        projectId: input.projectId,
+        stageStatus: "blocked" as const,
+        currentStage: "technical_feasibility" as const,
+        projectStatus: "blocked" as const,
+        title: "接单风险评估人工判断为不接",
+        userMessage: `已记录接单风险评估人工判断：${decisionLabel}。项目已停留在接单风险评估环节。`,
+        errorMessage: reason || "接单风险评估人工判断为不接。",
+        outputRefs: [{ type: "risk_check_card", id: input.cardId }],
+        snapshot: {
+          riskCheckCardId: input.cardId,
+          decision: input.decision,
+          decisionLabel,
+          rejectionCategory: input.rejectionCategory ?? "project_blocked",
+          rejectionCategoryLabel: "项目背景/项目本身原因",
+          reason: reason || null,
+          overallAlert: input.overallAlert,
+          decidedAt,
+        },
+      },
+      nextStage: null,
+      backStage: null,
+    };
+  }
+
+  return {
+    primary: {
       projectId: input.projectId,
-      stageKey: "technical_feasibility",
-      status: "blocked",
-      currentStage: "technical_feasibility",
-      projectStatus: "blocked",
-      title: "风险体检人工判断为暂不接",
-      userMessage: `已记录风险体检人工判断：${decisionLabel}。项目已停留在风险体检卡环节，等待补充条件或管理复核。`,
-      errorMessage: reason || "风险体检人工判断为暂不接。",
+      stageStatus: "approved" as const,
+      currentStage: "creative_direction_proposal" as const,
+      projectStatus: "in_progress" as const,
+      title: "接单风险评估人工判断已通过",
+      userMessage: `已记录接单风险评估人工判断：${decisionLabel}。项目已进入两轮创意视觉提案。`,
+      errorMessage: null,
       outputRefs: [{ type: "risk_check_card", id: input.cardId }],
       snapshot: {
         riskCheckCardId: input.cardId,
@@ -282,49 +431,27 @@ async function recordRiskDecisionStageProgress(input: {
         decisionLabel,
         reason: reason || null,
         overallAlert: input.overallAlert,
-        decidedAt: new Date().toISOString(),
+        decidedAt,
       },
-    });
-    return;
-  }
-
-  await recordStageProgress({
-    projectId: input.projectId,
-    stageKey: "technical_feasibility",
-    status: "approved",
-    currentStage: "creative_direction_proposal",
-    projectStatus: "in_progress",
-    title: "风险体检人工判断已通过",
-    userMessage: `已记录风险体检人工判断：${decisionLabel}。项目已进入两轮创意视觉提案。`,
-    errorMessage: null,
-    outputRefs: [{ type: "risk_check_card", id: input.cardId }],
-    snapshot: {
-      riskCheckCardId: input.cardId,
-      decision: input.decision,
-      decisionLabel,
-      reason: reason || null,
-      overallAlert: input.overallAlert,
-      decidedAt: new Date().toISOString(),
     },
-  });
-
-  await recordStageProgress({
-    projectId: input.projectId,
-    stageKey: "creative_direction_proposal",
-    status: "in_progress",
-    currentStage: "creative_direction_proposal",
-    projectStatus: "in_progress",
-    title: "创意视觉提案可开始",
-    userMessage: "风险体检已由人工确认通过，创意团队可以开始生成 4 个创意方向。",
-    errorMessage: null,
-    inputRefs: [{ type: "risk_check_card", id: input.cardId }],
-    snapshot: {
-      sourceStage: "technical_feasibility",
-      sourceRiskCheckCardId: input.cardId,
-      decision: input.decision,
-      overallAlert: input.overallAlert,
+    nextStage: {
+      projectId: input.projectId,
+      stageStatus: "in_progress" as const,
+      currentStage: "creative_direction_proposal" as const,
+      projectStatus: "in_progress" as const,
+      title: "创意视觉提案可开始",
+      userMessage: "接单风险评估已由人工确认通过，创意团队可以开始生成 4 个创意方向。",
+      errorMessage: null,
+      inputRefs: [{ type: "risk_check_card", id: input.cardId }],
+      snapshot: {
+        sourceStage: "technical_feasibility",
+        sourceRiskCheckCardId: input.cardId,
+        decision: input.decision,
+        overallAlert: input.overallAlert,
+      },
     },
-  });
+    backStage: null,
+  };
 }
 
 function buildDraftFromStructuredBrief(brief: NormalizedStructuredRequirement): RiskCheckDraft {
@@ -356,11 +483,11 @@ function buildDraftFromStructuredBrief(brief: NormalizedStructuredRequirement): 
   };
 
   const dimensions = [
-    evaluateDecisionChain(brief, facts),
-    evaluateCompliance(brief, facts),
-    evaluateVisualReproduction(brief, facts),
-    evaluateCommercial(brief, facts),
-    evaluateSchedule(brief, facts),
+    evaluateRequirementCompleteness(brief, facts),
+    evaluateMaterialReadiness(brief, facts),
+    evaluateCreativeExpression(brief),
+    evaluateProductionComplexity(brief, facts),
+    evaluateComplianceDelivery(brief, facts),
   ];
 
   const redlineAlerts = deriveRedlineAlerts(facts, dimensions);
@@ -371,6 +498,21 @@ function buildDraftFromStructuredBrief(brief: NormalizedStructuredRequirement): 
     dimensions,
     redlineAlerts,
   });
+}
+
+export function buildDraftFromStructuredBriefForTest(brief: NormalizedStructuredRequirement): RiskCheckDraft {
+  return buildDraftFromStructuredBrief(brief);
+}
+
+export function mapRiskDecisionStageProgressForTest(input: {
+  projectId: string;
+  cardId: string;
+  decision: RiskCheckDecision;
+  rejectionCategory?: RiskCheckRejectionCategory;
+  reason: string;
+  overallAlert: OverallRiskAlert;
+}) {
+  return mapRiskDecisionStageProgress(input);
 }
 
 function normalizeFacts(value: unknown): RiskCheckFactDraft[] {
@@ -547,7 +689,7 @@ function createClientTypeFact(brief: NormalizedStructuredRequirement, allText: s
   };
 }
 
-function evaluateDecisionChain(brief: NormalizedStructuredRequirement, facts: FactCollection): RiskCheckDimensionDraft {
+function evaluateRequirementCompleteness(brief: NormalizedStructuredRequirement, facts: FactCollection): RiskCheckDimensionDraft {
   const missingCoreFields = [brief.timeline, brief.deliverySpecs, brief.budgetOrQuoteInfo].filter((item) => !item).length;
   const openQuestionCount = brief.openQuestions.length;
   const lowConfidenceCount = Object.values(facts).filter((fact) => fact.confidence > 0 && fact.confidence < 0.65).length;
@@ -562,24 +704,44 @@ function evaluateDecisionChain(brief: NormalizedStructuredRequirement, facts: Fa
       .filter(Boolean)
       .join("；");
 
-  return createDimensionDraft("decision_chain", level, evidence, level === "low" ? 0.78 : level === "medium" ? 0.72 : 0.82);
+  return createDimensionDraft("requirement_completeness", level, evidence, level === "low" ? 0.78 : level === "medium" ? 0.72 : 0.82);
 }
 
-function evaluateCompliance(brief: NormalizedStructuredRequirement, facts: FactCollection): RiskCheckDimensionDraft {
-  const sensitive = String(facts.sensitiveDomain.value) === "是";
-  const authorizationUnknown = String(facts.authorization.value) !== "已说明";
+function evaluateMaterialReadiness(brief: NormalizedStructuredRequirement, facts: FactCollection): RiskCheckDimensionDraft {
+  const hasReferenceSamples = brief.referenceSamples.length > 0;
   const hasIpOrLogo = String(facts.ipLogoPresence.value) === "是";
-  const restrictionEvidence = brief.restrictions.join("；");
+  const authorizationUnknown = String(facts.authorization.value) !== "已说明";
+  const materialQuestions = brief.openQuestions.filter((question) => /素材|样片|参考|授权|logo|Logo|IP|版权|产品图|文件/.test(question));
 
   let level: RiskLevel = "low";
-  if ((sensitive && authorizationUnknown) || /禁用|禁忌|不能|不得/.test(restrictionEvidence)) level = "high";
-  else if (sensitive || hasIpOrLogo || authorizationUnknown) level = "medium";
+  if ((!hasReferenceSamples && materialQuestions.length > 0) || (hasIpOrLogo && authorizationUnknown)) level = "high";
+  else if (!hasReferenceSamples || materialQuestions.length > 0 || hasIpOrLogo || authorizationUnknown) level = "medium";
 
-  const evidence = [facts.sensitiveDomain.evidence, facts.authorization.evidence, restrictionEvidence].filter(Boolean).join("；");
-  return createDimensionDraft("compliance", level, evidence, level === "high" ? 0.84 : level === "medium" ? 0.74 : 0.64);
+  const evidence =
+    [brief.referenceSamples.join("；"), facts.ipLogoPresence.evidence, facts.authorization.evidence, materialQuestions.slice(0, 2).join("；")]
+      .filter(Boolean)
+      .join("；") || "未看到明确参考素材或素材授权说明";
+  return createDimensionDraft("material_readiness", level, evidence, level === "high" ? 0.84 : level === "medium" ? 0.72 : 0.62);
 }
 
-function evaluateVisualReproduction(brief: NormalizedStructuredRequirement, facts: FactCollection): RiskCheckDimensionDraft {
+function evaluateCreativeExpression(brief: NormalizedStructuredRequirement): RiskCheckDimensionDraft {
+  const expressionText = [brief.videoGoal, brief.targetAudience, brief.expectedStyle, ...brief.keySellingPoints, ...brief.openQuestions].join("；");
+  const conflictEvidence = findKeywordEvidence([expressionText, ...brief.restrictions], ["冲突", "既要", "又要", "不确定", "待确认", "客户偏好", "调性"]);
+  const missingCreativeFields = [brief.videoGoal, brief.targetAudience, brief.expectedStyle].filter((item) => !item).length;
+
+  let level: RiskLevel = "low";
+  if (missingCreativeFields >= 2 || /冲突|既要|又要/.test(conflictEvidence)) level = "high";
+  else if (missingCreativeFields > 0 || conflictEvidence) level = "medium";
+
+  const evidence =
+    conflictEvidence ||
+    [!brief.videoGoal && "视频目标未说明", !brief.targetAudience && "目标受众未说明", !brief.expectedStyle && "期望风格未说明"]
+      .filter(Boolean)
+      .join("；");
+  return createDimensionDraft("creative_expression", level, evidence, level === "high" ? 0.78 : level === "medium" ? 0.68 : 0.6);
+}
+
+function evaluateProductionComplexity(brief: NormalizedStructuredRequirement, facts: FactCollection): RiskCheckDimensionDraft {
   const styleText = [brief.expectedStyle, brief.videoGoal, ...brief.referenceSamples, ...brief.keySellingPoints].join("；");
   const complexKeywords = ["电影级", "写实", "CG", "3D", "三维", "复杂特效", "虚实结合", "高精度", "高度还原"];
   const mediumKeywords = ["质感", "还原", "高级感", "特效", "动画", "拟真"];
@@ -594,36 +756,51 @@ function evaluateVisualReproduction(brief: NormalizedStructuredRequirement, fact
     findKeywordEvidence([styleText], complexKeywords) ||
     findKeywordEvidence([styleText, facts.vfxRequired.evidence], mediumKeywords) ||
     facts.vfxRequired.evidence;
-  return createDimensionDraft("visual_reproduction", level, evidence, level === "high" ? 0.79 : level === "medium" ? 0.68 : 0.6);
+  return createDimensionDraft("production_complexity", level, evidence, level === "high" ? 0.79 : level === "medium" ? 0.68 : 0.6);
 }
 
-function evaluateCommercial(brief: NormalizedStructuredRequirement, facts: FactCollection): RiskCheckDimensionDraft {
+function evaluateComplianceDelivery(brief: NormalizedStructuredRequirement, facts: FactCollection): RiskCheckDimensionDraft {
+  const sensitive = String(facts.sensitiveDomain.value) === "是";
+  const authorizationUnknown = String(facts.authorization.value) !== "已说明";
+  const hasIpOrLogo = String(facts.ipLogoPresence.value) === "是";
+  const restrictionEvidence = brief.restrictions.join("；");
   const hasPenalty = Boolean(facts.penaltyClause.evidence);
   const hasPaymentTerms = Boolean(facts.paymentTerms.evidence);
   const hasBudget = Boolean(brief.budgetOrQuoteInfo);
-
-  let level: RiskLevel = "low";
-  if (hasPenalty || (!hasPaymentTerms && !hasBudget)) level = "high";
-  else if (!hasPaymentTerms || !hasBudget) level = "medium";
-
-  const evidence = [facts.penaltyClause.evidence, facts.paymentTerms.evidence, brief.budgetOrQuoteInfo].filter(Boolean).join("；");
-  return createDimensionDraft("commercial", level, evidence, level === "high" ? 0.76 : level === "medium" ? 0.67 : 0.61);
-}
-
-function evaluateSchedule(brief: NormalizedStructuredRequirement, facts: FactCollection): RiskCheckDimensionDraft {
   const timelineText = [brief.timeline, brief.deliverySpecs].filter(Boolean).join("；");
   const days = extractDeadlineDays(timelineText);
   const complex = ["high", "medium"].includes(
-    evaluateVisualReproduction(brief, facts).level
+    evaluateProductionComplexity(brief, facts).level
   );
   const urgent = /加急|尽快|本周|当天|立即/.test(timelineText);
 
   let level: RiskLevel = "low";
-  if (urgent || (days !== null && days <= 10) || (days !== null && days <= 15 && complex)) level = "high";
-  else if (!timelineText || (days !== null && days <= 30) || complex) level = "medium";
+  if (
+    (sensitive && authorizationUnknown) ||
+    /禁用|禁忌|不能|不得/.test(restrictionEvidence) ||
+    hasPenalty ||
+    urgent ||
+    (days !== null && days <= 10) ||
+    (days !== null && days <= 15 && complex)
+  ) {
+    level = "high";
+  } else if (sensitive || hasIpOrLogo || authorizationUnknown || !hasPaymentTerms || !hasBudget || !timelineText || (days !== null && days <= 30) || complex) {
+    level = "medium";
+  }
 
-  const evidence = timelineText || "时间节点未说明";
-  return createDimensionDraft("schedule", level, evidence, timelineText ? 0.8 : 0.48);
+  const evidence =
+    [
+      facts.sensitiveDomain.evidence,
+      facts.authorization.evidence,
+      restrictionEvidence,
+      facts.penaltyClause.evidence,
+      facts.paymentTerms.evidence,
+      brief.budgetOrQuoteInfo,
+      timelineText,
+    ]
+      .filter(Boolean)
+      .join("；") || "合规、付款或交付周期仍缺少明确说明";
+  return createDimensionDraft("compliance_delivery", level, evidence, level === "high" ? 0.82 : level === "medium" ? 0.7 : 0.62);
 }
 
 function createDimensionDraft(dimensionKey: string, level: RiskLevel, evidence: string, confidence: number): RiskCheckDimensionDraft {
@@ -638,12 +815,12 @@ function createDimensionDraft(dimensionKey: string, level: RiskLevel, evidence: 
 }
 
 function deriveRedlineAlerts(facts: FactCollection, dimensions: RiskCheckDimensionDraft[]) {
-  const compliance = dimensions.find((dimension) => dimension.dimensionKey === "compliance");
+  const complianceDelivery = dimensions.find((dimension) => dimension.dimensionKey === "compliance_delivery");
   const sensitive = String(facts.sensitiveDomain.value) === "是";
   const authorizationUnknown = String(facts.authorization.value) !== "已说明";
 
   const alerts: string[] = [];
-  if (compliance?.level === "high" && sensitive && authorizationUnknown) {
+  if (complianceDelivery?.level === "high" && sensitive && authorizationUnknown) {
     alerts.push("强监管领域 + 授权不明，建议不接或升级到老板决策。");
   }
 

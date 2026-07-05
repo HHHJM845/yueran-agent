@@ -7,6 +7,7 @@ import {
   listStoryboardShots,
   updateStoryboardShotContent,
   updateStoryboardShotOrder,
+  updateStoryboardShotsStatus,
   type StoryboardShotView,
 } from "@/server/repositories/story-production";
 import { createProductionSetupFromStoryboard } from "@/server/use-cases/production-setup";
@@ -165,6 +166,7 @@ export async function saveStoryboardSequence(input: {
       sceneId: input.sceneId,
       shotCount: refreshedShots.filter((shot) => shot.sceneId === input.sceneId).length,
       productionEntityCount: productionSetup.entities.length,
+      status: "draft",
     },
   });
 
@@ -174,6 +176,53 @@ export async function saveStoryboardSequence(input: {
     productionEntities: productionSetup.entities,
     productionReferenceSets: productionSetup.referenceSets,
     message: "分镜序列已保存，人物和场景设定清单已同步更新。",
+  };
+}
+
+export async function confirmStoryboardSequence(input: { projectId: string; actorId: string }) {
+  const storyboardShots = await listStoryboardShots(input.projectId);
+  if (storyboardShots.length === 0) {
+    throw new AppError({
+      status: 422,
+      code: "storyboard_sequence_empty",
+      userMessage: "请先拆分文字分镜，再确认文字分镜。",
+    });
+  }
+
+  const productionSetup = await createProductionSetupFromStoryboard({
+    projectId: input.projectId,
+    storyboardShots,
+    actorId: input.actorId,
+  });
+  const shots = await updateStoryboardShotsStatus({
+    projectId: input.projectId,
+    status: "internal_review",
+    actorId: input.actorId,
+  });
+
+  await recordStageProgress({
+    projectId: input.projectId,
+    stageKey: "script_storyboard_confirmation",
+    status: "in_progress",
+    currentStage: "script_storyboard_confirmation",
+    projectStatus: "in_progress",
+    userMessage: "文字分镜已确认，人物和场景设定清单已按最终分镜同步。请继续确认人物和场景设定。",
+    outputRefs: [
+      ...shots.map((shot) => ({ type: "storyboard_shot", id: shot.id })),
+      ...productionSetup.entities.map((entity) => ({ type: "production_entity", id: entity.id })),
+    ],
+    snapshot: {
+      shotCount: shots.length,
+      productionEntityCount: productionSetup.entities.length,
+      productionReferenceSetCount: productionSetup.referenceSets.length,
+    },
+  });
+
+  return {
+    shots,
+    productionEntities: productionSetup.entities,
+    productionReferenceSets: productionSetup.referenceSets,
+    message: "文字分镜已确认，人物和场景设定清单已同步更新。",
   };
 }
 

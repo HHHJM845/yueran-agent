@@ -1746,7 +1746,7 @@ async function seedStoryboardImageAndVideo(
         projectId,
         sceneId,
         storyboardReviewTitle,
-        "UI 巡检样例分镜图片三批审核任务。",
+        "UI 巡检样例分镜图片全量审核任务。",
         storyboardReviewToken,
         storyboardReviewCode,
         asJson({ marker: UI_INSPECTION_MARKER, sceneId, shotIds, selectedImageIds }),

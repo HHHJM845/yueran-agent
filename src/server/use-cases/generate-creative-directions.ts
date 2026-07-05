@@ -9,6 +9,7 @@ import {
   createCreativeDirections,
   listProjectCreativeDirections,
 } from "@/server/repositories/creative-directions";
+import { createCreativeExpansions } from "@/server/repositories/creative-expansions";
 import { appendJobEvent, createJob, getJobInput, updateJobStatus } from "@/server/repositories/jobs";
 import { listScoringRules } from "@/server/repositories/scoring-rules";
 import { searchProjectMaterials } from "@/server/use-cases/material-search";
@@ -33,6 +34,22 @@ const flexibleTags = z.preprocess((value) => {
   return [];
 }, z.array(z.string()).default([]));
 
+const storyArcSchema = z.preprocess((value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const record = value as Record<string, unknown>;
+  return Object.fromEntries(Object.entries(record).map(([key, item]) => [key, formatUnknownValue(item)]));
+}, z.record(z.string(), z.string()).default({}));
+
+const creativeDirectionStoryOutlineSchema = z.object({
+  title: flexibleString,
+  oneLiner: flexibleString,
+  storyArc: storyArcSchema,
+  visualHighlights: flexibleTags.optional().default([]),
+  visualStyle: flexibleString,
+  productionDifficulty: flexibleString,
+  riskNotes: flexibleString.optional().default(""),
+});
+
 const creativeDirectionSchema = z.object({
   title: flexibleString,
   coreIdea: flexibleString,
@@ -45,6 +62,7 @@ const creativeDirectionSchema = z.object({
   technicalDifficulty: flexibleString.optional().default(""),
   atmospherePrompt: flexibleString.optional().default(""),
   detail: z.unknown().default({}),
+  storyOutline: creativeDirectionStoryOutlineSchema,
 });
 
 const creativeDirectionResponseSchema = z.object({
@@ -127,8 +145,8 @@ export async function runCreativeDirectionGenerationJob(jobId: string, options: 
 
     const response = await callArkJson({
       model: env.ARK_TEXT_STRUCTURING_MODEL,
-      timeoutMs: 90_000,
-      maxOutputTokens: 1800,
+      timeoutMs: 180_000,
+      maxOutputTokens: 3000,
       telemetry: {
         projectId: job.projectId,
         jobId,
@@ -145,7 +163,7 @@ export async function runCreativeDirectionGenerationJob(jobId: string, options: 
         {
           role: "system",
           content:
-            "你是 AIGC 视频商业项目的创意总监。基于输入资料生成恰好 4 个 SOP 3 创意视觉提案方向。只输出严格 JSON：{ directions: [...] }。每个 direction 必须包含 title, coreIdea, fitReason，可选 referenceTags 和 score。每项都要简短，适配三维风格和写实风格，不要 Markdown。",
+            "你是 AIGC 视频商业项目的创意总监。基于输入资料生成恰好 4 张 SOP 3 创意方向卡。只输出严格 JSON：{ directions: [...] }，不要 Markdown。每个 direction 必须包含 title, coreIdea, fitReason, referenceTags, score, riskNotes, costEstimate, cycleEstimate, technicalDifficulty, atmospherePrompt, storyOutline。storyOutline 是这张方向卡内的简短故事梗概，不是 Round 2 深化故事稿；必须包含 title, oneLiner, storyArc, visualHighlights, visualStyle, productionDifficulty, riskNotes。storyArc 至少包含 beginning, development, turn, ending。每项使用短句，适配三维风格和写实风格。",
         },
         {
           role: "user",
@@ -155,13 +173,15 @@ export async function runCreativeDirectionGenerationJob(jobId: string, options: 
     });
 
     const parsed = creativeDirectionResponseSchema.parse(response);
-    const normalizedDirections = normalizeCreativeDirections(normalizeDirections(parsed.directions, context));
+    const normalizedBundles = normalizeDirectionBundles(parsed.directions, context);
+    const normalizedDirections = normalizeCreativeDirections(normalizedBundles.map((bundle) => bundle.direction));
+    const storyOutlines = normalizedBundles.map((bundle) => bundle.storyOutline);
 
     if (normalizedDirections.length !== 4) {
       throw new AppError({
         status: 502,
         code: "creative_direction_count_too_low",
-        userMessage: "模型没有返回恰好 4 个创意方向。请稍后重试，或补充更多需求和样片信息后再生成。",
+        userMessage: "模型没有返回恰好 4 张带故事大纲的方向卡。请稍后重试，或补充更多需求和样片信息后再生成。",
       });
     }
 
@@ -176,14 +196,35 @@ export async function runCreativeDirectionGenerationJob(jobId: string, options: 
     });
     await archiveProjectCreativeDirections({ projectId: job.projectId, sourceJobId: jobId });
 
+    const savedStoryOutlines = (
+      await Promise.all(
+        savedDirections.map((direction, index) =>
+          createCreativeExpansions({
+            projectId: job.projectId,
+            directionId: direction.id,
+            sourceJobId: jobId,
+            createdBy: parsedInput.requestedBy ?? null,
+            expansions: [
+              {
+                ...storyOutlines[index],
+                sortOrder: 1,
+              },
+            ],
+          })
+        )
+      )
+    ).flat();
+
     const artifact = await createArtifact({
       projectId: job.projectId,
       kind: "creative_direction",
-      title: "4 个创意方向",
+      title: "4 个创意方向卡片",
       status: "draft",
       data: {
         directionIds: savedDirections.map((direction) => direction.id),
+        storyOutlineIds: savedStoryOutlines.map((outline) => outline.id),
         directions: savedDirections,
+        storyOutlines: savedStoryOutlines,
         source: {
           structuredRequirementCount: context.structuredRequirementCount,
           assetAnalysisCount: context.assetAnalysisCount,
@@ -201,8 +242,9 @@ export async function runCreativeDirectionGenerationJob(jobId: string, options: 
       title: "豆包已返回创意方向",
       payload: {
         directionCount: savedDirections.length,
+        storyOutlineCount: savedStoryOutlines.length,
       },
-      userMessage: "4 个创意方向已生成，并保存到项目工作台。",
+      userMessage: "4 张创意方向卡片已生成，并带有卡片内故事大纲。",
       at: new Date().toISOString(),
     });
 
@@ -215,8 +257,9 @@ export async function runCreativeDirectionGenerationJob(jobId: string, options: 
       payload: {
         artifactKind: artifact.kind,
         directionCount: savedDirections.length,
+        storyOutlineCount: savedStoryOutlines.length,
       },
-      userMessage: "创意方向卡片已保存。你可以人工改写或多选进入深化。",
+      userMessage: "创意方向卡片和卡内故事大纲已保存。你可以阅读后单选或多选进入 Round 1。",
       at: new Date().toISOString(),
     });
 
@@ -227,15 +270,18 @@ export async function runCreativeDirectionGenerationJob(jobId: string, options: 
       currentStage: "creative_direction_proposal",
       projectStatus: "in_progress",
       jobId,
-      title: "技术可行性评估已完成",
-      userMessage: "4 个创意方向已生成，项目已进入两轮创意视觉提案阶段。",
+      title: "接单风险评估已完成",
+      userMessage: "4 张创意方向卡片已生成并包含故事大纲，项目已进入两轮创意视觉提案阶段。",
       outputRefs: [
         { type: "artifact", id: artifact.id, kind: artifact.kind },
         ...savedDirections.map((direction) => ({ type: "creative_direction", id: direction.id })),
+        ...savedStoryOutlines.map((outline) => ({ type: "creative_expansion", id: outline.id })),
       ],
       snapshot: {
         directionCount: savedDirections.length,
         directionIds: savedDirections.map((direction) => direction.id),
+        storyOutlineCount: savedStoryOutlines.length,
+        storyOutlineIds: savedStoryOutlines.map((outline) => outline.id),
       },
     });
 
@@ -243,15 +289,15 @@ export async function runCreativeDirectionGenerationJob(jobId: string, options: 
       type: "job.completed",
       jobId,
       projectId: job.projectId,
-      title: "创意方向生成完成",
-      userMessage: "4 个创意方向生成完成。",
+      title: "创意方向卡片生成完成",
+      userMessage: "4 张创意方向卡片和卡内故事大纲已生成。",
       at: new Date().toISOString(),
     });
 
     await updateJobStatus(jobId, {
       status: "succeeded",
       currentStep: "completed",
-      userMessage: "4 个创意方向生成完成。",
+      userMessage: "4 张创意方向卡片和卡内故事大纲已生成。",
     });
 
     return { jobId, directions: await listProjectCreativeDirections(job.projectId), artifact };
@@ -268,7 +314,7 @@ export async function runCreativeDirectionGenerationJob(jobId: string, options: 
       currentStage: "technical_feasibility",
       projectStatus: "blocked",
       jobId,
-      title: "技术可行性评估被阻塞",
+      title: "接单风险评估被阻塞",
       userMessage,
       errorMessage: userMessage,
     });
@@ -387,11 +433,17 @@ function buildMaterialQueryText(input: {
     .join("\n");
 }
 
-function normalizeDirections(directions: Array<z.infer<typeof creativeDirectionSchema>>, context: Awaited<ReturnType<typeof collectCreativeContext>>) {
+function normalizeDirectionBundles(directions: Array<z.infer<typeof creativeDirectionSchema>>, context: Awaited<ReturnType<typeof collectCreativeContext>>) {
   const contextTags = collectContextTags(context);
   return directions
-    .map((direction, index) => enrichDirection(direction, index, contextTags))
-    .filter((direction) => direction.title && direction.coreIdea && direction.fitReason);
+    .map((direction, index) => {
+      const enrichedDirection = enrichDirection(direction, index, contextTags);
+      return {
+        direction: enrichedDirection,
+        storyOutline: enrichStoryOutline(direction.storyOutline, enrichedDirection),
+      };
+    })
+    .filter((bundle) => bundle.direction.title && bundle.direction.coreIdea && bundle.direction.fitReason && bundle.storyOutline.oneLiner);
 }
 
 function enrichDirection(direction: z.infer<typeof creativeDirectionSchema>, index: number, contextTags: string[]) {
@@ -424,6 +476,42 @@ function enrichDirection(direction: z.infer<typeof creativeDirectionSchema>, ind
       generationMode: "model_core_with_rule_enrichment",
       enrichmentBasis: "系统根据项目标签、创意文本和制作复杂度补齐成本周期风险字段。",
     },
+  };
+}
+
+type DirectionForStoryOutline = ReturnType<typeof enrichDirection>;
+
+function enrichStoryOutline(
+  outline: z.infer<typeof creativeDirectionStoryOutlineSchema>,
+  direction: DirectionForStoryOutline
+) {
+  const title = outline.title.trim() || `${direction.title}故事大纲`;
+  const oneLiner = outline.oneLiner.trim() || direction.coreIdea;
+  const storyArc = normalizeStoryArc(outline.storyArc, oneLiner);
+  const visualHighlights = outline.visualHighlights.map((item) => item.trim()).filter(Boolean).slice(0, 5);
+
+  return {
+    title,
+    oneLiner,
+    storyArc,
+    visualHighlights: visualHighlights.length > 0 ? visualHighlights : direction.referenceTags.slice(0, 3),
+    visualStyle: outline.visualStyle.trim() || direction.atmospherePrompt,
+    productionDifficulty: outline.productionDifficulty.trim() || direction.technicalDifficulty,
+    riskNotes: outline.riskNotes.trim() || direction.riskNotes,
+  };
+}
+
+function normalizeStoryArc(storyArc: Record<string, string>, fallback: string) {
+  const beginning = (storyArc.beginning ?? "").trim();
+  const development = (storyArc.development ?? "").trim();
+  const turn = (storyArc.turn ?? "").trim();
+  const ending = (storyArc.ending ?? "").trim();
+
+  return {
+    beginning: beginning || fallback,
+    development: development || "产品或服务进入目标用户的真实使用场景，逐步放大核心卖点。",
+    turn: turn || "通过一个有记忆点的视觉转折，让品牌价值被自然看见。",
+    ending: ending || "以清晰的品牌露出和行动暗示收束，形成完整商业记忆点。",
   };
 }
 
@@ -464,9 +552,10 @@ function buildCompactCreativePrompt(context: Awaited<ReturnType<typeof collectCr
     .join("\n");
 
   return [
-    "请为这个 AIGC 视频项目生成恰好 4 个可供 SOP 3 两轮创意视觉提案使用的创意方向。",
-    "输出严格 JSON：{ directions: [{ title, coreIdea, fitReason, referenceTags, score }] }。",
-    "每个 title 不超过 14 个汉字；coreIdea 和 fitReason 各不超过 45 个汉字；referenceTags 最多 5 个；score 为 0-100。",
+    "请为这个 AIGC 视频项目生成恰好 4 张可供 SOP 3 两轮创意视觉提案使用的创意方向卡。",
+    "输出严格 JSON：{ directions: [{ title, coreIdea, fitReason, referenceTags, score, riskNotes, costEstimate, cycleEstimate, technicalDifficulty, atmospherePrompt, storyOutline }] }。",
+    "每个 direction 的 storyOutline 是卡片内简短故事梗概，包含 title, oneLiner, storyArc, visualHighlights, visualStyle, productionDifficulty, riskNotes；它用于 Round 1 判断方向，不写成长篇。",
+    "每个方向 title 不超过 14 个汉字；coreIdea 和 fitReason 各不超过 45 个汉字；storyOutline.oneLiner 不超过 36 个汉字；storyArc 每段不超过 28 个汉字；referenceTags 最多 5 个；score 为 0-100。",
     "业务偏好：三维风格、写实风格、商业广告片质感。",
     requirementSummaries ? `客户需求：\n${requirementSummaries}` : "",
     analysisSummaries ? `资料分析：\n${analysisSummaries}` : "",

@@ -5,6 +5,7 @@ import { requireUser } from "@/server/auth/session";
 import { saveProjectContract } from "@/server/use-cases/save-contract";
 
 const saveContractRequestSchema = z.object({
+  mode: z.enum(["vendor_provided", "client_provided"]).optional(),
   title: z.string(),
   templateKey: z.string().optional(),
   templateFields: z.object({
@@ -23,6 +24,7 @@ const saveContractRequestSchema = z.object({
   proposalId: z.string().uuid().nullable().optional(),
   quoteId: z.string().uuid().nullable().optional(),
   clientContractAssetId: z.string().uuid().nullable().optional(),
+  signedContractAssetId: z.string().uuid().nullable().optional(),
 });
 
 export async function POST(request: Request, context: { params: Promise<{ projectId: string }> }) {
@@ -37,6 +39,7 @@ export async function POST(request: Request, context: { params: Promise<{ projec
       projectId,
       actorId: user.id,
       title: body.title,
+      mode: body.mode,
       templateKey: body.templateKey,
       templateFields: {
         partyAName: body.templateFields.partyAName,
@@ -54,6 +57,7 @@ export async function POST(request: Request, context: { params: Promise<{ projec
       proposalId: body.proposalId,
       quoteId: body.quoteId,
       clientContractAssetId: body.clientContractAssetId,
+      signedContractAssetId: body.signedContractAssetId,
     });
 
     return Response.json({

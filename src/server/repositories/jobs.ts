@@ -244,6 +244,8 @@ export async function scheduleJobRetry(input: {
     recoverable: status !== "failed",
     at: new Date().toISOString(),
   });
+
+  return result.rows[0] ?? null;
 }
 
 export async function recoverExpiredProcessingJobs() {

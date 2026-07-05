@@ -62,6 +62,7 @@ export async function generateArkImageToVideo(input: {
   model: string;
   prompt: string;
   imageUrl: string;
+  durationSeconds?: number;
   telemetry?: ArkVideoTelemetry;
   timeoutMs?: number;
 }): Promise<ArkVideoGenerationResult> {
@@ -73,6 +74,7 @@ export async function generateArkImageToVideo(input: {
       model: input.model,
       prompt: input.prompt,
       imageUrl: input.imageUrl,
+      durationSeconds: input.durationSeconds,
       timeoutMs: Math.min(timeoutMs, 90_000),
     });
 
@@ -117,6 +119,7 @@ async function createArkVideoTask(input: {
   model: string;
   prompt: string;
   imageUrl: string;
+  durationSeconds?: number;
   timeoutMs: number;
 }) {
   const response = await fetch(`${arkBaseUrl()}/contents/generations/tasks`, {
@@ -139,7 +142,7 @@ async function createArkVideoTask(input: {
       ],
       resolution: "720p",
       ratio: "16:9",
-      duration: 5,
+      duration: input.durationSeconds ?? 5,
       watermark: false,
       generate_audio: false,
     }),

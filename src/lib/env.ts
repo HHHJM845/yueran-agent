@@ -1,8 +1,13 @@
 import { z } from "zod";
 
 const envSchema = z.object({
-  DATABASE_PROVIDER: z.string().default("postgres"),
+  DATABASE_PROVIDER: z.string().default("supabase"),
   DATABASE_URL: z.string().optional(),
+  SUPABASE_URL: z.string().optional(),
+  SUPABASE_PUBLISHABLE_KEY: z.string().optional(),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
+  NEXT_PUBLIC_SUPABASE_URL: z.string().optional(),
+  NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: z.string().optional(),
   ASSET_STORAGE_PROVIDER: z.string().default("aliyun_oss"),
   ALIYUN_OSS_REGION: z.string().optional(),
   ALIYUN_OSS_ENDPOINT: z.string().optional(),
@@ -10,6 +15,7 @@ const envSchema = z.object({
   ALIYUN_OSS_ACCESS_KEY_ID: z.string().optional(),
   ALIYUN_OSS_ACCESS_KEY_SECRET: z.string().optional(),
   TEXT_STRUCTURING_PROVIDER: z.string().default("volcengine_ark"),
+  SPEECH_TRANSCRIPTION_PROVIDER: z.string().default("volcengine_ark"),
   IMAGE_VIDEO_UNDERSTANDING_PROVIDER: z.string().default("volcengine_ark"),
   ATMOSPHERE_IMAGE_PROVIDER: z.string().default("openai"),
   STORYBOARD_IMAGE_PROVIDER: z.string().default("volcengine_ark"),
@@ -18,6 +24,7 @@ const envSchema = z.object({
   ARK_API_KEY: z.string().optional(),
   ARK_BASE_URL: z.string().default("https://ark.cn-beijing.volces.com/api/v3"),
   ARK_TEXT_STRUCTURING_MODEL: z.string().default("doubao-seed-2-1-pro-260628"),
+  ARK_SPEECH_TRANSCRIPTION_MODEL: z.string().default("doubao-seed-2-0-mini"),
   ARK_IMAGE_VIDEO_UNDERSTANDING_MODEL: z.string().default("doubao-seed-2-0-lite-260215"),
   ARK_IMAGE_GENERATION_MODEL: z.string().default("doubao-seedream-4-0-250828"),
   ARK_VIDEO_GENERATION_MODEL: z.string().default("doubao-seedance-1-5-pro-251215"),
@@ -34,9 +41,49 @@ const envSchema = z.object({
 
 export const env = envSchema.parse(process.env);
 
+const databaseUrlPlaceholderFragments = [
+  "PASTE_SUPABASE_POSTGRES_CONNECTION_STRING_HERE",
+  "YOUR_DATABASE_PASSWORD",
+  "REPLACE_WITH_SUPABASE_DATABASE_PASSWORD",
+  "your-project-ref",
+  "aws-0-region",
+];
+
+export function isConfiguredDatabaseUrl(databaseUrl: string | undefined, provider = env.DATABASE_PROVIDER): databaseUrl is string {
+  const normalizedUrl = databaseUrl?.trim() ?? "";
+  if (!normalizedUrl) return false;
+
+  if (databaseUrlPlaceholderFragments.some((fragment) => normalizedUrl.includes(fragment))) {
+    return false;
+  }
+
+  if (provider !== "supabase") return true;
+
+  return normalizedUrl.includes("supabase.co") || normalizedUrl.includes("pooler.supabase.com");
+}
+
 export function getConfigurationStatus() {
+  const databaseLabel =
+    env.DATABASE_PROVIDER === "supabase" ? "Supabase Postgres 数据库连接" : "Postgres 数据库连接";
+  const databaseConfigured = isConfiguredDatabaseUrl(env.DATABASE_URL);
+
   const checks = [
-    { key: "DATABASE_URL", label: "Postgres 数据库连接", configured: Boolean(env.DATABASE_URL) },
+    { key: "DATABASE_URL", label: databaseLabel, configured: databaseConfigured },
+    {
+      key: "SUPABASE_URL",
+      label: "Supabase 项目 URL",
+      configured: env.DATABASE_PROVIDER !== "supabase" || Boolean(env.SUPABASE_URL),
+    },
+    {
+      key: "SUPABASE_PUBLISHABLE_KEY",
+      label: "Supabase Publishable Key",
+      configured: env.DATABASE_PROVIDER !== "supabase" || Boolean(env.SUPABASE_PUBLISHABLE_KEY),
+    },
+    {
+      key: "SUPABASE_SERVICE_ROLE_KEY",
+      label: "Supabase Service Role Key",
+      configured: env.DATABASE_PROVIDER !== "supabase" || Boolean(env.SUPABASE_SERVICE_ROLE_KEY),
+    },
     {
       key: "ALIYUN_OSS_ACCESS_KEY_ID",
       label: "阿里云 OSS AccessKey ID",
@@ -60,6 +107,7 @@ export function getConfigurationStatus() {
     checks,
     models: {
       textStructuring: env.ARK_TEXT_STRUCTURING_MODEL,
+      speechTranscription: env.ARK_SPEECH_TRANSCRIPTION_MODEL,
       imageVideoUnderstanding: env.ARK_IMAGE_VIDEO_UNDERSTANDING_MODEL,
       atmosphereImage: env.OPENAI_IMAGE_MODEL,
       storyboardImage: env.ARK_IMAGE_GENERATION_MODEL,

@@ -44,17 +44,33 @@ test("normalizeWorkloadEstimate sorts reversed price values", async () => {
   assert.equal(estimate.priceRange.maxCny, 80000);
 });
 
-test("normalizeSop4DeliveryChecklistStatus rejects confirmed in SOP 4", async () => {
+test("normalizeSop4DeliveryChecklistStatus allows confirmed in SOP 4 and rejects archived", async () => {
   const { normalizeSop4DeliveryChecklistStatus } = await import("./workload-estimate.ts");
 
+  assert.equal(normalizeSop4DeliveryChecklistStatus("confirmed"), "confirmed");
   assert.throws(
-    () => normalizeSop4DeliveryChecklistStatus("confirmed"),
+    () => normalizeSop4DeliveryChecklistStatus("archived"),
     (error) =>
       error &&
       typeof error === "object" &&
       "code" in error &&
       error.code === "delivery_checklist_status_not_supported_in_sop4"
   );
+});
+
+test("confirmed SOP 4 delivery checklist advances the project into SOP 5", async () => {
+  const source = await import("node:fs/promises").then((fs) =>
+    fs.readFile(new URL("./workload-estimate.ts", import.meta.url), "utf8")
+  );
+
+  assert.match(source, /import\s+\{\s*recordStageProgress\s*\}\s+from\s+"@\/server\/use-cases\/stage-progress"/);
+  assert.match(source, /if\s*\(\s*status\s*===\s*"confirmed"\s*\)/);
+  assert.match(source, /stageKey:\s*"selection_quote_contract"/);
+  assert.match(source, /status:\s*"completed"/);
+  assert.match(source, /currentStage:\s*"script_storyboard_confirmation"/);
+  assert.match(source, /projectStatus:\s*"in_progress"/);
+  assert.doesNotMatch(source, /if\s*\(\s*status\s*===\s*"draft"[\s\S]*recordStageProgress/);
+  assert.doesNotMatch(source, /if\s*\(\s*status\s*===\s*"changed"[\s\S]*recordStageProgress/);
 });
 
 test("normalizeSop4WorkloadEstimateStatus rejects confirmed and archived in SOP 4", async () => {
@@ -101,6 +117,26 @@ test("SOP 4 workload estimate requires approved SOP 3 round 2 client review", as
       { roundNumber: 2, status: "client_approved", clientReviewTaskId: "review-round-2" },
     ])
   );
+});
+
+test("SOP 4 AI workload estimate uses approved proposal context and saves generated draft", async () => {
+  const source = await import("node:fs/promises").then((fs) =>
+    fs.readFile(new URL("./workload-estimate.ts", import.meta.url), "utf8")
+  );
+
+  assert.match(source, /import\s+\{\s*assertTextStructuringReady\s*\}\s+from\s+"@\/server\/providers\/ai"/);
+  assert.match(source, /import\s+\{\s*callArkJson\s*\}\s+from\s+"@\/server\/providers\/ark"/);
+  assert.match(source, /listProjectCreativeDirections/);
+  assert.match(source, /listProjectCreativeExpansions/);
+  assert.match(source, /export\s+async\s+function\s+generateProjectWorkloadEstimateDraft/);
+  assert.match(source, /const\s+aiConfig\s*=\s*assertTextStructuringReady\(\)/);
+  assert.match(source, /callArkJson<AiWorkloadEstimateResponse>/);
+  assert.match(source, /operation:\s*"sop4_workload_estimate"/);
+  assert.match(source, /workload_estimate_model_output_invalid/);
+  assert.match(source, /status:\s*"generated"/);
+  assert.match(source, /sourceRoundId:\s*approvedRound2\.id/);
+  assert.match(source, /已确认的 SOP 3 第二轮创意提案/);
+  assert.match(source, /建议价格区间/);
 });
 
 test("normalizeSop4ChecklistItemStatus rejects confirmed item status in SOP 4", async () => {

@@ -21,7 +21,7 @@ export async function POST(request: Request, context: { params: Promise<{ projec
     const body = uploadUrlSchema.parse(await request.json());
     const { maxBytes } = assertSupportedAssetFile(body);
     const objectKey = createProjectAssetObjectKey(projectId, body.fileName);
-    const uploadUrl = createUploadUrl(objectKey);
+    const uploadUrl = createUploadUrl(objectKey, { contentType: body.mimeType });
 
     return Response.json({
       ok: true,
@@ -30,7 +30,7 @@ export async function POST(request: Request, context: { params: Promise<{ projec
         objectUrl: getOssObjectUrl(objectKey),
         objectKey,
         method: "PUT",
-        headers: {},
+        headers: { "Content-Type": body.mimeType },
         expiresInSeconds: 900,
         maxBytes,
       },

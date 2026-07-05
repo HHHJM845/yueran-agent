@@ -1,22 +1,27 @@
 import { Pool, type PoolClient, type QueryResult, type QueryResultRow } from "pg";
-import { env } from "@/lib/env";
+import { env, isConfiguredDatabaseUrl } from "@/lib/env";
 import { AppError } from "@/lib/errors";
 
 let pool: Pool | null = null;
 
 function getPool() {
-  if (!env.DATABASE_URL) {
+  const databaseUrl = env.DATABASE_URL;
+
+  if (!isConfiguredDatabaseUrl(databaseUrl)) {
     throw new AppError({
       status: 503,
       code: "database_not_configured",
-      userMessage: "Postgres 数据库连接还没有配置。请在 DATABASE_URL 中填入数据库连接后再查看真实项目数据。",
+      userMessage:
+        env.DATABASE_PROVIDER === "supabase"
+          ? "Supabase 数据库连接还没有配置完成。请在 DATABASE_URL 中填入 Supabase Dashboard 提供的 Postgres 连接串后再查看真实项目数据。"
+          : "Postgres 数据库连接还没有配置。请在 DATABASE_URL 中填入数据库连接后再查看真实项目数据。",
     });
   }
 
   if (!pool) {
     pool = new Pool({
-      connectionString: env.DATABASE_URL,
-      ssl: env.DATABASE_URL.includes("sslmode=require") ? undefined : { rejectUnauthorized: false },
+      connectionString: databaseUrl,
+      ssl: databaseUrl.includes("sslmode=require") ? undefined : { rejectUnauthorized: false },
     });
 
     pool.on("error", (error) => {
@@ -120,7 +125,14 @@ function sanitizeDiagnostic(error: unknown) {
 function isTransientDatabaseError(error: unknown) {
   if (!(error instanceof Error)) return false;
   const message = error.message.toLowerCase();
-  return message.includes("connection terminated") || message.includes("connection timeout") || message.includes("socket") || message.includes("econnreset");
+  return (
+    message.includes("connection terminated") ||
+    message.includes("connection timeout") ||
+    message.includes("timeout") ||
+    message.includes("etimedout") ||
+    message.includes("socket") ||
+    message.includes("econnreset")
+  );
 }
 
 function delay(ms: number) {

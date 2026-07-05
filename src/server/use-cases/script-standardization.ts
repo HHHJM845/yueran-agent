@@ -50,6 +50,9 @@ const standardizeResponseSchema = z.object({
   notes: z.array(z.string().trim()).optional(),
 });
 
+const sceneTimeTokenPattern =
+  "(?:日|夜|白天|晚上|清晨|早晨|晨|上午|中午|下午|傍晚|黄昏|破晓|拂晓|黎明|日出|凌晨|午夜|深夜)";
+
 export function validateStandardScriptFormat(script: string): ScriptFormatValidationResult {
   const lines = parseScriptLines(script);
   const issues: ScriptFormatIssue[] = [];
@@ -504,10 +507,12 @@ function isSceneHeading(line: string) {
 function isCompleteSceneHeading(line: string) {
   if (!isSceneHeading(line)) return false;
   const headingBody = line.replace(/^(?:第\s*)?[\d一二三四五六七八九十百]+\s*[-－]\s*[\d一二三四五六七八九十百]+\s*场?\s*/, "").trim();
-  const hasTime = /(^|[\s/])(?:日|夜|白天|晚上|清晨|傍晚|黄昏)(?=$|[\s/])/.test(headingBody);
+  const timeTokenRegex = new RegExp(`(^|[\\s/])${sceneTimeTokenPattern}(?=$|[\\s/])`);
+  const timeTokenGlobalRegex = new RegExp(`(^|[\\s/])${sceneTimeTokenPattern}(?=$|[\\s/])`, "g");
+  const hasTime = timeTokenRegex.test(headingBody);
   const hasInterior = /(^|[\s/])(?:内|外|内外)(?=$|[\s/])/.test(headingBody);
   const location = headingBody
-    .replace(/(^|[\s/])(?:日|夜|白天|晚上|清晨|傍晚|黄昏)(?=$|[\s/])/g, " ")
+    .replace(timeTokenGlobalRegex, " ")
     .replace(/(^|[\s/])(?:内|外|内外)(?=$|[\s/])/g, " ")
     .trim();
   return hasTime && hasInterior && location.length > 0;

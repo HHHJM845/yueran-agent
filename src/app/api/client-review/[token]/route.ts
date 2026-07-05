@@ -1,11 +1,10 @@
 import { jsonError } from "@/lib/errors";
-import { loadClientReviewByToken, submitClientReviewByToken } from "@/server/use-cases/client-review";
+import { loadClientReviewUnlockPrompt, submitClientReviewByToken } from "@/server/use-cases/client-review";
 
 export async function GET(_request: Request, context: { params: Promise<{ token: string }> }) {
   try {
-    const { token } = await context.params;
-    const result = await loadClientReviewByToken(token);
-    return Response.json({ ok: true, data: result });
+    await context.params;
+    return Response.json({ ok: true, data: loadClientReviewUnlockPrompt() });
   } catch (error) {
     return jsonError(error);
   }

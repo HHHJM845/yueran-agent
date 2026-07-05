@@ -10,7 +10,7 @@ export type StoryboardImageBatchStatus =
 
 export type StoryboardImageBatchItemStatus = "pending" | "approved" | "rejected" | "needs_revision" | "locked";
 export type StoryboardImageVersionStatus = "draft" | "selected" | "client_reviewing" | "client_rejected" | "client_approved" | "locked";
-export type StoryboardImageBatchNumber = 1 | 2 | 3;
+export type StoryboardImageBatchNumber = number;
 
 export type StoryboardImageBatchItemView = {
   id: string;
@@ -58,8 +58,8 @@ export type StoryboardImageVersionView = {
 
 export type CreateStoryboardImageBatchInput = {
   projectId: string;
-  batchNumber: StoryboardImageBatchNumber;
-  sceneIds: string[];
+  batchNumber?: StoryboardImageBatchNumber | null;
+  sceneIds?: string[];
   actorId: string;
 };
 
@@ -171,16 +171,25 @@ export async function getStoryboardImageBatch(input: { projectId: string; batchI
 
 export async function createStoryboardImageBatch(input: CreateStoryboardImageBatchInput): Promise<StoryboardImageBatchView> {
   return withTransaction(async (tx) => {
-    const nextVersion = await tx<{ next_version: number }>(
-      `select coalesce(max(version), 0) + 1 as next_version
+    const nextBatchNumber = await tx<{ next_batch_number: number }>(
+      `select coalesce(max(batch_number), 0) + 1 as next_batch_number
        from storyboard_image_batches
-       where project_id = $1 and batch_number = $2`,
-      [input.projectId, input.batchNumber]
+       where project_id = $1`,
+      [input.projectId]
     );
-    const version = Number(nextVersion.rows[0]?.next_version ?? 1);
+    const batchNumber = input.batchNumber ?? Number(nextBatchNumber.rows[0]?.next_batch_number ?? 1);
+    const sceneResult = await tx<{ id: string }>(
+      `select id
+       from storyboard_scenes
+       where project_id = $1
+       order by scene_number asc, updated_at asc`,
+      [input.projectId]
+    );
+    const sceneIds = input.sceneIds && input.sceneIds.length > 0 ? input.sceneIds : sceneResult.rows.map((scene) => scene.id);
+    const version = 1;
     const snapshot = {
-      batchNumber: input.batchNumber,
-      sceneIds: input.sceneIds,
+      batchNumber,
+      sceneIds,
       createdAt: new Date().toISOString(),
     };
     const batchResult = await tx<BatchRow>(
@@ -190,7 +199,7 @@ export async function createStoryboardImageBatch(input: CreateStoryboardImageBat
        values ($1, $2, 'draft', $3, $4::jsonb, $5::jsonb, $6, $6)
        returning id, project_id, batch_number, status, version, scene_ids, client_review_task_id,
                  snapshot_json, submitted_at, approved_at, updated_at`,
-      [input.projectId, input.batchNumber, version, JSON.stringify(input.sceneIds), JSON.stringify(snapshot), input.actorId]
+      [input.projectId, batchNumber, version, JSON.stringify(sceneIds), JSON.stringify(snapshot), input.actorId]
     );
     const batch = mapBatch(batchResult.rows[0], []);
     const shotResult = await tx<{ id: string; scene_id: string; sort_order: number }>(
@@ -199,7 +208,7 @@ export async function createStoryboardImageBatch(input: CreateStoryboardImageBat
        where project_id = $1
          and scene_id = any($2::uuid[])
        order by scene_id, sort_order asc`,
-      [input.projectId, input.sceneIds]
+      [input.projectId, sceneIds]
     );
     const items: StoryboardImageBatchItemView[] = [];
     for (const [index, shot] of shotResult.rows.entries()) {

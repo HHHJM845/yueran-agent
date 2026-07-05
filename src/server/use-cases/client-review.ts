@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { AppError } from "@/lib/errors";
 import { createReadUrlFromOssUrl } from "@/server/providers/oss";
@@ -20,6 +20,7 @@ import {
 import { listProjectArtifacts } from "@/server/repositories/artifacts";
 import { getProjectById } from "@/server/repositories/projects";
 import { getCreativeProposalRound, updateCreativeProposalRoundClientDecision } from "@/server/repositories/creative-proposals";
+import { listProjectCreativeDirections, type CreativeDirectionView } from "@/server/repositories/creative-directions";
 import { listProjectCreativeExpansions, type CreativeExpansionView } from "@/server/repositories/creative-expansions";
 import { listGeneratedImagesByIds, listProjectGeneratedImages } from "@/server/repositories/generated-images";
 import { getProjectProposal, updateProposalStatus } from "@/server/repositories/proposals";
@@ -44,18 +45,21 @@ import {
   listStoryboardImages,
   listStoryboardScenes,
   listStoryboardShots,
+  type ScriptDirectionPackageView,
+  type StoryboardImageView,
   updateScriptDirectionPackageStatus,
   updateStoryboardSceneStatus,
   updateStoryboardShotClientDecision,
 } from "@/server/repositories/story-production";
+import { ensureScriptPackageStandardizedForReview } from "@/server/use-cases/script-storyboard";
 import {
   listProductionEntities,
   listProductionReferenceSets,
   updateProjectProductionSetupStatus,
 } from "@/server/repositories/production-entities";
 import { recordStageProgress } from "@/server/use-cases/stage-progress";
-import { assertScriptPackageStandardized } from "@/server/use-cases/script-standardization";
-import { assertAllStoryboardImageBatchesApproved, latestStoryboardImageBatches } from "@/server/use-cases/storyboard-image-batches";
+import { assertAllStoryboardShotsClientApproved } from "@/server/use-cases/storyboard-image-batches";
+import { generateRiskCheckFromProject } from "@/server/use-cases/risk-check-card";
 
 const submitItemSchema = z.object({
   itemId: z.string().uuid(),
@@ -67,6 +71,10 @@ const submitItemSchema = z.object({
 const submitTimecodeAnnotationSchema = z.object({
   timeSeconds: z.coerce.number().min(0, "时间戳不能为负数"),
   feedback: z.string().trim().min(1, "请填写这个时间点的批注意见").max(1200, "单条时间戳意见不能超过 1200 个字符"),
+});
+
+const unlockClientReviewSchema = z.object({
+  verificationCode: z.string().trim().min(4, "请输入审核验证码或密钥"),
 });
 
 export const submitClientReviewSchema = z.object({
@@ -177,6 +185,7 @@ export async function createWorkflowClientReview(input: {
   });
   const spec = await buildWorkflowReviewSpec({
     projectId: input.projectId,
+    actorId: input.actorId,
     reviewType: parsed.reviewType,
     targetScopeId: parsed.targetScopeId ?? null,
     reviewScene: parsed.reviewScene ?? null,
@@ -247,7 +256,7 @@ export async function createWorkflowClientReview(input: {
 
   return {
     ...review,
-    reviewUrl: `${getLocalReviewOrigin(input.origin)}/client-review/${credentials.token}`,
+    reviewUrl: buildReviewUrlWithVerificationCode(input.origin, credentials.token, credentials.code),
     verificationCode: credentials.code,
   };
 }
@@ -295,7 +304,7 @@ export async function createReviewForStoryboardScene(input: {
     targetScopeType: "storyboard_scene",
     targetScopeId: input.sceneId,
     title: "分镜图片场次审核",
-    summary: "请按场次整体确认分镜图片；如需打回，请逐条分镜评分并填写修改意见。",
+    summary: "请逐条确认分镜图片 OK 或不 OK；不 OK 请填写原因和修改意见。",
     version,
     accessTokenHash: credentials.tokenHash,
     verificationCodeHash: credentials.codeHash,
@@ -335,7 +344,7 @@ export async function createReviewForStoryboardScene(input: {
     status: "waiting_review",
     currentStage: "storyboard_image_canvas",
     projectStatus: "waiting_review",
-    userMessage: "本场分镜图片已提交甲方审核，等待甲方按场次整体确认。",
+    userMessage: "本场分镜图片已提交甲方审核，等待甲方逐条确认。",
     inputRefs: [{ type: "storyboard_scene", id: input.sceneId }],
     outputRefs: [{ type: "client_review_task", id: review.task.id }],
     snapshot: { reviewTaskId: review.task.id, reviewType: "storyboard_scene_images" },
@@ -343,7 +352,7 @@ export async function createReviewForStoryboardScene(input: {
 
   return {
     ...review,
-    reviewUrl: `${getLocalReviewOrigin(input.origin)}/client-review/${credentials.token}`,
+    reviewUrl: buildReviewUrlWithVerificationCode(input.origin, credentials.token, credentials.code),
     verificationCode: credentials.code,
   };
 }
@@ -391,8 +400,47 @@ type WorkflowReviewSpec = {
   }>;
 };
 
+function resolveCurrentStoryboardImageForReview(images: StoryboardImageView[], shotId: string) {
+  const candidates = images
+    .filter((image) => image.shotId === shotId && image.ossUrl && image.generationStatus === "succeeded")
+    .sort((left, right) => {
+      if (left.isSelected !== right.isSelected) return left.isSelected ? -1 : 1;
+      return Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+    });
+  return candidates[0] ?? null;
+}
+
+function buildPreviousStoryboardBatchFeedback(items: Array<{
+  shotId: string | null;
+  status: string;
+  feedback: string;
+  feedbackPayload: Record<string, unknown>;
+  updatedAt: string;
+}>) {
+  const feedbackByShotId = new Map<string, {
+    status: string;
+    feedback: string;
+    feedbackPayload: Record<string, unknown>;
+    updatedAt: string;
+  }>();
+  for (const item of items) {
+    if (!item.shotId || item.status === "pending") continue;
+    const current = feedbackByShotId.get(item.shotId);
+    if (!current || Date.parse(item.updatedAt) > Date.parse(current.updatedAt)) {
+      feedbackByShotId.set(item.shotId, {
+        status: item.status,
+        feedback: item.feedback,
+        feedbackPayload: item.feedbackPayload,
+        updatedAt: item.updatedAt,
+      });
+    }
+  }
+  return feedbackByShotId;
+}
+
 async function buildWorkflowReviewSpec(input: {
   projectId: string;
+  actorId?: string | null;
   reviewType: Exclude<ClientReviewType, "storyboard_scene_images">;
   targetScopeId: string | null;
   reviewScene?: ClientReviewScene | null;
@@ -429,6 +477,7 @@ async function buildWorkflowReviewSpec(input: {
             brandName: project.brandName,
             projectName: project.projectName,
             previewText: summarizeUnknown(structuredRequirement?.data ?? project),
+            brief: (structuredRequirement?.data ?? null),
           },
         },
       ],
@@ -439,10 +488,11 @@ async function buildWorkflowReviewSpec(input: {
     const creativeRound = await getCreativeProposalRound({ projectId: input.projectId, roundId: input.targetScopeId });
     if (creativeRound) {
       const sceneLabel = creativeRound.roundNumber === 1 ? "第一轮" : "第二轮";
-      const imageSource = buildCreativeReviewImageSource({
-        generatedImages: await listProjectGeneratedImages(input.projectId),
-        expansions: await listProjectCreativeExpansions(input.projectId),
-      });
+      const [generatedImages, expansions, directions] = await Promise.all([
+        listProjectGeneratedImages(input.projectId),
+        listProjectCreativeExpansions(input.projectId),
+        listProjectCreativeDirections(input.projectId),
+      ]);
       return {
         moduleKey: "creative_visual_proposal",
         reviewType: "project_proposal",
@@ -451,26 +501,18 @@ async function buildWorkflowReviewSpec(input: {
         title: `${sceneLabel}创意视觉提案确认`,
         summary:
           creativeRound.roundNumber === 1
-            ? "请确认 4 个创意方向的优先级、保留方向和视觉偏好；如需调整，请打回并填写方向排序与偏好说明。"
+            ? "请查看第一轮完整提案包中的方向、故事卡和氛围图，确认保留方向与视觉偏好；如需调整，请打回并填写具体意见。"
             : "请确认第二轮深化后的脚本/视觉方向是否可进入报价合同模块；如需调整，请填写具体视觉偏好和修改意见。",
         payload: {
           project,
           creativeProposalRound: creativeRound,
         },
-        items: creativeRound.concepts.map((concept) => ({
-          itemType: "proposal" as const,
-          itemId: concept.id,
-          itemLabel: concept.title,
-          metadata: {
-            roundNumber: creativeRound.roundNumber,
-            directionId: concept.directionId,
-            directionTitle: readStringField(concept.snapshot, "directionTitle"),
-            sceneIndex: concept.sceneIndex,
-            requiredImageCount: concept.requiredImageCount,
-            candidateImages: buildCreativeReviewCandidateImages(getConceptReviewImages(concept, imageSource)),
-            previewText: summarizeText(`${concept.description}\n${concept.imagePrompt}`, 800),
-          },
-        })),
+        items: buildCreativeProposalReviewItems({
+          round: creativeRound,
+          directions,
+          generatedImages,
+          expansions,
+        }),
       };
     }
   }
@@ -568,6 +610,7 @@ async function buildWorkflowReviewSpec(input: {
           metadata: {
             version: contract.version,
             status: contract.status,
+            content: contract.content,
             previewText: summarizeText(contract.content, 1200),
           },
         },
@@ -642,8 +685,9 @@ async function buildWorkflowReviewSpec(input: {
         userMessage: "请先创建分镜图片批次，再生成甲方审核链接。",
       });
     }
-    const [batch, scenes, shots, images, imageVersions] = await Promise.all([
+    const [batch, batches, scenes, shots, images, imageVersions] = await Promise.all([
       getStoryboardImageBatch({ projectId: input.projectId, batchId }),
+      listStoryboardImageBatches(input.projectId),
       listStoryboardScenes(input.projectId),
       listStoryboardShots(input.projectId),
       listStoryboardImages(input.projectId),
@@ -657,7 +701,11 @@ async function buildWorkflowReviewSpec(input: {
       });
     }
     const batchScenes = scenes.filter((scene) => batch.sceneIds.includes(scene.id));
-    const batchShots = shots.filter((shot) => batch.sceneIds.includes(shot.sceneId));
+    const batchShots = sortStoryboardBatchReviewShots(
+      shots.filter((shot) => batch.sceneIds.includes(shot.sceneId)),
+      batchScenes,
+      batch.sceneIds,
+    );
     if (batchShots.length === 0) {
       throw new AppError({
         status: 422,
@@ -665,23 +713,29 @@ async function buildWorkflowReviewSpec(input: {
         userMessage: "这个批次还没有关联文字分镜，不能提交甲方审核。",
       });
     }
-    const selectedImages = images.filter((image) => batchShots.some((shot) => shot.id === image.shotId) && image.isSelected);
-    const missingImage = batchShots.find((shot) => !selectedImages.some((image) => image.shotId === shot.id));
+    const selectedImages = batchShots
+      .map((shot) => resolveCurrentStoryboardImageForReview(images, shot.id))
+      .filter((image): image is StoryboardImageView => Boolean(image));
+    const selectedImageByShotId = new Map(selectedImages.map((image) => [image.shotId, image]));
+    const missingImage = batchShots.find((shot) => !selectedImageByShotId.has(shot.id));
     if (missingImage) {
       throw new AppError({
         status: 422,
         code: "storyboard_image_batch_incomplete",
-        userMessage: `分镜 ${missingImage.shotNumber} 还没有内部确认的正式图片。请先确认本批全部分镜图，再提交甲方审核。`,
+        userMessage: `分镜 ${missingImage.shotNumber} 还没有可提交的图片。请先生成图片，再保存当前批次并提交甲方审核。`,
       });
     }
     const batchImageVersions = imageVersions.filter((version) => batchShots.some((shot) => shot.id === version.shotId));
+    const previousFeedbackByShotId = buildPreviousStoryboardBatchFeedback(
+      batches.filter((item) => item.id !== batch.id).flatMap((item) => item.items)
+    );
     return {
       moduleKey: "storyboard_image_canvas",
       reviewType: "storyboard_image_batch",
       targetScopeType: "storyboard_image_batch",
       targetScopeId: batch.id,
-      title: `第 ${batch.batchNumber} 批分镜图片审核`,
-      summary: "请按批次整体确认分镜图片；如需打回，请逐条分镜评分并填写修改意见。",
+      title: `第 ${batch.batchNumber} 次分镜图片全量审核`,
+      summary: "请逐张确认本次全量分镜图片 OK 或不 OK；上一轮未通过的图片会标红并保留对应批注。",
       payload: {
         batch,
         scenes: batchScenes,
@@ -690,8 +744,9 @@ async function buildWorkflowReviewSpec(input: {
         imageVersions: batchImageVersions,
       },
       items: batchShots.map((shot) => {
-        const image = selectedImages.find((item) => item.shotId === shot.id);
+        const image = selectedImageByShotId.get(shot.id);
         const versions = batchImageVersions.filter((version) => version.shotId === shot.id);
+        const previousFeedback = previousFeedbackByShotId.get(shot.id) ?? null;
         return {
           itemType: "storyboard_shot_image" as const,
           itemId: shot.id,
@@ -704,6 +759,8 @@ async function buildWorkflowReviewSpec(input: {
             sceneId: shot.sceneId,
             imageId: image?.id ?? null,
             imageUrl: image?.ossUrl ?? null,
+            previousDecision: previousFeedback?.status ?? null,
+            previousFeedback: previousFeedback?.feedback ?? "",
             imageVersionIds: versions.map((version) => version.id),
             visualDescription: shot.visualDescription,
           },
@@ -717,7 +774,10 @@ async function buildWorkflowReviewSpec(input: {
       listProductionEntities(input.projectId),
       listProductionReferenceSets(input.projectId),
     ]);
-    if (entities.length === 0) {
+    const activeEntities = entities.filter((entity) => entity.inclusionStatus !== "ignored");
+    const activeEntityIds = new Set(activeEntities.map((entity) => entity.id));
+    const activeReferenceSets = referenceSets.filter((set) => activeEntityIds.has(set.entityId));
+    if (activeEntities.length === 0) {
       throw new AppError({
         status: 422,
         code: "production_entities_empty",
@@ -726,18 +786,19 @@ async function buildWorkflowReviewSpec(input: {
     }
     const referenceImages = await listGeneratedImagesByIds({
       projectId: input.projectId,
-      imageIds: referenceSets.flatMap((set) => set.referenceImageIds),
+      imageIds: activeReferenceSets.flatMap((set) => set.referenceImageIds),
     });
     const referenceImageById = new Map(referenceImages.map((image) => [image.id, image]));
+    const targetScopeId = input.targetScopeId && activeEntityIds.has(input.targetScopeId) ? input.targetScopeId : activeEntities[0].id;
     return {
       moduleKey: "script_storyboard_confirmation",
       reviewType: "script_package",
       targetScopeType: "script_package",
-      targetScopeId: input.targetScopeId ?? entities[0].id,
+      targetScopeId,
       title: "人物场景设定确认",
       summary: "请确认完整脚本拆分后抽取的人物、场景和参考设定深度；如需修改，请打回并说明调整意见。",
-      payload: { project, productionEntities: entities, productionReferenceSets: referenceSets },
-      items: entities.map((entity) => ({
+      payload: { project, productionEntities: activeEntities, productionReferenceSets: activeReferenceSets },
+      items: activeEntities.map((entity) => ({
         itemType: "reference_asset" as ClientReviewItemType,
         itemId: entity.id,
         itemLabel: `${entity.entityType === "character" ? "人物设定" : entity.entityType === "scene" ? "场景设定" : "道具设定"}｜${entity.name}`,
@@ -746,11 +807,11 @@ async function buildWorkflowReviewSpec(input: {
           referenceDepth: entity.referenceDepth,
           status: entity.status,
           sourceShotIds: entity.sourceShotIds,
-          referenceSetCount: referenceSets.filter((set) => set.entityId === entity.id).length,
+          referenceSetCount: activeReferenceSets.filter((set) => set.entityId === entity.id).length,
           candidateImages: buildProductionSetupCandidateImages({
             entityId: entity.id,
             depth: entity.referenceDepth,
-            referenceSets,
+            referenceSets: activeReferenceSets,
             referenceImageById,
           }),
           previewText: summarizeText(entity.description || entity.name, 800),
@@ -767,7 +828,7 @@ async function buildWorkflowReviewSpec(input: {
       userMessage: "请先保存完整剧本，再生成甲方审核链接。",
     });
   }
-  const pkg = await getScriptDirectionPackage({ projectId: input.projectId, packageId });
+  let pkg = await getScriptDirectionPackage({ projectId: input.projectId, packageId });
   if (!pkg) {
     throw new AppError({
       status: 404,
@@ -775,7 +836,12 @@ async function buildWorkflowReviewSpec(input: {
       userMessage: "没有找到完整剧本记录。请先保存完整剧本后再提交甲方审核。",
     });
   }
-  await assertScriptPackageStandardized({ projectId: input.projectId, packageId: pkg.id });
+  assertScriptPackageReviewReady(pkg);
+  pkg = await ensureScriptPackageStandardizedForReview({
+    projectId: input.projectId,
+    packageId: pkg.id,
+    actorId: input.actorId ?? null,
+  });
   return {
     moduleKey: "script_storyboard_confirmation",
     reviewType: "script_package",
@@ -792,14 +858,25 @@ async function buildWorkflowReviewSpec(input: {
         metadata: {
           version: pkg.version,
           concept: pkg.concept,
-          previewText: summarizeText(pkg.fullScript, 1200),
+          content: pkg.standardizedScript,
+          previewText: summarizeText(pkg.standardizedScript, 1200),
         },
       },
     ],
   };
 }
 
-export async function loadClientReviewByToken(token: string) {
+export function assertScriptPackageReviewReady(pkg: Pick<ScriptDirectionPackageView, "standardizedScript">) {
+  if (pkg.standardizedScript.trim()) return;
+
+  throw new AppError({
+    status: 422,
+    code: "script_package_standardized_script_required",
+    userMessage: "请先生成标准剧本，再提交甲方审核。",
+  });
+}
+
+async function getClientReviewTaskForToken(token: string) {
   const task = await getClientReviewTaskByTokenHash(hashSecret(token));
   if (!task) {
     throw new AppError({
@@ -808,13 +885,48 @@ export async function loadClientReviewByToken(token: string) {
       userMessage: "没有找到这个审核链接。请检查链接是否完整，或联系项目团队重新发送。",
     });
   }
+  return task;
+}
+
+export function loadClientReviewUnlockPrompt() {
+  return {
+    requiresVerification: true,
+    message: "请输入项目团队发送给你的审核密钥。校验通过后才会展示本次审核内容。",
+  };
+}
+
+export async function unlockClientReviewByToken(token: string, rawInput: unknown) {
+  const input = unlockClientReviewSchema.parse(rawInput);
+  const task = await getClientReviewTaskForToken(token);
+  await assertClientReviewVerificationCode(task.id, input.verificationCode);
+  return loadClientReviewContent(task);
+}
+
+export async function loadClientReviewByToken(token: string) {
+  const task = await getClientReviewTaskForToken(token);
+  return loadClientReviewContent(task);
+}
+
+async function loadClientReviewContent(task: ClientReviewTaskView) {
   const items = await listClientReviewItems(task.id);
   const creativeImageSource = await buildProjectCreativeReviewImageSource(task.projectId);
+  const hydratedItems = await hydrateClientReviewItems(task, items, creativeImageSource);
   return {
     task,
-    items: await hydrateClientReviewItems(task, items, creativeImageSource),
+    items: sortExternalReviewItemsForDisplay(task, hydratedItems),
     history: await buildClientReviewHistory(task, creativeImageSource),
   };
+}
+
+async function assertClientReviewVerificationCode(taskId: string, verificationCode: string) {
+  const expectedCodeHash = await getClientReviewSecretByTaskId(taskId);
+  if (!expectedCodeHash || !verifySecret(verificationCode, expectedCodeHash)) {
+    throw new AppError({
+      status: 401,
+      code: "client_review_code_invalid",
+      userMessage: "审核密钥不正确。请核对项目团队发送给你的密钥后再试。",
+    });
+  }
 }
 
 async function buildClientReviewHistory(currentTask: ClientReviewTaskView, creativeImageSource: CreativeReviewImageSource) {
@@ -829,7 +941,7 @@ async function buildClientReviewHistory(currentTask: ClientReviewTaskView, creat
       const hydratedItems = await hydrateClientReviewItems(task, items, creativeImageSource);
       return {
         task: sanitizeClientReviewTaskForExternal(task),
-        items: summarizeClientReviewItemsForExternal(hydratedItems),
+        items: summarizeClientReviewItemsForExternal(sortExternalReviewItemsForDisplay(task, hydratedItems)),
         isCurrent: task.id === currentTask.id,
       };
     })
@@ -878,6 +990,17 @@ function summarizeClientReviewItemsForExternal(items: ClientReviewItemView[]) {
   }));
 }
 
+export function sortExternalReviewItemsForDisplay<
+  Item extends { itemLabel: string; metadata: Record<string, unknown> },
+>(task: Pick<ClientReviewTaskView, "reviewType">, items: Item[]) {
+  if (task.reviewType !== "storyboard_image_batch" && task.reviewType !== "storyboard_scene_images") return items;
+  return [...items].sort((left, right) => {
+    const leftShotNumber = typeof left.metadata.shotNumber === "string" ? left.metadata.shotNumber : left.itemLabel;
+    const rightShotNumber = typeof right.metadata.shotNumber === "string" ? right.metadata.shotNumber : right.itemLabel;
+    return leftShotNumber.localeCompare(rightShotNumber, "zh-Hans-CN", { numeric: true, sensitivity: "base" });
+  });
+}
+
 function summarizeClientReviewItemMetadata(metadata: Record<string, unknown>) {
   const summary: Record<string, unknown> = {};
   for (const key of [
@@ -892,7 +1015,9 @@ function summarizeClientReviewItemMetadata(metadata: Record<string, unknown>) {
     "videoUrl",
     "durationSeconds",
     "candidateImages",
+    "storyContent",
     "quoteItems",
+    "content",
     "notes",
     "currency",
     "totalAmount",
@@ -911,6 +1036,12 @@ async function hydrateClientReviewItems(task: {
   targetScopeId: string;
   projectId: string;
 }, items: Awaited<ReturnType<typeof listClientReviewItems>>, imageSource?: CreativeReviewImageSource) {
+  if (task.reviewType === "script_package" && task.reviewScene === "production_setup") {
+    const entities = await listProductionEntities(task.projectId);
+    const activeEntityIds = new Set(entities.filter((entity) => entity.inclusionStatus !== "ignored").map((entity) => entity.id));
+    return items.filter((item) => activeEntityIds.has(item.itemId));
+  }
+
   if (
     task.reviewType !== "project_proposal" ||
     task.targetScopeType !== "proposal" ||
@@ -955,7 +1086,7 @@ function getConceptReviewImages(
   concept: {
     directionId: string | null;
     sceneIndex: number;
-    images: Array<{ id: string; ossUrl: string | null; prompt: string; status: string; isSelected: boolean; sortOrder: number }>;
+    images: Array<{ id: string; ossUrl: string | null; prompt: string; status: string; isSelected?: boolean; sortOrder?: number | null }>;
     snapshot: Record<string, unknown>;
   },
   imageSource: CreativeReviewImageSource
@@ -1094,15 +1225,9 @@ function readStringField(record: Record<string, unknown>, key: string) {
 
 export async function submitClientReviewByToken(token: string, rawInput: unknown) {
   const input = submitClientReviewSchema.parse(rawInput);
-  const { task, items: existingItems } = await loadClientReviewByToken(token);
-  const expectedCodeHash = await getClientReviewSecretByTaskId(task.id);
-  if (!expectedCodeHash || expectedCodeHash !== hashSecret(input.verificationCode)) {
-    throw new AppError({
-      status: 401,
-      code: "client_review_code_invalid",
-      userMessage: "验证码或密钥不正确。请核对项目团队发送给你的审核密钥后再提交。",
-    });
-  }
+  const baseTask = await getClientReviewTaskForToken(token);
+  await assertClientReviewVerificationCode(baseTask.id, input.verificationCode);
+  const { task, items: existingItems } = await loadClientReviewContent(baseTask);
 
   const normalizedItems = normalizeReviewItemsForSubmission({
     reviewType: task.reviewType,
@@ -1124,6 +1249,12 @@ export async function submitClientReviewByToken(token: string, rawInput: unknown
           }),
         })
       : {};
+  if (task.reviewScene === "creative_round_1" || task.reviewScene === "creative_round_2") {
+    assertCreativeRoundApprovalHasRetainedDirections({
+      decision: input.decision,
+      retainedDirectionIds: readRetainedDirectionIdsFromPayload(creativeReviewFeedback),
+    });
+  }
 
   const result = await submitClientReviewTaskRecord({
     taskId: task.id,
@@ -1163,8 +1294,8 @@ export async function submitClientReviewByToken(token: string, rawInput: unknown
       projectStatus: input.decision === "approved" ? "approved" : "needs_revision",
       userMessage:
         input.decision === "approved"
-          ? "甲方已按场次整体确认分镜图片，本场可以进入后续视频生成准备。"
-          : "甲方已按场次整体打回分镜图片，场内逐分镜评分和修改意见已保存。",
+          ? "甲方已逐条确认本场分镜图片，本场可以进入后续视频生成准备。"
+          : "甲方已逐条打回本场部分分镜图片，场内逐分镜修改意见已保存。",
       inputRefs: [{ type: "client_review_task", id: task.id }],
       outputRefs: [{ type: "storyboard_scene", id: task.targetScopeId }],
       snapshot: {
@@ -1187,6 +1318,7 @@ export async function submitClientReviewByToken(token: string, rawInput: unknown
       reviewerName: input.reviewerName,
       feedback: input.feedback,
       decisionPayload: result.task.decisionPayload,
+      actorId: task.createdBy,
     });
   }
 
@@ -1196,7 +1328,7 @@ export async function submitClientReviewByToken(token: string, rawInput: unknown
     message:
       input.decision === "approved"
         ? "审核已提交：本轮内容已确认。项目团队会在内部端看到你的确认结果。"
-        : "审核已提交：本轮内容已打回。项目团队会看到整体意见和逐条分镜评分。",
+        : "审核已提交：本轮内容已打回。项目团队会看到原因和逐条修改意见。",
   };
 }
 
@@ -1214,8 +1346,30 @@ export function normalizeReviewItemsForSubmission(input: {
   const byItemId = new Map(input.submittedItems.map((item) => [item.itemId, item]));
   return input.existingItems.map((item) => {
     const submitted = byItemId.get(item.itemId);
+    if (input.reviewType === "storyboard_image_batch") {
+      if (!submitted) {
+        throw new AppError({
+          status: 422,
+          code: "storyboard_image_batch_item_decision_required",
+          userMessage: "请逐张分镜选择 OK 或不 OK 后再提交审核。",
+        });
+      }
+      if (submitted.decision === "rejected" && !submitted.feedback?.trim()) {
+        throw new AppError({
+          status: 422,
+          code: "storyboard_image_batch_item_feedback_required",
+          userMessage: "请为不 OK 的分镜填写原因和修改意见。",
+        });
+      }
+      return {
+        itemId: item.itemId,
+        decision: submitted.decision,
+        score: null,
+        feedback: submitted.feedback ?? "",
+      };
+    }
     const defaultScore =
-      input.reviewType === "storyboard_scene_images" || input.reviewType === "storyboard_image_batch"
+      input.reviewType === "storyboard_scene_images"
         ? input.decision === "approved"
           ? 5
           : 2
@@ -1241,6 +1395,8 @@ export function formatCreativeReviewDecisionPayload(input: {
   }>;
 }) {
   const directionPriority = buildCreativeDirectionPriority(input.items);
+  const retainedDirectionIds = buildRetainedCreativeDirectionIds(input.items);
+  const selectedDirectionStyles = buildSelectedCreativeDirectionStyles(input.items);
   const visualNotes = [
     ...input.items
       .map((item) => {
@@ -1254,8 +1410,126 @@ export function formatCreativeReviewDecisionPayload(input: {
 
   return {
     directionPriority,
+    retainedDirectionIds,
+    selectedDirectionStyles,
     visualPreferenceNotes: visualNotes.join("；"),
   };
+}
+
+export function buildCreativeProposalReviewItems(input: {
+  round: {
+    roundNumber: 1 | 2;
+    directionIds: string[];
+      concepts: Array<{
+      id: string;
+      title: string;
+      directionId: string | null;
+      sceneIndex: number;
+      requiredImageCount: number;
+      description: string;
+      sourceText: string;
+      imagePrompt: string;
+      snapshot: Record<string, unknown>;
+      images: Array<{
+        id: string;
+        ossUrl: string | null;
+        prompt: string;
+        status: string;
+        isSelected?: boolean;
+        sortOrder?: number | null;
+      }>;
+    }>;
+  };
+  directions: Array<Pick<CreativeDirectionView, "id" | "title" | "coreIdea" | "fitReason" | "riskNotes" | "sortOrder">>;
+  generatedImages: CreativeReviewGeneratedImage[];
+  expansions: CreativeExpansionView[];
+}): WorkflowReviewSpec["items"] {
+  const imageSource = buildCreativeReviewImageSource({
+    generatedImages: input.generatedImages,
+    expansions: input.expansions,
+  });
+  return input.round.concepts.map((concept) => {
+    const storyContent = resolveCreativeReviewStoryContent(concept, input.expansions);
+    return {
+      itemType: "proposal" as const,
+      itemId: concept.id,
+      itemLabel: concept.title,
+      metadata: {
+        roundNumber: input.round.roundNumber,
+        directionId: concept.directionId,
+        directionTitle: readStringField(concept.snapshot, "directionTitle"),
+        sceneIndex: concept.sceneIndex,
+        requiredImageCount: concept.requiredImageCount,
+        candidateImages: buildCreativeReviewCandidateImages(getConceptReviewImages(concept, imageSource)),
+        storyContent,
+        previewText: summarizeText(`${concept.description}\n${storyContent}\n${concept.sourceText || ""}\n${concept.imagePrompt}`, 1200),
+      },
+    };
+  });
+}
+
+function resolveCreativeReviewStoryContent(
+  concept: { directionId: string | null; snapshot: Record<string, unknown>; sourceText?: string },
+  expansions: CreativeExpansionView[],
+) {
+  const snapshotStory = readStringField(concept.snapshot, "storyContent");
+  if (snapshotStory) return snapshotStory;
+  const expansionId = readStringField(concept.snapshot, "expansionId") || "";
+  const matchedExpansion =
+    (expansionId ? expansions.find((expansion) => expansion.id === expansionId) : null) ??
+    (concept.directionId ? expansions.filter((expansion) => expansion.directionId === concept.directionId).sort((left, right) => left.sortOrder - right.sortOrder)[0] : null);
+  if (matchedExpansion) {
+    return [
+      matchedExpansion.title,
+      matchedExpansion.oneLiner,
+      ...Object.values(matchedExpansion.storyArc),
+      matchedExpansion.visualHighlights.length > 0 ? `视觉重点：${matchedExpansion.visualHighlights.join("、")}` : "",
+      matchedExpansion.visualStyle ? `风格：${matchedExpansion.visualStyle}` : "",
+    ].filter(Boolean).join("；");
+  }
+  return concept.sourceText?.trim() ?? "";
+}
+
+export function sortStoryboardBatchReviewShots<
+  Shot extends { sceneId: string; sortOrder: number; shotNumber: string },
+  Scene extends { id: string; sceneNumber: number },
+>(shots: Shot[], scenes: Scene[], sceneIds: string[]): Shot[] {
+  const sceneOrderById = new Map(
+    scenes.map((scene) => [
+      scene.id,
+      {
+        sceneNumber: scene.sceneNumber,
+        batchIndex: sceneIds.indexOf(scene.id),
+      },
+    ]),
+  );
+  return [...shots].sort((left, right) => {
+    const leftScene = sceneOrderById.get(left.sceneId);
+    const rightScene = sceneOrderById.get(right.sceneId);
+    return (
+      (leftScene?.sceneNumber ?? Number.MAX_SAFE_INTEGER) - (rightScene?.sceneNumber ?? Number.MAX_SAFE_INTEGER) ||
+      normalizedBatchSceneIndex(leftScene?.batchIndex) - normalizedBatchSceneIndex(rightScene?.batchIndex) ||
+      left.sortOrder - right.sortOrder ||
+      left.shotNumber.localeCompare(right.shotNumber, "zh-Hans-CN", { numeric: true, sensitivity: "base" })
+    );
+  });
+}
+
+function normalizedBatchSceneIndex(index: number | undefined) {
+  return typeof index === "number" && index >= 0 ? index : Number.MAX_SAFE_INTEGER;
+}
+
+export function assertCreativeRoundApprovalHasRetainedDirections(input: {
+  decision: "approved" | "rejected";
+  retainedDirectionIds: string[];
+}) {
+  if (input.decision === "approved" && input.retainedDirectionIds.length === 0) {
+    throw new AppError({
+      status: 422,
+      code: "creative_round_retained_direction_required",
+      userMessage: "请至少保留一个创意方向后再通过本轮审核；如果没有方向可用，请选择打回并填写修改意见。",
+    });
+  }
 }
 
 type CreativeReviewItemForSummary = {
@@ -1279,6 +1553,67 @@ type CreativeDirectionSummary = {
 
 function buildCreativeDirectionPriority(items: CreativeReviewItemForSummary[]) {
   return summarizeCreativeDirections(items).sort(compareCreativeDirectionSummaries).map(formatCreativeDirectionSummary).join("；");
+}
+
+function buildRetainedCreativeDirectionIds(items: CreativeReviewItemForSummary[]) {
+  return summarizeCreativeDirections(items)
+    .filter((summary) => summary.approvedCount > 0)
+    .sort(compareCreativeDirectionSummaries)
+    .map((summary) => summary.directionId);
+}
+
+function buildSelectedCreativeDirectionStyles(items: CreativeReviewItemForSummary[]) {
+  const selections = new Map<
+    string,
+    {
+      directionId: string;
+      directionTitle: string;
+      styleVariant: string;
+      styleLabel: string;
+      selectedImageId: string | null;
+      itemId: string;
+      sortIndex: number;
+    }
+  >();
+
+  items.forEach((item, index) => {
+    if (item.decision !== "approved") return;
+    if (readNumberMetadata(item.metadata, "roundNumber") !== 1) return;
+
+    const styleVariant = readStringMetadata(item.metadata, "styleVariant");
+    if (!styleVariant) return;
+
+    const directionId = getCreativeDirectionId(item);
+    const existing = selections.get(directionId);
+    if (existing && existing.styleVariant !== styleVariant) {
+      throw new AppError({
+        status: 422,
+        code: "creative_round_direction_style_single_choice_required",
+        userMessage: `创意方向「${existing.directionTitle}」只能选择一个视觉风格。请取消多余风格后再提交。`,
+      });
+    }
+
+    selections.set(directionId, {
+      directionId,
+      directionTitle: getCreativeDirectionLabel(item),
+      styleVariant,
+      styleLabel: readStringMetadata(item.metadata, "styleLabel") || styleVariant,
+      selectedImageId: readFirstCandidateImageId(item.metadata),
+      itemId: item.itemId,
+      sortIndex: getReviewItemSortIndex(item.metadata, index),
+    });
+  });
+
+  return [...selections.values()]
+    .sort((left, right) => left.sortIndex - right.sortIndex)
+    .map((selection) => ({
+      directionId: selection.directionId,
+      directionTitle: selection.directionTitle,
+      styleVariant: selection.styleVariant,
+      styleLabel: selection.styleLabel,
+      selectedImageId: selection.selectedImageId,
+      itemId: selection.itemId,
+    }));
 }
 
 function summarizeCreativeDirections(items: CreativeReviewItemForSummary[]) {
@@ -1376,6 +1711,24 @@ function getReviewItemSortIndex(metadata?: Record<string, unknown> | null, fallb
   return typeof sceneIndex === "number" && Number.isFinite(sceneIndex) ? sceneIndex : fallback;
 }
 
+function readStringMetadata(metadata: Record<string, unknown> | null | undefined, key: string) {
+  const value = metadata?.[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function readNumberMetadata(metadata: Record<string, unknown> | null | undefined, key: string) {
+  const value = metadata?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function readFirstCandidateImageId(metadata: Record<string, unknown> | null | undefined) {
+  const value = metadata?.candidateImages;
+  if (!Array.isArray(value)) return null;
+  const first = value.find((item) => item && typeof item === "object") as Record<string, unknown> | undefined;
+  const id = first?.id;
+  return typeof id === "string" && id.trim() ? id.trim() : null;
+}
+
 async function markReviewCreatedProgress(input: {
   projectId: string;
   actorId: string;
@@ -1457,6 +1810,7 @@ async function applyWorkflowReviewDecision(input: {
   reviewerName?: string | null;
   feedback?: string | null;
   decisionPayload?: Record<string, unknown>;
+  actorId: string;
 }) {
   const approved = input.decision === "approved";
 
@@ -1467,6 +1821,7 @@ async function applyWorkflowReviewDecision(input: {
       approved,
       feedback: input.feedback ?? "",
       decisionPayload: input.decisionPayload ?? {},
+      retainedDirectionIds: approved ? readRetainedDirectionIdsFromPayload(input.decisionPayload) : [],
     });
   } else if (input.reviewType === "project_proposal" && input.targetScopeType === "proposal") {
     await updateProposalStatus({
@@ -1479,14 +1834,14 @@ async function applyWorkflowReviewDecision(input: {
     await updateQuoteStatus({
       projectId: input.projectId,
       quoteId: input.targetScopeId,
-      status: approved ? "confirmed" : "needs_revision",
+      status: workflowReviewDocumentStatus(input.reviewType, approved),
     });
   }
   if (input.reviewType === "contract_confirmation" && input.targetScopeType === "contract") {
     await updateContractStatus({
       projectId: input.projectId,
       contractId: input.targetScopeId,
-      status: approved ? "confirmed" : "needs_revision",
+      status: workflowReviewDocumentStatus(input.reviewType, approved),
     });
   }
   if (input.reviewType === "script_package" && input.targetScopeType === "script_package") {
@@ -1504,6 +1859,7 @@ async function applyWorkflowReviewDecision(input: {
     }
   }
   if (input.reviewType === "storyboard_image_batch" && input.targetScopeType === "storyboard_image_batch") {
+    const batchApproved = input.itemDecisions.every((item) => item.decision === "approved");
     await Promise.all(
       input.itemDecisions.map((item) =>
         updateStoryboardShotClientDecision({
@@ -1520,42 +1876,41 @@ async function applyWorkflowReviewDecision(input: {
         shotId: item.itemId,
         approved: item.decision === "approved",
         feedback: item.feedback ?? "",
-        feedbackPayload: { score: item.score ?? null },
+        feedbackPayload: {},
       })),
     });
     await updateStoryboardImageBatchStatus({
       projectId: input.projectId,
       batchId: input.targetScopeId,
-      status: approved ? "client_approved" : "client_rejected",
+      status: batchApproved ? "client_approved" : "client_rejected",
       snapshot: {
         reviewTaskId: input.reviewTaskId,
-        decision: input.decision,
+        decision: batchApproved ? "approved" : "rejected",
         itemDecisions: input.itemDecisions,
       },
     });
-    if (approved) {
-      const batches = await listStoryboardImageBatches(input.projectId);
-      const latestBatches = latestStoryboardImageBatches(batches);
+    if (batchApproved) {
+      const shots = await listStoryboardShots(input.projectId);
       try {
-        assertAllStoryboardImageBatchesApproved(latestBatches);
+        assertAllStoryboardShotsClientApproved(shots);
         await recordStageProgress({
           projectId: input.projectId,
           stageKey: "storyboard_image_canvas",
           status: "approved",
           currentStage: "ai_video_canvas",
           projectStatus: "in_progress",
-          userMessage: "三批分镜图片均已获得甲方确认，项目已推进到 AI 视频自由画布。",
+          userMessage: "所有分镜图片均已获得甲方确认，项目已推进到 AI 视频自由画布。",
           inputRefs: [{ type: "client_review_task", id: input.reviewTaskId }],
           outputRefs: [{ type: "storyboard_image_batch", id: input.targetScopeId }],
           snapshot: {
             reviewTaskId: input.reviewTaskId,
             decision: input.decision,
-            batchStatuses: latestBatches.map((batch) => ({ batchNumber: batch.batchNumber, status: batch.status, version: batch.version ?? null })),
+            approvedShotCount: shots.length,
           },
         });
         return;
       } catch (error) {
-        if (!(error instanceof AppError) || error.code !== "storyboard_image_batches_not_approved") throw error;
+        if (!(error instanceof AppError) || error.code !== "storyboard_shots_not_approved") throw error;
       }
     }
   }
@@ -1614,6 +1969,120 @@ async function applyWorkflowReviewDecision(input: {
       timecodeAnnotationCount: input.timecodeAnnotations?.length ?? 0,
     },
   });
+
+  if (input.reviewType === "brief_confirmation" && approved) {
+    await generateRiskCheckAfterBriefApproval({
+      projectId: input.projectId,
+      actorId: input.actorId,
+      reviewTaskId: input.reviewTaskId,
+    });
+  }
+}
+
+async function generateRiskCheckAfterBriefApproval(input: {
+  projectId: string;
+  actorId: string;
+  reviewTaskId: string;
+}) {
+  const artifacts = await listProjectArtifacts(input.projectId);
+  const latestBrief = artifacts.find((artifact) => artifact.kind === "structured_requirement") ?? null;
+  const openQuestionCount = countOpenQuestions((latestBrief?.data as Partial<Record<string, unknown>> | undefined)?.openQuestions);
+  const inputRefs: unknown[] = [{ type: "client_review_task", id: input.reviewTaskId }];
+  if (latestBrief) {
+    inputRefs.push({ type: "artifact", id: latestBrief.id, kind: latestBrief.kind });
+  }
+
+  await recordStageProgress({
+    projectId: input.projectId,
+    stageKey: "technical_feasibility",
+    status: "in_progress",
+    currentStage: "technical_feasibility",
+    projectStatus: "in_progress",
+    title: "接单风险评估正在生成",
+    userMessage: "甲方已确认 Brief，项目已进入接单风险评估环节，系统正在根据当前 Brief 自动生成接单风险评估。",
+    errorMessage: null,
+    inputRefs,
+    snapshot: {
+      reviewTaskId: input.reviewTaskId,
+      sourceStage: "brand_requirement_intake",
+      sourceArtifactId: latestBrief?.id ?? null,
+      sourceArtifactVersion: latestBrief?.version ?? null,
+      openQuestionCount,
+    },
+  });
+
+  let riskCheckResult: Awaited<ReturnType<typeof generateRiskCheckFromProject>>;
+  try {
+    riskCheckResult = await generateRiskCheckFromProject({
+      projectId: input.projectId,
+      actorId: input.actorId,
+    });
+  } catch (error) {
+    const generationMessage =
+      error instanceof AppError
+        ? error.userMessage
+        : "甲方已确认 Brief，项目已进入接单风险评估，但接单风险评估自动生成失败。请在接单风险评估页面点击生成。";
+
+    await recordStageProgress({
+      projectId: input.projectId,
+      stageKey: "technical_feasibility",
+      status: "in_progress",
+      currentStage: "technical_feasibility",
+      projectStatus: "in_progress",
+      title: "接单风险评估自动生成失败",
+      userMessage: generationMessage,
+      errorMessage: generationMessage,
+      inputRefs,
+      snapshot: {
+        reviewTaskId: input.reviewTaskId,
+        sourceStage: "brand_requirement_intake",
+        sourceArtifactId: latestBrief?.id ?? null,
+        sourceArtifactVersion: latestBrief?.version ?? null,
+        openQuestionCount,
+        autoGenerateFailed: true,
+      },
+    });
+
+    throw new AppError({
+      status: error instanceof AppError ? error.status : 500,
+      code: "risk_check_auto_generation_failed",
+      userMessage: generationMessage,
+    });
+  }
+
+  await recordStageProgress({
+    projectId: input.projectId,
+    stageKey: "technical_feasibility",
+    status: "in_progress",
+    currentStage: "technical_feasibility",
+    projectStatus: "in_progress",
+    title: "接单风险评估已自动生成",
+    userMessage: riskCheckResult.message,
+    errorMessage: null,
+    inputRefs,
+    outputRefs: [{ type: "risk_check", id: riskCheckResult.riskCheck.card.id }],
+    snapshot: {
+      reviewTaskId: input.reviewTaskId,
+      sourceStage: "brand_requirement_intake",
+      sourceArtifactId: latestBrief?.id ?? null,
+      sourceArtifactVersion: latestBrief?.version ?? null,
+      openQuestionCount,
+      riskCheckId: riskCheckResult.riskCheck.card.id,
+      overallAlert: riskCheckResult.riskCheck.card.overallAlert,
+    },
+  });
+}
+
+function readRetainedDirectionIdsFromPayload(payload: Record<string, unknown> | undefined) {
+  const value = payload?.retainedDirectionIds;
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim());
+}
+
+function countOpenQuestions(value: unknown) {
+  if (Array.isArray(value)) return value.filter(Boolean).length;
+  if (typeof value === "string" && value.trim()) return 1;
+  return 0;
 }
 
 function reviewCreatedStage(reviewType: ClientReviewType, reviewScene?: ClientReviewScene | null) {
@@ -1644,7 +2113,7 @@ function reviewCreatedStage(reviewType: ClientReviewType, reviewScene?: ClientRe
   if (reviewType === "storyboard_image_batch") {
     return {
       stageKey: "storyboard_image_canvas" as const,
-      userMessage: "分镜图片批次已提交甲方审核，等待甲方按批次整体确认。",
+      userMessage: "分镜图片全量批次已提交甲方审核，等待甲方整体确认并逐镜批注。",
     };
   }
   if (reviewType === "a_copy_review") {
@@ -1723,8 +2192,8 @@ export function reviewSubmittedStage(reviewType: ClientReviewType, decision: "ap
       currentStage: "storyboard_image_canvas" as const,
       projectStatus: approved ? ("waiting_review" as const) : ("needs_revision" as const),
       userMessage: approved
-        ? "本批分镜图片已获得甲方确认，系统会等待三批全部确认后再进入 AI 视频自由画布。"
-        : "本批分镜图片已被甲方打回，逐分镜评分和修改意见已保存。",
+        ? "本次全量分镜图片已获得甲方确认，系统会检查是否所有分镜均已通过。"
+        : "本次全量分镜图片存在不 OK 的分镜，逐镜原因和修改意见已保存。",
     };
   }
   if (reviewType === "a_copy_review") {
@@ -1745,6 +2214,17 @@ export function reviewSubmittedStage(reviewType: ClientReviewType, decision: "ap
       userMessage: approved ? "甲方已最终确认 B-copy，可以进入结算交付与完整归档。" : "甲方已打回 B-copy，时间戳批注已回写并定位到对应场次/分镜。",
     };
   }
+  if (reviewType === "contract_confirmation") {
+    return {
+      stageKey: "selection_quote_contract" as const,
+      status: approved ? ("in_progress" as const) : ("needs_revision" as const),
+      currentStage: "selection_quote_contract" as const,
+      projectStatus: approved ? ("in_progress" as const) : ("needs_revision" as const),
+      userMessage: approved
+        ? "甲方已确认项目合同，项目可以进入交付清单核对。"
+        : "甲方已打回项目合同，修改意见已回写内部端。",
+    };
+  }
   return {
     stageKey: "selection_quote_contract" as const,
     status: approved ? ("approved" as const) : ("needs_revision" as const),
@@ -1759,6 +2239,12 @@ export function reviewSubmittedStage(reviewType: ClientReviewType, decision: "ap
           ? "甲方已确认项目合同，可以继续推进签署与交付。"
           : "甲方已打回项目合同，修改意见已回写内部端。",
   };
+}
+
+export function workflowReviewDocumentStatus(reviewType: ClientReviewType, approved: boolean) {
+  if (!approved) return "needs_revision";
+  if (reviewType === "contract_confirmation") return "signed";
+  return "confirmed";
 }
 
 function summarizeUnknown(value: unknown) {
@@ -1800,7 +2286,7 @@ function createReviewCredentials() {
     token,
     code,
     tokenHash: hashSecret(token),
-    codeHash: hashSecret(code),
+    codeHash: hashSecretWithSalt(code),
   };
 }
 
@@ -1808,8 +2294,31 @@ function hashSecret(value: string) {
   return createHash("sha256").update(value.trim()).digest("hex");
 }
 
+function hashSecretWithSalt(value: string) {
+  const salt = randomBytes(16).toString("base64url");
+  return `v2:${salt}:${hashSecret(`${salt}:${value.trim()}`)}`;
+}
+
+function verifySecret(value: string, storedHash: string) {
+  const normalized = value.trim();
+  const parts = storedHash.split(":");
+  const candidateHash =
+    parts.length === 3 && parts[0] === "v2"
+      ? `v2:${parts[1]}:${hashSecret(`${parts[1]}:${normalized}`)}`
+      : hashSecret(normalized);
+  const candidate = Buffer.from(candidateHash);
+  const expected = Buffer.from(storedHash);
+  return candidate.length === expected.length && timingSafeEqual(candidate, expected);
+}
+
 function getLocalReviewOrigin(origin: string) {
   const normalized = origin.replace(/\/$/, "");
   if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(normalized)) return normalized;
   return "http://localhost:3000";
+}
+
+export function buildReviewUrlWithVerificationCode(origin: string, token: string, code: string) {
+  const reviewUrl = new URL(`/client-review/${token}`, getLocalReviewOrigin(origin));
+  reviewUrl.hash = `key=${encodeURIComponent(code)}`;
+  return reviewUrl.toString();
 }

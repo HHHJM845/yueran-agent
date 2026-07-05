@@ -11,6 +11,13 @@ export type ApiResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: ApiError };
 
+function clientApiError(code: string, message: string, recoverable = true): ApiResult<never> {
+  return {
+    ok: false,
+    error: { code, message, recoverable },
+  };
+}
+
 export type ConfigStatus = {
   ready: boolean;
   checks: Array<{ key: string; label: string; configured: boolean }>;
@@ -126,7 +133,7 @@ export type GovernanceView = {
   generatedAt: string;
 };
 
-export type TechnicalFeasibilityAction = "mark_blocked" | "request_revision" | "approve" | "reopen";
+export type TechnicalFeasibilityAction = "request_revision" | "approve";
 export type CreativeDirectionReviewAction = "submit_review" | "approve" | "request_revision";
 
 export type ControlledAccessView = {
@@ -316,11 +323,24 @@ export type ScriptDirectionPackageView = {
   title: string;
   concept: string;
   fullScript: string;
+  plainScript: string;
+  standardizedScript: string;
   status: string;
   version: number;
   selectedAt: string | null;
   lockedAt: string | null;
   updatedAt: string;
+};
+
+export type ScriptRevisionMessageView = {
+  id: string;
+  projectId: string;
+  packageId: string;
+  role: "user" | "assistant";
+  inputMode: "text" | "voice";
+  content: string;
+  createdBy: string | null;
+  createdAt: string;
 };
 
 export type ScriptReferenceAssetView = {
@@ -454,7 +474,7 @@ export type StoryboardImageBatchItemView = {
 export type StoryboardImageBatchView = {
   id: string;
   projectId: string;
-  batchNumber: 1 | 2 | 3;
+  batchNumber: number;
   status: string;
   version: number;
   sceneIds: string[];
@@ -643,7 +663,7 @@ export type RiskCheckCardView = {
   projectId: string;
   status: "draft" | "in_review" | "needs_revision" | "approved" | "archived";
   overallAlert: "low" | "medium" | "high" | "redline";
-  humanDecision: "accept" | "reject" | "conditional_accept" | null;
+  humanDecision: "accept" | "reject" | null;
   decisionReason: string;
   decidedBy: string | null;
   decidedAt: string | null;
@@ -653,7 +673,8 @@ export type RiskCheckCardView = {
   updatedAt: string;
 };
 
-export type RiskCheckDecision = "accept" | "reject" | "conditional_accept";
+export type RiskCheckDecision = "accept" | "reject";
+export type RiskCheckRejectionCategory = "brief_insufficient" | "project_blocked";
 
 export type RiskCheckFactView = {
   id: string;
@@ -809,12 +830,16 @@ export type ContractTemplateFieldsView = {
   effectiveDate: string;
 };
 
+export type ContractMode = "vendor_provided" | "client_provided";
+
 export type ContractView = {
   id: string;
   projectId: string;
   proposalId: string | null;
   quoteId: string | null;
   clientContractAssetId: string | null;
+  signedContractAssetId: string | null;
+  mode: ContractMode;
   title: string;
   templateKey: string;
   templateFields: ContractTemplateFieldsView;
@@ -933,6 +958,7 @@ export type ArchiveRecordView = {
 
 export type WorkspaceData = {
   projectId: string;
+  project: ProjectSummary;
   jobs: JobSummary[];
   assets: AssetView[];
   assetAnalyses: AssetAnalysisView[];
@@ -942,6 +968,7 @@ export type WorkspaceData = {
   creativeProposalRounds: { rounds: CreativeProposalRoundView[] };
   scriptPackages: ScriptDirectionPackageView[];
   scriptReferences: ScriptReferenceAssetView[];
+  scriptRevisionMessages: ScriptRevisionMessageView[];
   storyboardScenes: StoryboardSceneView[];
   storyboardShots: StoryboardShotView[];
   productionEntities: ProductionEntityView[];
@@ -984,6 +1011,10 @@ export type WorkspaceData = {
 };
 
 export type ArtifactView = WorkspaceData["artifacts"][number];
+export type WorkspacePatchData = Partial<Omit<WorkspaceData, "projectId" | "project">> &
+  Pick<WorkspaceData, "project"> & {
+    projectId: string;
+  };
 
 export type AssetView = {
   id: string;
@@ -1126,6 +1157,15 @@ export async function fetchWorkspace(projectId: string) {
   return { ok: true as const, data: { ...result.data, projectId } };
 }
 
+export async function fetchWorkspacePatch(projectId: string, input: { stage: ProjectStage }) {
+  const params = new URLSearchParams({ mode: "stage", stage: input.stage });
+  const result = await readApi<Omit<WorkspacePatchData, "projectId">>(
+    await fetch(`/api/projects/${projectId}/workspace?${params.toString()}`, { cache: "no-store" })
+  );
+  if (!result.ok) return result;
+  return { ok: true as const, data: { ...result.data, projectId } };
+}
+
 export async function fetchRiskCheck(projectId: string) {
   return readApi<{ riskCheck: RiskCheckBundleView | null }>(await fetch(`/api/projects/${projectId}/risk-check`, { cache: "no-store" }));
 }
@@ -1144,8 +1184,9 @@ export async function saveRiskCheckDecision(
   projectId: string,
   input: {
     cardId: string;
-    decision: "accept" | "reject" | "conditional_accept";
-    reason: string;
+    decision: RiskCheckDecision;
+    rejectionCategory?: RiskCheckRejectionCategory;
+    reason?: string;
   }
 ) {
   return readApi<{ card: RiskCheckCardView; message: string }>(
@@ -1314,12 +1355,76 @@ export async function generateCreativeExpansions(projectId: string, directionId:
   );
 }
 
+export async function generateRound2DeepeningOutline(projectId: string, directionId: string) {
+  return readApi<{ jobId: string; message: string }>(
+    await fetch(`/api/projects/${projectId}/creative-directions/${directionId}/round2-outline/generate`, {
+      method: "POST",
+    })
+  );
+}
+
+export async function generateRound2DeepeningScript(projectId: string, directionId: string) {
+  return readApi<{ jobId: string; message: string }>(
+    await fetch(`/api/projects/${projectId}/creative-directions/${directionId}/round2-script/generate`, {
+      method: "POST",
+    })
+  );
+}
+
+export async function confirmRound2DeepeningScript(projectId: string, directionId: string) {
+  return readApi<{ artifact: ArtifactView; message: string }>(
+    await fetch(`/api/projects/${projectId}/creative-directions/${directionId}/round2-script/confirm`, {
+      method: "POST",
+    })
+  );
+}
+
+export async function splitRound2DeepeningStoryboard(projectId: string, directionId: string) {
+  return readApi<{ jobId: string; message: string }>(
+    await fetch(`/api/projects/${projectId}/creative-directions/${directionId}/round2-storyboard/split`, {
+      method: "POST",
+    })
+  );
+}
+
 export async function generateAtmosphereImage(projectId: string, directionId: string, expansionId: string) {
   return readApi<{ jobId: string; generatedImageId: string; message: string }>(
     await fetch(`/api/projects/${projectId}/creative-directions/${directionId}/expansions/${expansionId}/atmosphere-image/generate`, {
       method: "POST",
     })
   );
+}
+
+export type Round1StyleVariant = "2d" | "pixar_3d" | "realistic";
+
+export async function generateDirectionStyleImage(projectId: string, directionId: string, styleVariant: Round1StyleVariant) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 60_000);
+
+  try {
+    return await readApi<{ jobId: string; generatedImageId: string; message: string }>(
+      await fetch(`/api/projects/${projectId}/creative-directions/${directionId}/style-image/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ styleVariant }),
+        signal: controller.signal,
+      })
+    );
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      return clientApiError(
+        "round1_style_image_request_timeout",
+        "创建 Round 1 风格图任务超时。请刷新项目查看任务是否已创建；如果仍未出现，请稍后重试。"
+      );
+    }
+
+    return clientApiError(
+      "round1_style_image_request_failed",
+      "创建 Round 1 风格图任务时网络请求中断。请刷新项目查看任务是否已创建；如果仍未出现，请稍后重试。"
+    );
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 export async function reviewGeneratedImage(
@@ -1374,6 +1479,81 @@ export async function splitScriptPackage(projectId: string, packageId: string) {
   }>(
     await fetch(`/api/projects/${projectId}/script-packages/${packageId}/split-storyboard`, {
       method: "POST",
+    })
+  );
+}
+
+export async function generatePlainScriptPackage(projectId: string) {
+  return readApi<{
+    package: ScriptDirectionPackageView;
+    message: string;
+  }>(
+    await fetch(`/api/projects/${projectId}/script-packages/generate-plain`, {
+      method: "POST",
+    })
+  );
+}
+
+export async function revisePlainScriptPackage(
+  projectId: string,
+  packageId: string,
+  input: {
+    instruction: string;
+    inputMode: "text" | "voice";
+  }
+) {
+  return readApi<{
+    package: ScriptDirectionPackageView;
+    message: string;
+  }>(
+    await fetch(`/api/projects/${projectId}/script-packages/${packageId}/revise`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    })
+  );
+}
+
+export async function transcribeScriptRevisionAudio(projectId: string, input: { audio: Blob }) {
+  const body = new FormData();
+  body.set("audio", input.audio, "script-revision-audio.webm");
+  return readApi<{
+    transcript: string;
+    message: string;
+  }>(
+    await fetch(`/api/projects/${projectId}/script-packages/transcribe-audio`, {
+      method: "POST",
+      body,
+    })
+  );
+}
+
+export async function generateStandardizedScriptFromPlain(projectId: string, packageId: string) {
+  return readApi<{
+    package: ScriptDirectionPackageView;
+    message: string;
+  }>(
+    await fetch(`/api/projects/${projectId}/script-packages/${packageId}/standardize-from-plain`, {
+      method: "POST",
+    })
+  );
+}
+
+export async function saveStandardizedScriptEdit(
+  projectId: string,
+  packageId: string,
+  input: {
+    standardizedScript: string;
+  }
+) {
+  return readApi<{
+    package: ScriptDirectionPackageView;
+    message: string;
+  }>(
+    await fetch(`/api/projects/${projectId}/script-packages/${packageId}/standardized-script`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
     })
   );
 }
@@ -1602,10 +1782,28 @@ export async function saveStoryboardSequence(
   );
 }
 
+export async function confirmStoryboardSequence(projectId: string) {
+  return readApi<{
+    shots: StoryboardShotView[];
+    productionEntities: ProductionEntityView[];
+    productionReferenceSets: ProductionReferenceSetView[];
+    message: string;
+  }>(
+    await fetch(`/api/projects/${projectId}/storyboard-scenes/confirm-sequence`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    })
+  );
+}
+
 export async function generateStoryboardImage(
   projectId: string,
   shotId: string,
-  options?: { ratio?: "16:9" | "9:16" | "1:1" | "4:3" | "3:4"; count?: 1 | 2 | 4 }
+  options?: {
+    ratio?: "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
+    count?: 1 | 2 | 4;
+    extraReferenceImageUrls?: string[];
+  }
 ) {
   return readApi<{ jobs: Array<{ jobId: string; storyboardImageId: string }>; jobId: string; storyboardImageId: string; message: string }>(
     await fetch(`/api/projects/${projectId}/storyboard-images/generate`, {
@@ -1624,7 +1822,7 @@ export async function confirmStoryboardImage(projectId: string, imageId: string)
   );
 }
 
-export async function createStoryboardImageBatch(projectId: string, input: { batchNumber: 1 | 2 | 3; sceneIds: string[] }) {
+export async function createStoryboardImageBatch(projectId: string, input: { batchNumber?: number | null; sceneIds?: string[] }) {
   return readApi<{ batch: StoryboardImageBatchView; message: string }>(
     await fetch(`/api/projects/${projectId}/storyboard-image-batches`, {
       method: "POST",
@@ -1752,6 +1950,31 @@ export async function createReviewCut(
   );
 }
 
+export async function uploadReviewCutVideo(
+  projectId: string,
+  input: {
+    cutType: "a_copy" | "b_copy";
+    title: string;
+    description?: string;
+    file: File;
+  },
+  options: { signal?: AbortSignal } = {}
+) {
+  const formData = new FormData();
+  formData.set("cutType", input.cutType);
+  formData.set("title", input.title);
+  formData.set("description", input.description ?? "");
+  formData.set("file", input.file);
+
+  return readApi<{ reviewCut: ReviewCutView; message: string }>(
+    await fetch(`/api/projects/${projectId}/review-cuts/upload`, {
+      method: "POST",
+      body: formData,
+      signal: options.signal,
+    })
+  );
+}
+
 export async function approveReviewCut(projectId: string, reviewCutId: string) {
   return readApi<{ reviewCut: ReviewCutView; message: string }>(
     await fetch(`/api/projects/${projectId}/review-cuts/${reviewCutId}/internal-approve`, {
@@ -1760,9 +1983,25 @@ export async function approveReviewCut(projectId: string, reviewCutId: string) {
   );
 }
 
+export async function advanceACopyToBCopy(projectId: string, reviewCutId: string) {
+  return readApi<{ message: string }>(
+    await fetch(`/api/projects/${projectId}/review-cuts/${reviewCutId}/advance-b-copy`, {
+      method: "POST",
+    })
+  );
+}
+
+export async function advanceBCopyToArchive(projectId: string, reviewCutId: string) {
+  return readApi<{ message: string }>(
+    await fetch(`/api/projects/${projectId}/review-cuts/${reviewCutId}/advance-archive`, {
+      method: "POST",
+    })
+  );
+}
+
 export async function generateStoryboardVideo(
   projectId: string,
-  input: { shotId: string; mode: StoryboardVideoInputMode; imageIds: string[]; prompt?: string }
+  input: { shotId: string; mode: StoryboardVideoInputMode; imageIds: string[]; prompt?: string; durationSeconds?: number }
 ) {
   return readApi<{ jobId: string; storyboardVideoId: string; message: string }>(
     await fetch(`/api/projects/${projectId}/storyboard-videos/generate`, {
@@ -1771,6 +2010,34 @@ export async function generateStoryboardVideo(
       body: JSON.stringify(input),
     })
   );
+}
+
+export async function downloadStoryboardVideosZip(projectId: string, input: { videoIds: string[] }) {
+  const response = await fetch(`/api/projects/${projectId}/storyboard-videos/download-zip`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null) as { error?: ApiError } | null;
+    return {
+      ok: false,
+      error: payload?.error ?? {
+        code: "download_zip_failed",
+        message: "暂时无法打包视频素材。请稍后重试，或联系管理员检查视频文件是否可读取。",
+        recoverable: true,
+      },
+    } satisfies ApiResult<{ blob: Blob; fileName: string }>;
+  }
+  const disposition = response.headers.get("content-disposition") ?? "";
+  const fileName = decodeURIComponent(disposition.match(/filename\*=UTF-8''([^;]+)/)?.[1] ?? "storyboard-videos.zip");
+  return {
+    ok: true,
+    data: {
+      blob: await response.blob(),
+      fileName,
+    },
+  } satisfies ApiResult<{ blob: Blob; fileName: string }>;
 }
 
 export async function fetchStoryboardSceneVideoBundle(projectId: string, sceneId: string) {
@@ -1833,6 +2100,15 @@ export async function saveWorkloadEstimate(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
+    })
+  );
+}
+
+export async function generateWorkloadEstimateDraft(projectId: string) {
+  return readApi<{ workloadEstimate: WorkloadEstimateView; message: string }>(
+    await fetch(`/api/projects/${projectId}/workload-estimate/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
     })
   );
 }
@@ -1978,6 +2254,7 @@ export async function reviewQuote(
 export async function saveContract(
   projectId: string,
   input: {
+    mode?: ContractMode;
     title: string;
     templateKey?: string;
     templateFields: ContractTemplateFieldsView;
@@ -1986,6 +2263,7 @@ export async function saveContract(
     proposalId?: string | null;
     quoteId?: string | null;
     clientContractAssetId?: string | null;
+    signedContractAssetId?: string | null;
   }
 ) {
   return readApi<{ contract: ContractView; snapshot: DocumentSnapshotView; message: string }>(

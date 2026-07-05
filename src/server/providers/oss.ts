@@ -19,12 +19,13 @@ function assertOssConfigured() {
   };
 }
 
-export function createUploadUrl(objectKey: string) {
+export function createUploadUrl(objectKey: string, options: { contentType?: string | null } = {}) {
   const config = assertOssConfigured();
   const expires = Math.floor(Date.now() / 1000) + 900;
   const normalizedObjectKey = objectKey.replace(/^\/+/, "");
+  const contentType = options.contentType ?? "";
   const canonicalResource = `/${config.bucket}/${normalizedObjectKey}`;
-  const stringToSign = ["PUT", "", "", String(expires), canonicalResource].join("\n");
+  const stringToSign = ["PUT", "", contentType, String(expires), canonicalResource].join("\n");
   const signature = createHmac("sha1", config.accessKeySecret).update(stringToSign).digest("base64");
   const url = new URL(buildObjectUrl(config.endpoint, config.bucket, normalizedObjectKey));
   url.searchParams.set("OSSAccessKeyId", config.accessKeyId);

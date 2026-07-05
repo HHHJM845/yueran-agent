@@ -29,6 +29,9 @@ Web/API 只负责鉴权、入队、读取状态和返回工作台数据。AI 长
 两个进程必须使用同一组服务端环境变量：
 
 - `DATABASE_URL`
+- `SUPABASE_URL`
+- `SUPABASE_PUBLISHABLE_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
 - `ALIYUN_OSS_*`
 - `ARK_API_KEY`
 - `OPENAI_API_KEY`
@@ -37,12 +40,16 @@ Web/API 只负责鉴权、入队、读取状态和返回工作台数据。AI 长
 - `FEISHU_APP_SECRET`
 - `SESSION_COOKIE_NAME`
 - `SESSION_TTL_DAYS`
+- `JOB_WORKER_CONCURRENCY`
+
+`DATABASE_URL` 必须使用 Supabase Dashboard 给出的 Postgres 连接串。Supabase Publishable Key 和 Service Role Key 不能替代数据库密码。
 
 ## Worker 行为
 
 Worker 使用 Postgres 队列表：
 
 - `queued` / `retrying` 任务会被领取。
+- 默认单个 worker 进程最多并发处理 3 个任务，可通过 `JOB_WORKER_CONCURRENCY` 调整，取值会限制在 1-8 之间。
 - 领取后写入 `processing`、`locked_by`、`lock_expires_at`。
 - 长任务会定时续租。
 - 任务失败会按 `max_attempts` 自动重试。

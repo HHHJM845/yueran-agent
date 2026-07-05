@@ -36,6 +36,26 @@ const dimensionTitleMap: Record<string, { high: string; medium: string }> = {
     high: "合规与交付风险偏高",
     medium: "合规与交付待确认",
   },
+  decision_chain: {
+    high: "需求链路风险偏高",
+    medium: "需求链路待确认",
+  },
+  compliance: {
+    high: "合规与交付风险偏高",
+    medium: "合规与交付待确认",
+  },
+  visual_reproduction: {
+    high: "视觉还原风险偏高",
+    medium: "视觉还原待确认",
+  },
+  commercial: {
+    high: "预算商务风险偏高",
+    medium: "预算商务待确认",
+  },
+  schedule: {
+    high: "周期排期风险偏高",
+    medium: "周期排期待确认",
+  },
 };
 
 const dimensionFallbackLabels: Record<string, string> = {
@@ -44,6 +64,11 @@ const dimensionFallbackLabels: Record<string, string> = {
   creative_expression: "创意表达",
   production_complexity: "生产复杂度",
   compliance_delivery: "合规与交付",
+  decision_chain: "需求链路",
+  compliance: "合规与交付",
+  visual_reproduction: "视觉还原",
+  commercial: "预算商务",
+  schedule: "周期排期",
 };
 
 const dimensionPriority: Record<RiskCheckDimensionView["level"], number> = {
@@ -59,7 +84,7 @@ export function buildRiskIssues(riskCheck: RiskCheckBundleView | null): RiskIssu
   const usedSemanticKeys = new Set<string>();
 
   for (const alert of riskCheck.redlineAlerts ?? []) {
-    const message = normalizeText(alert);
+    const message = compactReason(alert, "命中红线风险，需要人工确认是否继续承接。");
     if (!message) continue;
     issues.push({
       key: `redline-${issues.length}`,
@@ -71,13 +96,14 @@ export function buildRiskIssues(riskCheck: RiskCheckBundleView | null): RiskIssu
     if (issues.length >= 5) return issues.slice(0, 5);
   }
 
-  const rankedDimensions = [...(riskCheck.dimensions ?? [])]
-    .filter((dimension) => dimension.level !== "low")
+  const rankedDimensions = (riskCheck.dimensions ?? [])
+    .map((dimension, index) => ({ dimension, index }))
+    .filter(({ dimension }) => dimension.level !== "low")
     .sort((a, b) => {
-      const levelDelta = dimensionPriority[a.level] - dimensionPriority[b.level];
-      if (levelDelta !== 0) return levelDelta;
-      return b.confidence - a.confidence;
-    });
+      const levelDelta = dimensionPriority[a.dimension.level] - dimensionPriority[b.dimension.level];
+      return levelDelta !== 0 ? levelDelta : a.index - b.index;
+    })
+    .map(({ dimension }) => dimension);
 
   for (const dimension of rankedDimensions) {
     const item = buildDimensionIssue(dimension);
@@ -111,7 +137,7 @@ export function buildRiskIssues(riskCheck: RiskCheckBundleView | null): RiskIssu
 }
 
 export function getRiskPanelSummary(riskCheck: RiskCheckBundleView | null): string {
-  if (!riskCheck) return "当前还没有生成风险体检卡，请先补齐 Brief 和资料。";
+  if (!riskCheck) return "当前还没有生成接单风险评估，请先补齐 Brief 和资料。";
   if (riskCheck.card.overallAlert === "redline") {
     return "当前命中红线风险，请先确认是否具备继续承接条件。";
   }
@@ -151,7 +177,7 @@ function buildDimensionIssue(dimension: RiskCheckDimensionView): RiskIssueView |
   const titleGroup = dimensionTitleMap[dimension.dimensionKey];
   const titleKey: "high" | "medium" = dimension.level;
   const title = titleGroup?.[titleKey] ?? `${dimensionFallbackLabels[dimension.dimensionKey] ?? dimension.dimensionKey}待确认`;
-  const reason = normalizeText(dimension.evidence) || normalizeText(dimension.anchorText) || "需要人工确认该维度的影响范围。";
+  const reason = compactReason(dimension.evidence || dimension.anchorText, "需要人工确认该维度的影响范围。");
   return {
     key: `dimension-${dimension.dimensionKey}`,
     title,
@@ -173,11 +199,16 @@ function buildFactIssue(fact: RiskCheckFactView, usedSemanticKeys: Set<string>):
     key: `fact-${fact.fieldKey}`,
     title: `${fact.fieldLabel}待确认`,
     levelLabel: "待确认",
-    reason: evidenceText || valueText || "该信息仍需人工补充。",
+    reason: compactReason(evidenceText || valueText, "该信息仍需人工补充。"),
     tone: "warning",
   };
 }
 
 function normalizeText(value: string | null | undefined): string {
   return (value ?? "").trim();
+}
+
+function compactReason(value: string | null | undefined, fallback: string): string {
+  const normalized = normalizeText(value).replace(/\s+/g, " ") || fallback;
+  return normalized.length > 72 ? `${normalized.slice(0, 70)}…` : normalized;
 }

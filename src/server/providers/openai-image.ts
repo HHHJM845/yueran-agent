@@ -183,7 +183,7 @@ function normalizeOpenAIImageError(error: unknown) {
 }
 
 function mapOpenAIImageError(code: string | undefined) {
-  if (code === "APITimeoutError" || code === "TimeoutError" || code === "AbortError" || code === "APIUserAbortError") {
+  if (code === "APIConnectionTimeoutError" || code === "APITimeoutError" || code === "TimeoutError" || code === "AbortError" || code === "APIUserAbortError") {
     return new AppError({
       status: 504,
       code: "openai_image_timeout",
@@ -201,6 +201,7 @@ function mapOpenAIImageError(code: string | undefined) {
 function isRetryableOpenAIImageError(code: string | undefined) {
   return [
     "APIConnectionError",
+    "APIConnectionTimeoutError",
     "APITimeoutError",
     "TimeoutError",
     "AbortError",
