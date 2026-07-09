@@ -41,12 +41,15 @@ test("SOP5 script setup exposes plain script revision and standardized script ac
   assert.match(source, /scriptRevisionMessages={scriptRevisionMessages}/);
   assert.match(source, /currentRevisionMessages\.map/);
   assert.match(source, /AI 修订稿/);
-  assert.match(source, /暂无修订对话/);
+  assert.match(source, /暂无修订记录/);
   assert.match(source, /generateStandardizedScriptFromPlain\(project\.id, packageId\)/);
   assert.match(source, /saveStandardizedScriptEdit\(project\.id, packageId/);
   assert.match(source, /重新生成标准剧本/);
   assert.match(source, /window\.confirm\("重新生成会用当前大白话剧本覆盖现有标准剧本。确认继续吗？"\)/);
   assert.match(source, /发送标准剧本给甲方/);
+  assert.doesNotMatch(source, /暂无修订对话/);
+  assert.doesNotMatch(source, /调用真实文本模型并写入数据库/);
+  assert.doesNotMatch(source, /刷新后仍可回看/);
 });
 
 test("SOP5 script setup separates plain script revision and standardized script cards", () => {
@@ -58,6 +61,39 @@ test("SOP5 script setup separates plain script revision and standardized script 
 
   assert.match(scriptSetup, /<WorkspaceCard variant="stage">[\s\S]*生成的大白话剧本[\s\S]*连续修订[\s\S]*<\/WorkspaceCard>\s*<WorkspaceCard variant="stage">[\s\S]*标准剧本/);
   assert.match(scriptSetup, /标准剧本[\s\S]*<ClientReviewLaunchBox/);
+});
+
+test("production workflow pages keep explanatory copy trimmed to core actions and status", () => {
+  const forbiddenCopy = [
+    /从已确认的创意、报价和合同生成大白话剧本/,
+    /这里保存 AI 生成和每轮修订后的可读版本/,
+    /调用真实文本模型并写入数据库/,
+    /刷新后仍可回看/,
+    /系统会把大白话版本整理为可审核、可拆分的标准剧本/,
+    /把当前标准剧本生成甲方审核链接，并回写审核记录/,
+    /标准剧本生成后即可调用文本模型拆解详细文字分镜/,
+    /完成后自动刷新场次、分镜和人物场景/,
+    /生成标准剧本后可自动拆分并写入数据库/,
+    /确认后同步人物\/场景引用/,
+    /AI 抽取的人物和场景先在这里确认/,
+    /每张卡片按当前可见提示词生成/,
+    /审核 metadata 使用/,
+    /保存当前全量包后生成甲方审核链接/,
+    /逐条保留甲方 OK \/ 不 OK 结果和修改意见/,
+    /生成好的视频会显示在这里/,
+    /已保存成片，可重新选择文件生成新版本/,
+    /甲方观看完整视频并提交时间戳批注/,
+    /交给豆包语音模型/,
+  ];
+
+  for (const pattern of forbiddenCopy) {
+    assert.doesNotMatch(source, pattern);
+  }
+
+  assert.match(source, /大白话剧本生成中。/);
+  assert.match(source, /标准剧本生成中。/);
+  assert.match(source, /文字分镜拆解中。/);
+  assert.match(source, /暂无视频素材。/);
 });
 
 test("storyboard media rails use storyboard split order instead of raw response order", () => {
@@ -148,10 +184,10 @@ test("storyboard image canvas follows structured Brief-style hierarchy", () => {
   assert.match(imageCanvas, /createUploadUrl\(project\.id/);
   assert.match(imageCanvas, /registerUploadedAsset\(project\.id/);
   assert.match(imageCanvas, /extraReferenceImageUrls/);
-  assert.match(imageCanvas, /保存当前全量包后生成甲方审核链接/);
+  assert.doesNotMatch(imageCanvas, /保存当前全量包后生成甲方审核链接/);
   assert.match(imageCanvas, /可提交图片/);
   assert.match(imageCanvas, /提交记录/);
-  assert.match(imageCanvas, /逐条保留甲方 OK \/ 不 OK 结果和修改意见。/);
+  assert.doesNotMatch(imageCanvas, /逐条保留甲方 OK \/ 不 OK 结果和修改意见。/);
   assert.match(imageCanvas, /修改意见/);
   assert.doesNotMatch(imageCanvas, /每次保存都会把当前所有分镜图片打成一轮全量审核包/);
   assert.doesNotMatch(imageCanvas, /如需一致性，建议先在 SOP5 设定图卡片中生成并“设为采用”后再生成/);
@@ -162,6 +198,7 @@ test("storyboard image canvas follows structured Brief-style hierarchy", () => {
   assert.doesNotMatch(imageCanvas, /<MiniMetric label="可提交"/);
   assert.doesNotMatch(imageCanvas, /<MiniMetric label="已通过"/);
   assert.doesNotMatch(imageCanvas, />提示词</);
+  assert.doesNotMatch(source, /交给豆包语音模型/);
   assert.match(globalStyleSource, /\.storyboard-generation-console\s*\{/);
   assert.match(globalStyleSource, /\.storyboard-reference-dock\s*\{/);
   assert.match(globalStyleSource, /\.storyboard-extra-reference-tile\s*\{/);
@@ -329,7 +366,8 @@ test("storyboard rejected feedback is shown from thumbnail hover cards", () => {
 
 test("SOP5 storyboard split depends on standardized script instead of client approval", () => {
   assert.match(source, /sop5Flow\.storyboardSplit\.canGenerateStoryboard/);
-  assert.match(source, /标准剧本生成后即可调用文本模型拆解详细文字分镜/);
+  assert.match(source, /自动拆分文字分镜/);
+  assert.doesNotMatch(source, /标准剧本生成后即可调用文本模型拆解详细文字分镜/);
   assert.doesNotMatch(source, /scriptReviewApproved/);
   assert.doesNotMatch(source, /经甲方确认后/);
 });
@@ -342,7 +380,6 @@ test("SOP5 storyboard split follows structured Brief-style hierarchy", () => {
   const storyboardSplit = source.slice(storyboardSplitStart, productionSetupStart);
 
   assert.match(storyboardSplit, /text-lg font-semibold tracking-tight text-\[var\(--text-primary\)\]/);
-  assert.match(storyboardSplit, /max-w-3xl text-sm font-medium leading-6 text-\[var\(--text-secondary\)\]/);
   assert.match(storyboardSplit, /场次/);
   assert.match(storyboardSplit, /分镜/);
   assert.match(storyboardSplit, /状态/);
@@ -350,7 +387,7 @@ test("SOP5 storyboard split follows structured Brief-style hierarchy", () => {
   assert.match(storyboardSplit, /分镜列表/);
   assert.match(storyboardSplit, /镜号/);
   assert.match(storyboardSplit, /画面内容/);
-  assert.match(storyboardSplit, /确认后同步人物\/场景引用/);
+  assert.doesNotMatch(storyboardSplit, /确认后同步人物\/场景引用/);
   assert.doesNotMatch(storyboardSplit, /并同步抽取人物和场景设定清单/);
   assert.doesNotMatch(storyboardSplit, /通常需要几十秒/);
 });

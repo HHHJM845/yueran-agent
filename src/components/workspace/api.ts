@@ -1355,14 +1355,6 @@ export async function generateCreativeExpansions(projectId: string, directionId:
   );
 }
 
-export async function generateRound2DeepeningOutline(projectId: string, directionId: string) {
-  return readApi<{ jobId: string; message: string }>(
-    await fetch(`/api/projects/${projectId}/creative-directions/${directionId}/round2-outline/generate`, {
-      method: "POST",
-    })
-  );
-}
-
 export async function generateRound2DeepeningScript(projectId: string, directionId: string) {
   return readApi<{ jobId: string; message: string }>(
     await fetch(`/api/projects/${projectId}/creative-directions/${directionId}/round2-script/generate`, {

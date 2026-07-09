@@ -1,20 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-test("Round 2 deepening jobs preserve outline, script, confirmation, and storyboard split operations", async () => {
+test("Round 2 deepening jobs generate full story directly before confirmation and storyboard split", async () => {
   const { readFileSync } = await import("node:fs");
   const source = readFileSync(new URL("./generate-creative-expansions.ts", import.meta.url), "utf8");
 
-  assert.match(source, /round2_outline/);
   assert.match(source, /round2_script/);
   assert.match(source, /round2_split_storyboard/);
-  assert.match(source, /round2_deepening_outline/);
   assert.match(source, /round2_deepening_script/);
   assert.match(source, /round2_deepening_storyboard_split/);
   assert.match(source, /confirmRound2DeepeningScript/);
   assert.match(source, /scriptArtifact\.status !== "confirmed"/);
   assert.match(source, /请先确认完整故事/);
   assert.match(source, /700-800 字完整故事/);
+  assert.match(source, /listProjectCreativeExpansions/);
+  assert.match(source, /buildRound2ScriptPrompt\(input\.direction, round1StoryOutlines\)/);
+  assert.doesNotMatch(source, /round2_outline_required/);
+  assert.doesNotMatch(source, /请先生成深化故事稿/);
 });
 
 test("findLatestRound2Artifact only reads matching Round 2 artifacts for the retained direction", async () => {
@@ -183,12 +185,13 @@ test("parseCreativeExpansionResponse does not mistake visual highlight arrays fo
   assert.deepEqual(parsed.expansions[0].visualHighlights, ["四格构图", "不同色温", "冷萃瓶身"]);
 });
 
-test("Round 2 scene selection falls back from one combined scene to four usable scenes", async () => {
+test("Round 2 scene selection falls back from one combined scene to two usable scenes", async () => {
   const { readFileSync } = await import("node:fs");
   const source = readFileSync(new URL("./generate-creative-expansions.ts", import.meta.url), "utf8");
 
   assert.match(source, /buildFallbackRound2StoryboardScenes/);
   assert.match(source, /visualHighlights/);
-  assert.match(source, /splitTextIntoFourParts/);
-  assert.match(source, /不要把 4 个画面写成 visualHighlights 数组/);
+  assert.match(source, /splitTextIntoSceneParts/);
+  assert.match(source, /ROUND_2_DEEPENING_SCENE_COUNT = 2/);
+  assert.match(source, /不要把多个画面写成 visualHighlights 数组/);
 });

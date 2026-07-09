@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, Clock3, FileClock, Loader2, Plus, Send, XCircle } from "lucide-react";
+import { CheckCircle2, Clock3, Loader2, Plus, Send, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -57,10 +57,28 @@ type QuoteReviewLine = {
   unitPrice: number;
 };
 
-type ClientReviewHistoryEntry = {
-  task: ClientReviewTask;
-  items: ClientReviewItem[];
-  isCurrent: boolean;
+type ClientReviewArchiveVersion = {
+  taskId: string;
+  version: number;
+  status: string;
+  generatedAt: string;
+  submittedAt: string | null;
+  reviewedAt: string | null;
+  reviewerName: string | null;
+  feedback: string | null;
+  isTextNode: boolean;
+  items?: ClientReviewItem[];
+};
+
+type ClientReviewArchive = {
+  nodeKey: string;
+  nodeLabel: string;
+  order: number;
+  series: Array<{
+    seriesKey: string;
+    seriesLabel: string | null;
+    versions: ClientReviewArchiveVersion[];
+  }>;
 };
 
 type ClientReviewPageParams = { token: string } | Promise<{ token: string }>;
@@ -69,8 +87,7 @@ export default function ClientReviewPage({ params }: { params: ClientReviewPageP
   const [token, setToken] = useState<string | null>(null);
   const [task, setTask] = useState<ClientReviewTask | null>(null);
   const [items, setItems] = useState<ClientReviewItem[]>([]);
-  const [history, setHistory] = useState<ClientReviewHistoryEntry[]>([]);
-  const [selectedReviewId, setSelectedReviewId] = useState<string | null>(null);
+  const [archive, setArchive] = useState<ClientReviewArchive[]>([]);
   const [loading, setLoading] = useState(true);
   const [unlocking, setUnlocking] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -88,7 +105,7 @@ export default function ClientReviewPage({ params }: { params: ClientReviewPageP
       })
       .catch(() => {
         if (cancelled) return;
-        setError("审核链接参数读取失败。请确认链接完整后重新打开，或联系项目团队重新发送。");
+        setError("审核入口参数读取失败。请确认地址完整后重新打开，或联系项目团队重新发送。");
         setLoading(false);
       });
     return () => {
@@ -108,7 +125,7 @@ export default function ClientReviewPage({ params }: { params: ClientReviewPageP
         setError(payload.ok ? null : payload.error.message);
       } catch (error) {
         if (cancelled) return;
-        setError(toReviewPageError(error, "暂时无法读取审核任务。请刷新页面重试，或联系项目团队重新发送审核链接。"));
+        setError(toReviewPageError(error, "暂时无法读取审核任务。请刷新页面重试，或联系项目团队重新发送入口。"));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -126,7 +143,7 @@ export default function ClientReviewPage({ params }: { params: ClientReviewPageP
     setError(null);
     setMessage(null);
     try {
-      const payload = await fetchReviewPayload<{ task: ClientReviewTask; items: ClientReviewItem[]; history: ClientReviewHistoryEntry[] }>(`/api/client-review/${token}/unlock`, {
+      const payload = await fetchReviewPayload<{ task: ClientReviewTask; items: ClientReviewItem[]; archive: ClientReviewArchive[] }>(`/api/client-review/${token}/unlock`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ verificationCode: code }),
@@ -135,14 +152,13 @@ export default function ClientReviewPage({ params }: { params: ClientReviewPageP
         setVerificationCode(code);
         setTask(payload.data.task);
         setItems(payload.data.items);
-        setHistory(payload.data.history ?? []);
-        setSelectedReviewId(payload.data.task.id);
+        setArchive(payload.data.archive ?? []);
         setError(null);
       } else {
         setError(payload.error.message);
       }
     } catch (error) {
-      setError(toReviewPageError(error, "暂时无法校验审核密钥。请稍后重试，或联系项目团队重新发送审核链接。"));
+      setError(toReviewPageError(error, "暂时无法校验审核密钥。请稍后重试，或联系项目团队重新发送入口。"));
     } finally {
       setUnlocking(false);
     }
@@ -199,32 +215,20 @@ export default function ClientReviewPage({ params }: { params: ClientReviewPageP
         setMessage(payload.data.message);
         setTask(payload.data.task);
         setItems(payload.data.items);
-        setSelectedReviewId(payload.data.task.id);
-        setHistory((currentHistory) =>
-          currentHistory.map((entry) =>
-            entry.task.id === payload.data.task.id
-              ? {
-                  ...entry,
-                  task: { ...entry.task, ...payload.data.task },
-                  items: payload.data.items.length > 0 ? payload.data.items : entry.items,
-                }
-              : entry
-          )
-        );
+        setArchive((currentArchive) => updateArchiveVersionAfterSubmit(currentArchive, payload.data.task, payload.data.items));
       } else {
         setError(payload.error.message);
       }
     } catch (error) {
-      setError(toReviewPageError(error, "暂时无法提交审核意见。请稍后重试，或联系项目团队确认审核链接是否仍有效。"));
+      setError(toReviewPageError(error, "暂时无法提交审核意见。请稍后重试，或联系项目团队确认本次审核入口是否仍有效。"));
     } finally {
       setSubmitting(false);
     }
   }
 
-  const selectedHistoryEntry = history.find((entry) => entry.task.id === selectedReviewId) ?? null;
-  const viewingCurrentTask = !selectedHistoryEntry || selectedHistoryEntry.task.id === task?.id;
-  const displayedTask = viewingCurrentTask ? task : selectedHistoryEntry.task;
-  const displayedItems = viewingCurrentTask ? reviewItems : selectedHistoryEntry.items;
+  const viewingCurrentTask = true;
+  const displayedTask = task;
+  const displayedItems = reviewItems;
   const displayedCreativeProposalItems = useMemo(() => groupCreativeProposalItems(displayedItems ?? []), [displayedItems]);
   const displayedVideoItem = displayedItems?.find((item) => item.itemType === "review_cut_video");
   const displayedVideoUrl = typeof displayedVideoItem?.metadata.videoUrl === "string" ? displayedVideoItem.metadata.videoUrl : null;
@@ -265,17 +269,9 @@ export default function ClientReviewPage({ params }: { params: ClientReviewPageP
               </div>
               <span className="rounded-full border border-black/10 px-3 py-1 text-xs">{reviewStatusLabel(displayedTask.status)}</span>
             </div>
-            <ReviewNodeNavigator
-              history={history}
-              currentTaskId={task.id}
-              selectedTaskId={displayedTask.id}
-              onSelect={setSelectedReviewId}
-            />
+            <ClientReviewVersionCompare archive={archive} currentTaskId={task.id} />
             {message && <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">{message}</div>}
             {error && <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">{error}</div>}
-            {!viewingCurrentTask && (
-              <HistoricalReviewSummary task={displayedTask} items={displayedItems ?? []} />
-            )}
             <form action={submit} className="mt-6 grid gap-6">
               {viewingCurrentTask ? (
                 <div className="grid gap-3 rounded-2xl bg-black p-4 text-white md:grid-cols-2">
@@ -379,7 +375,7 @@ export default function ClientReviewPage({ params }: { params: ClientReviewPageP
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div>
                           <p className="text-sm font-semibold">分镜逐张审核</p>
-                          <p className="mt-1 text-xs leading-5 text-black/55">请给每张分镜选择 OK 或不 OK；不 OK 的分镜请填写原因和修改意见。系统会根据逐镜结果自动判断本轮是否通过。</p>
+                          <p className="mt-1 text-xs leading-5 text-black/55">请给每张分镜选择通过或不通过；不通过的分镜请填写原因和修改意见。系统会根据逐镜结果自动判断本轮是否通过。</p>
                         </div>
                         <Button type="submit" disabled={!canSubmit || submitting}>
                           {submitting ? <Loader2 className="animate-spin" size={15} /> : <Send size={15} />}
@@ -396,11 +392,11 @@ export default function ClientReviewPage({ params }: { params: ClientReviewPageP
                       <div className="flex flex-wrap gap-3">
                         <Button type="submit" name="decision" value="approved" disabled={!canSubmit || submitting}>
                           {submitting ? <Loader2 className="animate-spin" size={15} /> : <CheckCircle2 size={15} />}
-                          OK
+                          通过
                         </Button>
                         <Button type="submit" name="decision" value="rejected" variant="outline" disabled={!canSubmit || submitting}>
                           <XCircle size={15} />
-                          不 OK
+                          不通过
                         </Button>
                       </div>
                     </>
@@ -408,6 +404,7 @@ export default function ClientReviewPage({ params }: { params: ClientReviewPageP
                 </>
               ) : null}
             </form>
+            <ProjectReviewArchive archive={archive} currentTaskId={task.id} />
           </>
         ) : null}
       </section>
@@ -417,13 +414,13 @@ export default function ClientReviewPage({ params }: { params: ClientReviewPageP
 
 function reviewStatusLabel(status: string) {
   const labels: Record<string, string> = {
-    draft: "草稿",
+    draft: "草稿（内部，档案区不展示）",
     active: "待审核",
     submitted: "已提交",
     approved: "已通过",
-    rejected: "已打回",
+    rejected: "未通过",
     expired: "已过期",
-    revoked: "已撤回",
+    revoked: "已撤销",
   };
   return labels[status] ?? status;
 }
@@ -473,6 +470,216 @@ function UnlockReviewGate({
   );
 }
 
+function ClientReviewVersionCompare({ archive, currentTaskId }: { archive: ClientReviewArchive[]; currentTaskId: string }) {
+  const currentSeries = findArchiveSeriesByTaskId(archive, currentTaskId);
+  const versions = currentSeries?.versions ?? [];
+  const currentVersion = versions.find((version) => version.taskId === currentTaskId) ?? versions[0] ?? null;
+  const previousVersion = currentVersion ? versions.find((version) => version.version < currentVersion.version) ?? null : null;
+  const [leftTaskIdByCurrent, setLeftTaskIdByCurrent] = useState<Record<string, string>>({});
+  const [rightTaskIdByCurrent, setRightTaskIdByCurrent] = useState<Record<string, string>>({});
+
+  if (!currentSeries || !currentVersion) return null;
+
+  const leftTaskId = leftTaskIdByCurrent[currentTaskId] || currentVersion.taskId;
+  const rightTaskId = rightTaskIdByCurrent[currentTaskId] || previousVersion?.taskId || "";
+  const leftVersion = versions.find((version) => version.taskId === leftTaskId) ?? currentVersion;
+  const rightVersion = versions.find((version) => version.taskId === rightTaskId) ?? previousVersion;
+  const canCompareText = leftVersion.isTextNode && (!rightVersion || rightVersion.isTextNode);
+
+  return (
+    <section className="mt-5 rounded-[24px] border border-black/10 bg-[#f7f5f0] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold">当前版本 vs 上一版本</p>
+          <p className="mt-1 text-xs leading-5 text-black/50">历史版本只读，可在同一节点内选择两个版本并排查看。</p>
+        </div>
+        <div className="grid gap-2 text-xs sm:grid-cols-2">
+          <label className="grid gap-1">
+            版本 A
+            <select
+              value={leftVersion.taskId}
+              onChange={(event) => setLeftTaskIdByCurrent((current) => ({ ...current, [currentTaskId]: event.target.value }))}
+              className="rounded-xl border border-black/10 bg-white px-3 py-2"
+            >
+              {versions.map((version) => (
+                <option key={`left-${version.taskId}`} value={version.taskId}>
+                  v{version.version} · {reviewStatusLabel(version.status)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-1">
+            版本 B
+            <select
+              value={rightVersion?.taskId ?? ""}
+              onChange={(event) => setRightTaskIdByCurrent((current) => ({ ...current, [currentTaskId]: event.target.value }))}
+              className="rounded-xl border border-black/10 bg-white px-3 py-2"
+            >
+              <option value="">无上一版本</option>
+              {versions.map((version) => (
+                <option key={`right-${version.taskId}`} value={version.taskId}>
+                  v{version.version} · {reviewStatusLabel(version.status)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </div>
+      {canCompareText ? (
+        <div className={["mt-4 grid gap-4", rightVersion ? "lg:grid-cols-2" : ""].join(" ")}>
+          <ReviewVersionSnapshot version={leftVersion} title="版本 A" />
+          {rightVersion ? <ReviewVersionSnapshot version={rightVersion} title="版本 B" /> : null}
+        </div>
+      ) : (
+        <div className="mt-4 grid gap-3 rounded-2xl border border-black/10 bg-white p-4 text-sm leading-6 text-black/60">
+          <p className="font-medium text-black">该节点完整内容对比将在后续版本提供。</p>
+          <p>
+            当前可查看版本号、生成时间、审核状态和提交反馈；图片与视频内容继续以当前审核任务区为准。
+          </p>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ProjectReviewArchive({ archive, currentTaskId }: { archive: ClientReviewArchive[]; currentTaskId: string }) {
+  if (archive.length === 0) return null;
+
+  return (
+    <section className="mt-8 rounded-[24px] border border-black/10 bg-[#f7f5f0] p-4">
+      <div>
+        <p className="text-sm font-semibold">项目审核档案</p>
+        <p className="mt-1 text-xs leading-5 text-black/50">按项目流程顺序保存全部外部审核版本，历史版本只读。</p>
+      </div>
+      <div className="mt-4 grid gap-3">
+        {archive.map((node) => {
+          const latestVersion = node.series.flatMap((series) => series.versions)[0] ?? null;
+          return (
+            <details key={node.nodeKey} className="rounded-2xl border border-black/10 bg-white p-3" open={node.series.some((series) => series.versions.some((version) => version.taskId === currentTaskId))}>
+              <summary className="cursor-pointer list-none">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs text-black/45">{String(node.order).padStart(2, "0")}</p>
+                    <h2 className="mt-1 text-base font-semibold">{node.nodeLabel}</h2>
+                  </div>
+                  {latestVersion && (
+                    <div className="flex flex-wrap gap-2 text-xs text-black/55">
+                      <span className="rounded-full border border-black/10 px-3 py-1">最新 v{latestVersion.version}</span>
+                      <span className="rounded-full border border-black/10 px-3 py-1">{reviewStatusLabel(latestVersion.status)}</span>
+                      <span className="rounded-full border border-black/10 px-3 py-1">{formatReviewDate(latestVersion.generatedAt)}</span>
+                    </div>
+                  )}
+                </div>
+              </summary>
+              <div className="mt-3 grid gap-3">
+                {node.series.map((series) => (
+                  <div key={series.seriesKey} className="rounded-2xl bg-black/[0.035] p-3">
+                    {series.seriesLabel && <p className="mb-2 text-xs font-medium text-black/50">{series.seriesLabel}</p>}
+                    <div className="grid gap-2">
+                      {series.versions.map((version) => (
+                        <ArchiveVersionRow key={version.taskId} version={version} current={version.taskId === currentTaskId} />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </details>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function ArchiveVersionRow({ version, current }: { version: ClientReviewArchiveVersion; current: boolean }) {
+  return (
+    <details className="rounded-xl border border-black/10 bg-white p-3">
+      <summary className="cursor-pointer list-none">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold">v{version.version}</span>
+            {current && <span className="rounded-full bg-black px-2 py-0.5 text-[10px] text-white">当前</span>}
+            <span className="rounded-full border border-black/10 px-2 py-0.5 text-xs text-black/55">{reviewStatusLabel(version.status)}</span>
+          </div>
+          <span className="text-xs text-black/45">{formatReviewDate(version.reviewedAt ?? version.submittedAt ?? version.generatedAt)}</span>
+        </div>
+        {version.feedback && <p className="mt-2 text-xs leading-5 text-black/55">提交反馈：{version.feedback}</p>}
+      </summary>
+      {version.isTextNode ? (
+        <div className="mt-3">
+          <ReviewVersionSnapshot version={version} title={`v${version.version}`} compact />
+        </div>
+      ) : (
+        <p className="mt-3 rounded-xl bg-[#f7f5f0] p-3 text-sm leading-6 text-black/55">该节点完整内容对比将在后续版本提供。</p>
+      )}
+    </details>
+  );
+}
+
+function ReviewVersionSnapshot({ version, title, compact = false }: { version: ClientReviewArchiveVersion; title: string; compact?: boolean }) {
+  return (
+    <article className="rounded-2xl border border-black/10 bg-white p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-xs text-black/45">{title}</p>
+          <h3 className="mt-1 text-base font-semibold">v{version.version} · {reviewStatusLabel(version.status)}</h3>
+        </div>
+        <span className="text-xs text-black/45">{formatReviewDate(version.generatedAt)}</span>
+      </div>
+      {version.items && version.items.length > 0 ? (
+        <div className={["mt-3 grid gap-3", compact ? "" : "max-h-[720px] overflow-auto pr-1"].join(" ")}>
+          {version.items.map((item) => (
+            <ReadOnlyReviewItemCard key={item.id} item={item} />
+          ))}
+        </div>
+      ) : (
+        <p className="mt-3 rounded-xl bg-[#f7f5f0] p-3 text-sm leading-6 text-black/55">这个版本没有可展示的文本快照。</p>
+      )}
+      {version.feedback && <p className="mt-3 rounded-xl bg-[#f7f5f0] p-3 text-sm leading-6 text-black/60">反馈：{version.feedback}</p>}
+    </article>
+  );
+}
+
+function ReadOnlyReviewItemCard({ item }: { item: ClientReviewItem }) {
+  if (item.itemType === "brief") return <BriefReviewItemCard item={item} />;
+  if (item.itemType === "quote") return <QuoteReviewItemCard item={item} canSubmit={false} submitting={false} readOnly />;
+  if (item.itemType === "contract") return <ContractReviewItemCard item={item} canSubmit={false} submitting={false} readOnly />;
+  if (item.itemType === "script_direction") return <ScriptReviewItemCard item={item} canSubmit={false} submitting={false} readOnly />;
+
+  return (
+    <div className="rounded-2xl border border-black/10 bg-white p-3">
+      <p className="text-sm font-semibold">{item.itemLabel}</p>
+      <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-black/60">{reviewItemPreview(item)}</p>
+    </div>
+  );
+}
+
+function findArchiveSeriesByTaskId(archive: ClientReviewArchive[], taskId: string) {
+  return archive.flatMap((node) => node.series).find((series) => series.versions.some((version) => version.taskId === taskId)) ?? null;
+}
+
+function updateArchiveVersionAfterSubmit(archive: ClientReviewArchive[], task: ClientReviewTask, items: ClientReviewItem[]) {
+  return archive.map((node) => ({
+    ...node,
+    series: node.series.map((series) => ({
+      ...series,
+      versions: series.versions.map((version) =>
+        version.taskId === task.id
+          ? {
+              ...version,
+              status: task.status,
+              submittedAt: task.submittedAt ?? version.submittedAt,
+              reviewedAt: task.reviewedAt ?? version.reviewedAt,
+              reviewerName: task.reviewerName ?? version.reviewerName,
+              feedback: task.feedback ?? version.feedback,
+              items: version.isTextNode && items.length > 0 ? items : version.items,
+            }
+          : version
+      ),
+    })),
+  }));
+}
+
 function readVerificationCodeFromHash() {
   if (typeof window === "undefined") return "";
   const rawHash = window.location.hash.replace(/^#/, "").trim();
@@ -484,168 +691,6 @@ function readVerificationCodeFromHash() {
   } catch {
     return rawHash.includes("=") ? "" : rawHash;
   }
-}
-
-function ReviewNodeNavigator({
-  history,
-  currentTaskId,
-  selectedTaskId,
-  onSelect,
-}: {
-  history: ClientReviewHistoryEntry[];
-  currentTaskId: string;
-  selectedTaskId: string;
-  onSelect: (taskId: string) => void;
-}) {
-  const nodes = buildReviewNodeList(history, currentTaskId);
-
-  return (
-    <section className="mt-5 rounded-[24px] border border-black/10 bg-[#f7f5f0] p-3">
-      <div className="flex items-center justify-between gap-3 px-1">
-        <div>
-          <p className="text-sm font-semibold">审核节点</p>
-          <p className="mt-1 text-xs leading-5 text-black/50">当前节点之前的记录可回溯查看；后续节点会在项目团队发起后开放。</p>
-        </div>
-        <FileClock size={18} className="text-black/45" />
-      </div>
-      <div className="mt-3 grid gap-2 md:grid-cols-4">
-        {nodes.map((node) => {
-          const isSelected = node.task?.id === selectedTaskId;
-          return (
-            <button
-              key={node.key}
-              type="button"
-              onClick={() => node.task && onSelect(node.task.id)}
-              disabled={!node.task}
-              className={[
-                "min-h-24 rounded-2xl border p-3 text-left transition",
-                !node.task
-                  ? "cursor-not-allowed border-black/5 bg-white/45 text-black/30"
-                  : isSelected
-                    ? "border-[#93bdf8] bg-[#eef5ff] text-black shadow-[0_0_0_2px_rgba(32,127,236,0.18)]"
-                    : "border-black/10 bg-white hover:border-black/25",
-              ].join(" ")}
-            >
-              <div className="flex items-start justify-between gap-2">
-                <span className={["text-xs", isSelected ? "text-[#207fec]" : "text-black/45"].join(" ")}>{node.stepLabel}</span>
-                {node.task?.id === currentTaskId ? (
-                  <span className={["rounded-full px-2 py-0.5 text-[10px]", isSelected ? "bg-[#207fec] text-white" : "bg-black text-white"].join(" ")}>
-                    当前
-                  </span>
-                ) : null}
-              </div>
-              <p className="mt-2 line-clamp-2 text-sm font-semibold text-black">{node.title}</p>
-              <p className={["mt-2 text-xs", isSelected ? "text-black/55" : "text-black/50"].join(" ")}>
-                {node.task ? `${reviewStatusLabel(node.task.status)} · ${formatReviewDate(node.task.reviewedAt ?? node.task.submittedAt ?? node.task.updatedAt ?? node.task.createdAt)}` : "未开放"}
-              </p>
-            </button>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
-function HistoricalReviewSummary({ task, items }: { task: ClientReviewTask; items: ClientReviewItem[] }) {
-  const approvedCount = items.filter((item) => item.decision === "approved").length;
-  const rejectedCount = items.filter((item) => item.decision === "rejected").length;
-
-  return (
-    <section className="mt-5 rounded-[20px] border border-black/10 bg-white p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-semibold">历史审核记录</p>
-          <p className="mt-1 text-sm leading-6 text-black/55">
-            {task.reviewerName ? `${task.reviewerName} · ` : ""}
-            {reviewStatusLabel(task.status)} · {formatReviewDate(task.reviewedAt ?? task.submittedAt ?? task.updatedAt ?? task.createdAt)}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2 text-xs">
-          <span className="rounded-full border border-black/10 px-3 py-1">通过 {approvedCount}</span>
-          <span className="rounded-full border border-black/10 px-3 py-1">打回 {rejectedCount}</span>
-        </div>
-      </div>
-      {task.feedback ? (
-        <div className="mt-3 rounded-2xl bg-[#f7f5f0] p-3 text-sm leading-6 text-black/65">
-          {task.feedback}
-        </div>
-      ) : (
-        <div className="mt-3 rounded-2xl bg-[#f7f5f0] p-3 text-sm leading-6 text-black/45">本轮没有填写整体意见。</div>
-      )}
-    </section>
-  );
-}
-
-function buildReviewNodeList(history: ClientReviewHistoryEntry[], currentTaskId: string) {
-  const taskByKey = new Map<string, ClientReviewTask>();
-  const currentEntry = history.find((entry) => entry.task.id === currentTaskId);
-  for (const entry of history) {
-    const key = reviewNodeKey(entry.task);
-    const existing = taskByKey.get(key);
-    const shouldReplace =
-      entry.task.id === currentTaskId ||
-      !existing ||
-      (existing.id !== currentTaskId && isPreferredHistoryTask(entry.task, existing));
-    if (shouldReplace) {
-      taskByKey.set(key, entry.task);
-    }
-  }
-
-  const currentOrder = currentEntry ? reviewNodeOrder(reviewNodeKey(currentEntry.task)) : Number.MAX_SAFE_INTEGER;
-
-  return reviewNodeDefinitions.map((definition) => {
-    const task = taskByKey.get(definition.key) ?? null;
-    const isPastOrCurrent = definition.order <= currentOrder;
-    return {
-      ...definition,
-      task: isPastOrCurrent ? task : null,
-      title: task ? reviewNodeTitle(task) : definition.title,
-    };
-  });
-}
-
-function isPreferredHistoryTask(candidate: ClientReviewTask, existing: ClientReviewTask) {
-  const candidateCompleted = isCompletedReviewStatus(candidate.status);
-  const existingCompleted = isCompletedReviewStatus(existing.status);
-  if (candidateCompleted !== existingCompleted) return candidateCompleted;
-  return new Date(candidate.updatedAt ?? candidate.createdAt ?? 0).getTime() > new Date(existing.updatedAt ?? existing.createdAt ?? 0).getTime();
-}
-
-function isCompletedReviewStatus(status: string) {
-  return status === "approved" || status === "rejected" || status === "submitted";
-}
-
-const reviewNodeDefinitions = [
-  { key: "brief_confirmation", order: 1, stepLabel: "01", title: "Brief 确认" },
-  { key: "creative_round_1", order: 2, stepLabel: "02", title: "Round 1 创意初选" },
-  { key: "creative_round_2", order: 3, stepLabel: "03", title: "Round 2 最终确认" },
-  { key: "quote_confirmation", order: 4, stepLabel: "04", title: "报价确认" },
-  { key: "production_setup", order: 5, stepLabel: "05", title: "脚本/设定确认" },
-  { key: "storyboard_image_batch", order: 6, stepLabel: "06", title: "分镜图片审核" },
-  { key: "a_copy_round", order: 7, stepLabel: "07", title: "A-copy 审核" },
-  { key: "b_copy_final", order: 8, stepLabel: "08", title: "B-copy 定稿确认" },
-];
-
-function reviewNodeKey(task: ClientReviewTask) {
-  if (typeof task.reviewScene === "string" && task.reviewScene) return task.reviewScene;
-  if (task.reviewType === "quote_confirmation") return "quote_confirmation";
-  if (task.reviewType === "contract_confirmation") return "quote_confirmation";
-  if (task.reviewType === "brief_confirmation") return "brief_confirmation";
-  if (task.reviewType === "storyboard_image_batch" || task.reviewType === "storyboard_scene_images") return "storyboard_image_batch";
-  if (task.reviewType === "a_copy_review") return "a_copy_round";
-  if (task.reviewType === "b_copy_review") return "b_copy_final";
-  if (task.reviewType === "script_package") return "production_setup";
-  return task.reviewType;
-}
-
-function reviewNodeOrder(key: string) {
-  return reviewNodeDefinitions.find((definition) => definition.key === key)?.order ?? Number.MAX_SAFE_INTEGER;
-}
-
-function reviewNodeTitle(task: ClientReviewTask) {
-  const definition = reviewNodeDefinitions.find((item) => item.key === reviewNodeKey(task));
-  const version = task.version ? ` v${task.version}` : "";
-  return `${definition?.title ?? reviewTypeLabel(task.reviewType)}${version}`;
 }
 
 function formatReviewDate(value?: string | null) {
@@ -680,7 +725,7 @@ function toReviewPageError(error: unknown, fallback: string) {
     return "审核任务读取超时。请刷新页面重试；如果仍然很慢，请联系项目团队检查后台服务和素材链接。";
   }
   if (error instanceof SyntaxError) {
-    return "审核页面收到了异常响应。请刷新页面重试，或联系项目团队检查审核链接是否正确。";
+    return "审核页面收到了异常响应。请刷新页面重试，或联系项目团队检查入口是否正确。";
   }
   if (error instanceof TypeError) {
     return "暂时无法连接审核服务。请确认本地服务仍在运行后刷新页面。";
@@ -938,9 +983,9 @@ function GenericReviewItemCard({
         <div className="flex flex-wrap items-center gap-2">
           <p className="font-semibold">{item.itemLabel}</p>
           {previousDecision === "rejected" ? (
-            <span className="rounded-full bg-red-100 px-2 py-1 text-xs font-medium text-red-700">上一轮不 OK</span>
+            <span className="rounded-full bg-red-100 px-2 py-1 text-xs font-medium text-red-700">上一轮未通过</span>
           ) : previousDecision === "approved" ? (
-            <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-medium text-emerald-700">上一轮 OK</span>
+            <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-medium text-emerald-700">上一轮已通过</span>
           ) : null}
         </div>
         <p className="mt-2 text-sm leading-6 text-black/60">{reviewItemPreview(item)}</p>
@@ -959,10 +1004,12 @@ function ScriptReviewItemCard({
   item,
   canSubmit,
   submitting,
+  readOnly = false,
 }: {
   item: ClientReviewItem;
   canSubmit: boolean;
   submitting: boolean;
+  readOnly?: boolean;
 }) {
   const content = readMetadataString(item.metadata, "content") || reviewItemPreview(item);
   const concept = readMetadataString(item.metadata, "concept");
@@ -977,7 +1024,7 @@ function ScriptReviewItemCard({
       <div className="mt-4 max-h-[680px] overflow-auto rounded-2xl border border-black/10 bg-[#faf8f3] p-4">
         <div className="whitespace-pre-wrap font-mono text-sm leading-7 text-black/75">{content}</div>
       </div>
-      <ReviewDecisionFields item={item} canSubmit={canSubmit} submitting={submitting} />
+      {!readOnly && <ReviewDecisionFields item={item} canSubmit={canSubmit} submitting={submitting} />}
     </article>
   );
 }
@@ -986,10 +1033,12 @@ function ContractReviewItemCard({
   item,
   canSubmit,
   submitting,
+  readOnly = false,
 }: {
   item: ClientReviewItem;
   canSubmit: boolean;
   submitting: boolean;
+  readOnly?: boolean;
 }) {
   const content = readMetadataString(item.metadata, "content") || reviewItemPreview(item);
   const version = readMetadataNumber(item.metadata, "version") || 1;
@@ -1010,7 +1059,7 @@ function ContractReviewItemCard({
       <div className="mt-4 max-h-[640px] overflow-auto rounded-2xl border border-black/10 bg-[#faf8f3] p-4">
         <div className="whitespace-pre-wrap text-sm leading-7 text-black/75">{content}</div>
       </div>
-      <ReviewDecisionFields item={item} canSubmit={canSubmit} submitting={submitting} />
+      {!readOnly && <ReviewDecisionFields item={item} canSubmit={canSubmit} submitting={submitting} />}
     </article>
   );
 }
@@ -1019,10 +1068,12 @@ function QuoteReviewItemCard({
   item,
   canSubmit,
   submitting,
+  readOnly = false,
 }: {
   item: ClientReviewItem;
   canSubmit: boolean;
   submitting: boolean;
+  readOnly?: boolean;
 }) {
   const quote = readQuoteReviewData(item);
 
@@ -1080,7 +1131,7 @@ function QuoteReviewItemCard({
               {quote.notes}
             </div>
           )}
-          <ReviewDecisionFields item={item} canSubmit={canSubmit} submitting={submitting} />
+          {!readOnly && <ReviewDecisionFields item={item} canSubmit={canSubmit} submitting={submitting} />}
         </div>
       </div>
     </article>
@@ -1116,7 +1167,7 @@ function ReviewDecisionFields({
             onClick={() => setItemDecision("approved")}
           >
             <CheckCircle2 size={16} />
-            OK
+            <span>通过</span>
           </Button>
           <Button
             type="button"
@@ -1126,19 +1177,19 @@ function ReviewDecisionFields({
             onClick={() => setItemDecision("rejected")}
           >
             <XCircle size={16} />
-            不 OK
+            <span>不通过</span>
           </Button>
           {!itemDecision && <span className="text-xs text-black/45">请直接选择这张分镜是否通过。</span>}
         </div>
         {itemDecision === "rejected" && (
           <label className="grid gap-1 rounded-2xl border border-red-200 bg-red-50 p-3 text-xs text-red-900">
-            不 OK 后请填写原因和修改意见
+            不通过后请填写原因和修改意见
             <textarea
               name={`feedback-${item.itemId}`}
               required
               disabled={disabled}
               className="min-h-24 rounded-xl border border-red-200 bg-white p-3 text-sm leading-6 text-black outline-none focus:border-red-400"
-              placeholder="请说明这张图哪里不 OK，以及希望怎么调整。"
+              placeholder="请说明这张图哪里未通过，以及希望怎么调整。"
             />
           </label>
         )}
@@ -1158,7 +1209,7 @@ function ReviewDecisionFields({
           onClick={() => setItemDecision((current) => (current === "approved" ? "" : "approved"))}
         >
           <CheckCircle2 size={16} />
-          OK
+          <span>通过</span>
         </Button>
         <Button
           type="button"
@@ -1168,9 +1219,9 @@ function ReviewDecisionFields({
           onClick={() => setItemDecision((current) => (current === "rejected" ? "" : "rejected"))}
         >
           <XCircle size={16} />
-          不 OK
+          <span>不通过</span>
         </Button>
-        {!itemDecision && <span className="text-xs text-black/45">未单独选择时，会跟随底部整体 OK / 不 OK。</span>}
+        {!itemDecision && <span className="text-xs text-black/45">未单独选择时，会跟随底部总体结论（通过 / 不通过）。</span>}
       </div>
       <label className="grid gap-1 text-xs md:col-span-2">
         修改意见

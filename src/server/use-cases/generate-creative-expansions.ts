@@ -6,6 +6,8 @@ import { createArtifact, listProjectArtifacts, updateArtifactStatus, type Artifa
 import {
   archiveDirectionCreativeExpansions,
   createCreativeExpansions,
+  listProjectCreativeExpansions,
+  type CreativeExpansionView,
 } from "@/server/repositories/creative-expansions";
 import { getProjectCreativeDirection } from "@/server/repositories/creative-directions";
 import { appendJobEvent, createJob, getJobInput, updateJobStatus } from "@/server/repositories/jobs";
@@ -50,6 +52,8 @@ const creativeExpansionSchema = z.object({
 const creativeExpansionResponseSchema = z.object({
   expansions: z.array(creativeExpansionSchema).min(1).max(6),
 });
+
+const ROUND_2_DEEPENING_SCENE_COUNT = 2;
 
 export function parseCreativeExpansionResponse(response: unknown) {
   const items = extractCreativeExpansionItems(response);
@@ -402,7 +406,7 @@ export async function confirmRound2DeepeningScript(input: {
 
   return {
     artifact: updated,
-    message: "完整故事已确认，现在可以精选 4 个精彩场景。",
+    message: `完整故事已确认，现在可以精选 ${ROUND_2_DEEPENING_SCENE_COUNT} 个精彩场景。`,
   };
 }
 
@@ -706,17 +710,14 @@ async function runRound2ScriptGenerationJob(input: {
   requestedBy: string | null;
   options: { workerManagedFailure?: boolean };
 }) {
-  const artifacts = await listProjectArtifacts(input.job.projectId);
-  const outlineArtifact = findLatestRound2Artifact(artifacts, input.direction.id, "round2_deepening_outline");
-  const outline = outlineArtifact ? readArtifactString(outlineArtifact, "outline") : "";
-  if (!outline) {
-    throw new AppError({ status: 422, code: "round2_outline_required", userMessage: "请先生成深化故事稿，再生成 700-800 字完整故事。" });
-  }
+  const round1StoryOutlines = (await listProjectCreativeExpansions(input.job.projectId)).filter(
+    (expansion) => expansion.directionId === input.direction.id
+  );
 
   await updateJobStatus(input.jobId, {
     status: "processing",
     currentStep: "round2_script_generation",
-    userMessage: "正在基于深化故事稿生成 700-800 字完整故事。",
+    userMessage: "正在生成 700-800 字完整故事。",
   });
 
   try {
@@ -731,14 +732,14 @@ async function runRound2ScriptGenerationJob(input: {
         callId: "ark_round2_script_generation",
         provider: env.TEXT_STRUCTURING_PROVIDER,
         operation: "round2_deepening_script_generation",
-        metadata: { directionId: input.direction.id, outlineArtifactId: outlineArtifact?.id },
+        metadata: { directionId: input.direction.id, round1StoryOutlineCount: round1StoryOutlines.length },
       },
       messages: [
         {
           role: "system",
-          content: "你是 AIGC 视频短片编剧。请基于深化故事稿生成 700-800 字中文完整故事，只输出严格 JSON：{\"title\":\"\",\"script\":\"\"}。script 要有开端、推进、高潮、结尾、关键画面和角色动作，适合后续从中精选 4 个精彩场景生成图片，不要 Markdown。",
+          content: `你是 AIGC 视频短片编剧。请基于已确认创意方向和 Round 1 卡内故事大纲生成 700-800 字中文完整故事，只输出严格 JSON：{"title":"","script":""}。script 要有开端、推进、高潮、结尾、关键画面和角色动作，适合后续从中精选 ${ROUND_2_DEEPENING_SCENE_COUNT} 个精彩场景生成图片，不要 Markdown。`,
         },
-        { role: "user", content: buildRound2ScriptPrompt(input.direction, outline) },
+        { role: "user", content: buildRound2ScriptPrompt(input.direction, round1StoryOutlines) },
       ],
     });
 
@@ -756,7 +757,7 @@ async function runRound2ScriptGenerationJob(input: {
         sop3ArtifactType: "round2_deepening_script",
         directionId: input.direction.id,
         directionTitle: input.direction.title,
-        outlineArtifactId: outlineArtifact?.id ?? null,
+        sourceExpansionIds: round1StoryOutlines.map((expansion) => expansion.id),
         title: parsed.title || `完整故事：${input.direction.title}`,
         script: parsed.script.trim(),
         targetLength: "700-800 字",
@@ -765,10 +766,10 @@ async function runRound2ScriptGenerationJob(input: {
       createdBy: input.requestedBy,
     });
 
-    await completeRound2Job({ jobId: input.jobId, projectId: input.job.projectId, direction: input.direction, artifact, title: "完整故事已生成", userMessage: "700-800 字完整故事已生成。请人工确认后再精选 4 个精彩场景。" });
+    await completeRound2Job({ jobId: input.jobId, projectId: input.job.projectId, direction: input.direction, artifact, title: "完整故事已生成", userMessage: `700-800 字完整故事已生成。请人工确认后再精选 ${ROUND_2_DEEPENING_SCENE_COUNT} 个精彩场景。` });
     return { jobId: input.jobId, artifact };
   } catch (error) {
-    await failRound2Job({ ...input, error, fallbackMessage: "完整故事生成失败。请稍后重试，或先调整深化故事稿。" });
+    await failRound2Job({ ...input, error, fallbackMessage: "完整故事生成失败。请稍后重试，或先调整创意方向。" });
     throw error;
   }
 }
@@ -784,13 +785,13 @@ async function runRound2StoryboardSplitJob(input: {
   const scriptArtifact = findLatestRound2Artifact(artifacts, input.direction.id, "round2_deepening_script");
   const script = scriptArtifact ? readArtifactString(scriptArtifact, "script") : "";
   if (!scriptArtifact || scriptArtifact.status !== "confirmed" || !script) {
-    throw new AppError({ status: 422, code: "round2_script_confirmation_required", userMessage: "请先确认完整故事，再从中精选 4 个精彩场景。" });
+    throw new AppError({ status: 422, code: "round2_script_confirmation_required", userMessage: `请先确认完整故事，再从中精选 ${ROUND_2_DEEPENING_SCENE_COUNT} 个精彩场景。` });
   }
 
   await updateJobStatus(input.jobId, {
     status: "processing",
     currentStep: "round2_storyboard_split",
-    userMessage: "正在从已确认完整故事中精选 4 个精彩场景。",
+    userMessage: `正在从已确认完整故事中精选 ${ROUND_2_DEEPENING_SCENE_COUNT} 个精彩场景。`,
   });
 
   try {
@@ -810,7 +811,7 @@ async function runRound2StoryboardSplitJob(input: {
       messages: [
         {
           role: "system",
-          content: "你是 AIGC 视频视觉场景策划。请从已确认完整故事中选出恰好 4 个最精彩、最适合生成图片的视觉场景。只输出严格 JSON：{\"expansions\":[{\"title\":\"\",\"oneLiner\":\"\",\"storyArc\":{\"beginning\":\"\",\"development\":\"\",\"turn\":\"\",\"ending\":\"\"},\"visualHighlights\":[\"\"],\"visualStyle\":\"\",\"productionDifficulty\":\"\",\"riskNotes\":\"\"}]}。expansions 必须恰好包含 4 个对象，每个对象是一条独立精彩场景；不要输出镜头号、分镜编号或正式文字分镜；不要把 4 个画面写成 visualHighlights 数组；visualHighlights 只能写当前场景内部的视觉细节。每个场景要能独立生成图片。",
+          content: `你是 AIGC 视频视觉场景策划。请从已确认完整故事中选出恰好 ${ROUND_2_DEEPENING_SCENE_COUNT} 个最精彩、最适合生成图片的视觉场景。只输出严格 JSON：{"expansions":[{"title":"","oneLiner":"","storyArc":{"beginning":"","development":"","turn":"","ending":""},"visualHighlights":[""],"visualStyle":"","productionDifficulty":"","riskNotes":""}]}。expansions 必须恰好包含 ${ROUND_2_DEEPENING_SCENE_COUNT} 个对象，每个对象是一条独立精彩场景；不要输出镜头号、分镜编号或正式文字分镜；不要把多个画面写成 visualHighlights 数组；visualHighlights 只能写当前场景内部的视觉细节。每个场景要能独立生成图片。`,
         },
         { role: "user", content: buildRound2StoryboardSplitPrompt(input.direction, script) },
       ],
@@ -818,15 +819,15 @@ async function runRound2StoryboardSplitJob(input: {
 
     const parsed = parseCreativeExpansionResponse(response);
     let normalized = normalizeExpansions(parsed.expansions, input.direction);
-    if (normalized.length < 4) {
+    if (normalized.length < ROUND_2_DEEPENING_SCENE_COUNT) {
       normalized = buildFallbackRound2StoryboardScenes({
         expansions: parsed.expansions,
         direction: input.direction,
         script,
       });
     }
-    if (normalized.length < 4) {
-      throw new AppError({ status: 502, code: "round2_storyboard_scene_count_too_low", userMessage: "模型没有选出 4 个可用精彩场景。请稍后重试，或先调整完整故事。" });
+    if (normalized.length < ROUND_2_DEEPENING_SCENE_COUNT) {
+      throw new AppError({ status: 502, code: "round2_storyboard_scene_count_too_low", userMessage: `模型没有选出 ${ROUND_2_DEEPENING_SCENE_COUNT} 个可用精彩场景。请稍后重试，或先调整完整故事。` });
     }
 
     await archiveDirectionCreativeExpansions({ directionId: input.direction.id, sourceJobId: input.jobId });
@@ -835,13 +836,13 @@ async function runRound2StoryboardSplitJob(input: {
       directionId: input.direction.id,
       sourceJobId: input.jobId,
       createdBy: input.requestedBy,
-      expansions: normalized.slice(0, 4).map((expansion, index) => ({ ...expansion, sortOrder: index + 1 })),
+      expansions: normalized.slice(0, ROUND_2_DEEPENING_SCENE_COUNT).map((expansion, index) => ({ ...expansion, sortOrder: index + 1 })),
     });
 
     const artifact = await createArtifact({
       projectId: input.job.projectId,
       kind: "creative_expansion",
-      title: `Round 2 四个精彩场景：${input.direction.title}`,
+      title: `Round 2 两个精彩场景：${input.direction.title}`,
       status: "draft",
       data: {
         sop3ArtifactType: "round2_deepening_storyboard_split",
@@ -855,7 +856,7 @@ async function runRound2StoryboardSplitJob(input: {
       createdBy: input.requestedBy,
     });
 
-    await completeRound2Job({ jobId: input.jobId, projectId: input.job.projectId, direction: input.direction, artifact, title: "四个精彩场景已精选", userMessage: "已从完整故事精选 4 个精彩场景。下一步可以为每个场景生成深化视觉图。" });
+    await completeRound2Job({ jobId: input.jobId, projectId: input.job.projectId, direction: input.direction, artifact, title: "两个精彩场景已精选", userMessage: `已从完整故事精选 ${ROUND_2_DEEPENING_SCENE_COUNT} 个精彩场景。下一步可以为每个场景生成深化视觉图。` });
     return { jobId: input.jobId, expansions: savedExpansions, artifact };
   } catch (error) {
     await failRound2Job({ ...input, error, fallbackMessage: "精彩场景精选失败。请稍后重试，或先调整完整故事。" });
@@ -968,23 +969,41 @@ function buildRound2OutlinePrompt(direction: DirectionForExpansion) {
   ].join("\n");
 }
 
-function buildRound2ScriptPrompt(direction: DirectionForExpansion, outline: string) {
+function buildRound2ScriptPrompt(direction: DirectionForExpansion, round1StoryOutlines: CreativeExpansionView[]) {
+  const storyContext = round1StoryOutlines.length > 0
+    ? round1StoryOutlines.map(formatRound1StoryOutlineForPrompt).join("\n\n")
+    : "无现成 Round 1 故事大纲，请直接基于方向核心和视觉提示扩展。";
   return [
-    "请基于深化故事稿生成 700-800 字完整故事。",
+    "请直接生成 700-800 字完整故事。",
     `方向标题：${compactText(direction.title, 80)}`,
     `方向核心：${compactText(direction.coreIdea, 220)}`,
-    `深化故事稿：${compactText(outline, 2400)}`,
-    "要求：故事要连贯完整，包含角色行动、关键画面、情绪推进和结尾；后续会从中精选 4 个最精彩、最适合生成图片的场景；不要输出 JSON 以外的内容。",
+    `适配理由：${compactText(direction.fitReason, 180)}`,
+    `视觉提示：${compactText(direction.atmospherePrompt, 180)}`,
+    `Round 1 卡内故事大纲：${compactText(storyContext, 2400)}`,
+    `要求：故事要连贯完整，包含角色行动、关键画面、情绪推进和结尾；后续会从中精选 ${ROUND_2_DEEPENING_SCENE_COUNT} 个最精彩、最适合生成图片的场景；不要输出 JSON 以外的内容。`,
   ].join("\n");
+}
+
+function formatRound1StoryOutlineForPrompt(expansion: CreativeExpansionView) {
+  const storyArc = Object.entries(expansion.storyArc)
+    .map(([key, value]) => `${key}：${value}`)
+    .join("；");
+  return [
+    `标题：${compactText(expansion.title, 80)}`,
+    `一句话：${compactText(expansion.oneLiner, 220)}`,
+    storyArc ? `起承转合：${compactText(storyArc, 520)}` : "",
+    expansion.visualHighlights.length > 0 ? `视觉亮点：${expansion.visualHighlights.map((item) => compactText(item, 60)).join("、")}` : "",
+    expansion.visualStyle ? `画面风格：${compactText(expansion.visualStyle, 160)}` : "",
+  ].filter(Boolean).join("\n");
 }
 
 function buildRound2StoryboardSplitPrompt(direction: DirectionForExpansion, script: string) {
   return [
-    "请从已确认完整故事中选出 4 个最精彩、最适合生成图片的视觉场景。",
+    `请从已确认完整故事中选出 ${ROUND_2_DEEPENING_SCENE_COUNT} 个最精彩、最适合生成图片的视觉场景。`,
     `方向标题：${compactText(direction.title, 80)}`,
     `方向核心：${compactText(direction.coreIdea, 220)}`,
     `完整故事：${compactText(script, 2600)}`,
-    "要求：四个场景要覆盖故事关键转折，彼此画面不同；每个场景都必须有清晰视觉动作和生成图价值；不要写成分镜编号、镜头拆解或正式文字分镜；不要输出 JSON 以外的内容。",
+    `要求：${ROUND_2_DEEPENING_SCENE_COUNT} 个场景要覆盖故事关键转折，彼此画面不同；每个场景都必须有清晰视觉动作和生成图价值；不要写成分镜编号、镜头拆解或正式文字分镜；不要输出 JSON 以外的内容。`,
   ].join("\n");
 }
 
@@ -1034,14 +1053,14 @@ function buildFallbackRound2StoryboardScenes(input: {
 }) {
   const firstExpansion = input.expansions[0];
   const highlights = firstExpansion?.visualHighlights ?? [];
-  const scriptSegments = splitTextIntoFourParts(input.script);
-  const sceneTexts = Array.from({ length: 4 }, (_, index) => {
+  const scriptSegments = splitTextIntoSceneParts(input.script, ROUND_2_DEEPENING_SCENE_COUNT);
+  const sceneTexts = Array.from({ length: ROUND_2_DEEPENING_SCENE_COUNT }, (_, index) => {
     const highlight = highlights[index]?.trim();
     const scriptSegment = scriptSegments[index]?.trim();
     return [highlight, scriptSegment].filter(Boolean).join("。");
   }).filter(Boolean);
 
-  return sceneTexts.slice(0, 4).map((text, index) => {
+  return sceneTexts.slice(0, ROUND_2_DEEPENING_SCENE_COUNT).map((text, index) => {
     const sceneTitle = deriveFallbackSceneTitle(text, index);
     return {
       title: sceneTitle,
@@ -1058,14 +1077,15 @@ function buildFallbackRound2StoryboardScenes(input: {
   });
 }
 
-function splitTextIntoFourParts(text: string) {
+function splitTextIntoSceneParts(text: string, partCount: number) {
   const normalized = text.replace(/\s+/g, " ").trim();
   if (!normalized) return [];
 
   const sentences = normalized.match(/[^。！？!?]+[。！？!?]?/g)?.map((sentence) => sentence.trim()).filter(Boolean) ?? [normalized];
-  const buckets = ["", "", "", ""];
+  const buckets = Array.from({ length: partCount }, () => "");
   sentences.forEach((sentence, index) => {
-    buckets[index % 4] = [buckets[index % 4], sentence].filter(Boolean).join("");
+    const bucketIndex = index % partCount;
+    buckets[bucketIndex] = [buckets[bucketIndex], sentence].filter(Boolean).join("");
   });
 
   if (buckets.some((bucket) => bucket)) return buckets;

@@ -60,6 +60,28 @@ test("brief workflow renders the four SOP1 sections as separate cards", () => {
   assert.match(globalStyles, /\.workspace-main-area > section:not\(\[hidden\]\)[\s\S]*box-shadow: none/);
 });
 
+test("brief structuring result scrolls into view and keeps persisted job state visible", () => {
+  const briefCard = componentSource("BriefIntakeWorkflowCard");
+  const rawPool = componentSource("BriefRawInputPool");
+  const missingDeposit = componentSource("BriefMissingInfoDeposit");
+  const jobNotice = componentSource("BriefStructuringJobNotice");
+
+  assert.match(briefCard, /const latestStructuringJob = jobs\.find\(\(job\) => job\.type === "requirement_structuring"\) \?\? null/);
+  assert.match(briefCard, /const resultSectionRef = useRef<HTMLElement \| null>\(null\)/);
+  assert.match(briefCard, /scrollIntoView\(\{ behavior: "smooth", block: "start" \}\)/);
+  assert.match(briefCard, /ref=\{resultSectionRef\} className="ds-card-soft scroll-mt-24 p-4 lg:col-span-2"/);
+  assert.match(briefCard, /<BriefStructuringJobNotice job=\{latestStructuringJob\} \/>/);
+  assert.match(briefCard, /<BriefRawInputPool[\s\S]*structuringJob=\{latestStructuringJob\}/);
+  assert.match(briefCard, /<BriefMissingInfoDeposit[\s\S]*structuringJob=\{latestStructuringJob\}/);
+  assert.match(rawPool, /structuringJob: JobSummary \| null/);
+  assert.match(rawPool, /const structuringJobRunning = isBriefStructuringJobRunning\(structuringJob\)/);
+  assert.match(rawPool, /disabled=\{submitting \|\| structuringJobRunning\}/);
+  assert.match(missingDeposit, /const structuringJobRunning = isBriefStructuringJobRunning\(structuringJob\)/);
+  assert.match(missingDeposit, /disabled=\{submittingBriefUpdate \|\| structuringJobRunning\}/);
+  assert.match(jobNotice, /Brief 已生成/);
+  assert.match(source, /function isBriefStructuringJobRunning\(job: JobSummary \| null\)/);
+});
+
 test("brief intake copy stays minimal and does not reintroduce source-type helper text", () => {
   const rawPool = componentSource("BriefRawInputPool");
   const missingDeposit = componentSource("BriefMissingInfoDeposit");
@@ -77,9 +99,9 @@ test("brief generation and update loading copy stays provider-neutral", () => {
   const jobNotice = componentSource("BriefStructuringJobNotice");
 
   assert.match(rawPool, /setMessage\("在生成中"\)/);
-  assert.match(rawPool, /\{submitting \? "在生成中" : latest \? "更新 Brief" : "AI 整理为标准 Brief"\}/);
+  assert.match(rawPool, /\{submitting \|\| structuringJobRunning \? "在生成中" : latest \? "更新 Brief" : "AI 整理为标准 Brief"\}/);
   assert.match(missingDeposit, /setMessage\("在生成中"\)/);
-  assert.match(missingDeposit, /\{submittingBriefUpdate \? "在生成中" : "提交并更新 Brief"\}/);
+  assert.match(missingDeposit, /\{submittingBriefUpdate \|\| structuringJobRunning \? "在生成中" : "提交并更新 Brief"\}/);
   assert.match(jobNotice, /isWaiting \|\| isRunning[\s\S]*\? "在生成中"/);
   assert.match(structureRequirementSource, /userMessage: "在生成中"/);
   assert.doesNotMatch(rawPool, /豆包模型|调用模型|文本模型|系统正在等待后台处理|正在创建后台任务/);
@@ -203,7 +225,7 @@ test("brief client review uses the existing brief_confirmation review type", () 
   assert.match(clientReviewUseCaseSource, /input\.reviewType === "brief_confirmation" && approved/);
 });
 
-test("brief preview removes duplicated pending-question warning and renders lightweight highlights", () => {
+test("brief preview removes duplicated pending-question warning and renders bold-only highlights", () => {
   const briefCard = componentSource("BriefIntakeWorkflowCard");
   const preview = componentSource("StructuredRequirementPreview");
   const missingDeposit = componentSource("BriefMissingInfoDeposit");
@@ -216,11 +238,14 @@ test("brief preview removes duplicated pending-question warning and renders ligh
   assert.doesNotMatch(preview, /v\{artifact\.version\}/);
   assert.match(preview, /formatArtifactValue\(value\)/);
   assert.match(source, /briefHighlightedFieldLabels = new Set\(\["产品\/服务", "视频目标", "核心卖点", "时间节点", "预算\/报价"\]\)/);
-  assert.match(preview, /isHighlightedField \? "text-\[var\(--accent\)\]"/);
+  assert.match(preview, /className="text-sm font-semibold tracking-tight text-\[var\(--text-secondary\)\]"/);
+  assert.match(preview, /isHighlightedField[\s\S]*\? "font-semibold text-\[var\(--text-primary\)\]"/);
   assert.match(preview, /isEmptyValue[\s\S]*text-\[var\(--text-tertiary\)\]/);
   assert.match(richText, /token\.startsWith\("\*\*"\)/);
-  assert.match(richText, /brief-rich-highlight/);
-  assert.match(richText, /brief-rich-bg/);
+  assert.match(richText, /<strong key=\{key\} className="font-semibold text-\[var\(--text-primary\)\]">/);
+  assert.doesNotMatch(richText, /brief-rich-highlight/);
+  assert.doesNotMatch(richText, /brief-rich-bg/);
+  assert.doesNotMatch(richText, /text-\[var\(--danger\)\]|text-\[var\(--accent\)\]|text-\[var\(--success\)\]/);
   assert.match(missingDeposit, /bg-\[rgba\(184,83,80,0\.08\)\]/);
 });
 
@@ -246,6 +271,8 @@ test("risk check panel shows one concise visual conclusion panel and defers reje
   assert.match(riskCard, /bg-\[rgba\(190,18,60,0\.12\)\]/);
   assert.match(riskCard, /text-\[rgb\(159,18,57\)\]/);
   assert.match(riskCard, /接单风险评估/);
+  assert.match(source, /high: "可承受待确认"/);
+  assert.doesNotMatch(source, /落地风险偏高|风险偏高/);
   assert.match(riskCard, /className="h-12 min-w-52 justify-center text-base"/);
   assert.match(riskCard, /生成接单风险评估/);
   assert.match(riskCard, /综合判断/);

@@ -63,6 +63,67 @@ test("worker claims multiple jobs concurrently up to the configured limit", asyn
   assert.deepEqual(started.sort(), ["job-1", "job-2", "job-3"]);
 });
 
+test("worker backfills an available concurrency slot without waiting for the whole batch", async () => {
+  const jobs = [createClaimedJob("job-1"), createClaimedJob("job-2"), createClaimedJob("job-3")];
+  const claimed = [];
+  const started = [];
+  let shutdown = () => {};
+  let releaseJob1;
+  let resolveJob2Finished;
+  let resolveJob3Started;
+  const job1Blocker = new Promise((resolve) => {
+    releaseJob1 = resolve;
+  });
+  const job2Finished = new Promise((resolve) => {
+    resolveJob2Finished = resolve;
+  });
+  const job3Started = new Promise((resolve) => {
+    resolveJob3Started = resolve;
+  });
+
+  const runtime = createJobWorkerRuntime({
+    randomId: () => "worker-test",
+    recoverExpiredProcessingJobs: async () => 0,
+    claimNextRunnableJob: async () => {
+      const job = jobs.shift() ?? null;
+      if (job) claimed.push(job.id);
+      return job;
+    },
+    runClaimedJob: async (job) => {
+      started.push(job.id);
+      if (job.id === "job-1") {
+        await job1Blocker;
+      }
+      if (job.id === "job-2") {
+        resolveJob2Finished();
+      }
+      if (job.id === "job-3") {
+        resolveJob3Started();
+        shutdown();
+      }
+    },
+    delay: async () => {},
+    log: () => {},
+    onSignal: (_signal, listener) => {
+      shutdown = listener;
+    },
+  });
+
+  const workerRun = runtime.start({ concurrency: 2, lockSeconds: 240, idleDelayMs: 1 });
+  await job2Finished;
+
+  const backfilledBeforeJob1Finished = await Promise.race([
+    job3Started.then(() => true),
+    new Promise((resolve) => setTimeout(() => resolve(false), 40)),
+  ]);
+  releaseJob1();
+  await workerRun;
+
+  assert.equal(backfilledBeforeJob1Finished, true);
+  assert.deepEqual(claimed, ["job-1", "job-2", "job-3"]);
+  assert.deepEqual(started, ["job-1", "job-2", "job-3"]);
+});
+
 test("worker once mode keeps the default concurrency at one", () => {
   assert.equal(resolveWorkerConcurrency({ once: true }), 1);
   assert.equal(resolveWorkerConcurrency({ once: false }), 3);

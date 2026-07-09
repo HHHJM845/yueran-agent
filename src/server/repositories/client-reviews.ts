@@ -167,6 +167,25 @@ export async function getNextClientReviewVersion(input: {
   return Number(result.rows[0]?.next_version ?? 1);
 }
 
+export async function expirePriorActiveClientReviews(input: {
+  projectId: string;
+  reviewType: ClientReviewType;
+  targetScopeId: string;
+  exceptTaskId: string;
+}) {
+  await query(
+    `update client_review_tasks
+     set status = 'expired',
+         updated_at = now()
+     where project_id = $1
+       and review_type = $2
+       and target_scope_id = $3
+       and status = 'active'
+       and id <> $4`,
+    [input.projectId, input.reviewType, input.targetScopeId, input.exceptTaskId]
+  );
+}
+
 export async function getClientReviewTaskByTokenHash(accessTokenHash: string) {
   const result = await query<ClientReviewTaskRow>(
     `select id, project_id, module_key, review_type, target_scope_type, target_scope_id,

@@ -87,8 +87,11 @@ test("SOP3 creative proposal UI follows structured Brief-style hierarchy", () =>
   assert.match(deepeningPanel, /700-800 字完整故事/);
   assert.match(deepeningPanel, /text-sm font-medium leading-6 text-\[var\(--text-primary\)\]/);
   assert.match(atmosphereCard, /核心概念/);
-  assert.match(sceneCell, /一句话概念/);
+  assert.match(sceneCell, /小分镜/);
   assert.match(sceneCell, /视觉重点/);
+  assert.match(sceneCell, /画面风格/);
+  assert.doesNotMatch(sceneCell, /风险备注/);
+  assert.doesNotMatch(sceneCell, /productionDifficulty/);
   assert.match(miniMetric, /text-sm font-semibold tracking-tight text-\[var\(--text-secondary\)\]/);
   assert.match(miniMetric, /text-base font-medium leading-7 text-\[var\(--text-primary\)\]/);
   assert.doesNotMatch(header, /<Sparkles size=\{18\} \/>/);
@@ -333,7 +336,23 @@ test("Round 2 deepening generates one image per selected scene instead of four c
   assert.doesNotMatch(cell, /Array\.from\(\{ length: Math\.max\(0, 4 - generatedImages\.length\) \}\)/);
 });
 
-test("Round 2 deepening requires full script confirmation before selecting four visual scenes", () => {
+test("Round 2 deepening image job creation is sent concurrently", () => {
+  const card = componentSource("CreativeDirectionsCard");
+  const imageStart = card.indexOf("async function handleGenerateSelectedAtmosphereImages");
+  assert.notEqual(imageStart, -1, "handleGenerateSelectedAtmosphereImages should exist");
+  const imageEnd = card.indexOf("\n  async function handleSendRound1Review", imageStart);
+  assert.notEqual(imageEnd, -1, "handleGenerateSelectedAtmosphereImages should end before review handler");
+  const imageHandler = card.slice(imageStart, imageEnd);
+  const round2Start = imageHandler.indexOf("const workspaceResult = await fetchWorkspace(project.id)");
+  assert.notEqual(round2Start, -1, "Round 2 branch should fetch fresh workspace data");
+  const round2Branch = imageHandler.slice(round2Start);
+
+  assert.match(round2Branch, /const imageRequests = freshExpansions\.flatMap/);
+  assert.match(round2Branch, /await Promise\.all\(\s*imageRequests\.map/);
+  assert.doesNotMatch(round2Branch, /for \(const expansion of freshExpansions\)[\s\S]*await generateAtmosphereImage/);
+});
+
+test("Round 2 deepening requires full script confirmation before selecting two visual scenes", () => {
   const card = componentSource("CreativeDirectionsCard");
   const body = componentSource("Sop3CurrentTaskBody");
   const scriptPanel = componentSource("Round2DeepeningScriptPanel");
@@ -342,7 +361,8 @@ test("Round 2 deepening requires full script confirmation before selecting four 
     "utf8"
   );
 
-  assert.match(card, /generateRound2DeepeningOutline/);
+  assert.doesNotMatch(card, /generateRound2DeepeningOutline/);
+  assert.doesNotMatch(apiSource, /generateRound2DeepeningOutline/);
   assert.match(card, /generateRound2DeepeningScript/);
   assert.match(card, /confirmRound2DeepeningScript/);
   assert.match(card, /splitRound2DeepeningStoryboard/);
@@ -350,11 +370,26 @@ test("Round 2 deepening requires full script confirmation before selecting four 
   assert.match(scriptPanel, /Round 2 方向深化故事/);
   assert.match(scriptPanel, /700-800 字完整故事/);
   assert.match(scriptPanel, /人工确认后/);
-  assert.match(scriptPanel, /精选 4 个精彩场景/);
-  assert.match(focusedModel, /精选 4 个精彩场景/);
+  assert.match(scriptPanel, /精选 \{ROUND_2_DEEPENING_SCENE_COUNT\} 个精彩场景/);
+  assert.match(source, /ROUND_2_DEEPENING_SCENE_COUNT = 2/);
+  assert.match(focusedModel, /ROUND_2_DEEPENING_SCENE_COUNT = 2/);
+  assert.match(focusedModel, /精选 \$\{ROUND_2_DEEPENING_SCENE_COUNT\} 个精彩场景/);
   assert.doesNotMatch(scriptPanel, /精彩分镜场景/);
   assert.doesNotMatch(focusedModel, /精彩分镜场景/);
   assert.doesNotMatch(scriptPanel, /深化故事稿与 700-800 字完整故事/);
+});
+
+test("AI job progress panel keeps failed generation tasks visible with retry", () => {
+  const panel = componentSource("AiJobProgressPanel");
+  const item = componentSource("AiJobProgressItem");
+
+  assert.match(panel, /job\.status === "failed"/);
+  assert.match(panel, /failedCount/);
+  assert.match(panel, /onRefresh/);
+  assert.match(item, /retryJob\(job\.id\)/);
+  assert.match(item, /重试/);
+  assert.match(item, /job\.status === "failed"/);
+  assert.doesNotMatch(panel, /runningJobs\.length === 0\) return null/);
 });
 
 test("Round 2 deepening keeps the bottom action and hides the duplicate global action", () => {
@@ -389,6 +424,10 @@ test("Round 2 deepening scenes render as horizontal scene cards instead of a fou
   assert.match(directionCard, /<CreativeStoryAtmosphereCell/);
   assert.doesNotMatch(directionCard, /md:grid-cols-2 lg:grid-cols-4/);
   assert.match(sceneCell, /md:grid-cols-\[minmax\(0,1fr\)_minmax\(16rem,22rem\)\]/);
+  assert.match(sceneCell, /小分镜/);
+  assert.match(sceneCell, /画面风格/);
+  assert.doesNotMatch(sceneCell, /风险备注/);
+  assert.doesNotMatch(sceneCell, /productionDifficulty/);
   assert.match(sceneCell, /深化视觉图/);
 });
 

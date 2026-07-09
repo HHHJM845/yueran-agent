@@ -70,20 +70,21 @@ async function runJobWorkerLoop(dependencies: JobWorkerRuntimeDependencies, opti
   while (!shuttingDown) {
     try {
       await dependencies.recoverExpiredProcessingJobs();
-      const jobs = await claimRunnableJobs({ workerId, lockSeconds, concurrency, claimNextJob: dependencies.claimNextRunnableJob });
+      const ranJob = await runRunnableJobPool({
+        workerId,
+        lockSeconds,
+        concurrency,
+        shouldStop: () => shuttingDown,
+        claimNextJob: dependencies.claimNextRunnableJob,
+        runClaimedJob: dependencies.runClaimedJob,
+        log: dependencies.log,
+      });
 
-      if (jobs.length === 0) {
+      if (!ranJob) {
         if (options.once) break;
         await dependencies.delay(idleDelayMs);
         continue;
       }
-
-      await Promise.all(
-        jobs.map((job) => {
-          dependencies.log("Claimed job", { workerId, jobId: job.id, type: job.type });
-          return dependencies.runClaimedJob(job, workerId);
-        })
-      );
 
       if (options.once) break;
     } catch (error) {
@@ -103,17 +104,51 @@ function formatWorkerLoopError(error: unknown) {
   return { message: "Unknown worker loop error" };
 }
 
-async function claimRunnableJobs(input: {
+async function runRunnableJobPool(input: {
   workerId: string;
   lockSeconds: number;
   concurrency: number;
+  shouldStop: () => boolean;
   claimNextJob: (claimInput: { workerId: string; lockSeconds?: number }) => Promise<ClaimedJob | null>;
+  runClaimedJob: (job: ClaimedJob, workerId: string) => Promise<void>;
+  log: (...args: unknown[]) => void;
 }) {
-  const jobs: ClaimedJob[] = [];
-  for (let index = 0; index < input.concurrency; index += 1) {
+  let ranJob = false;
+  let runError: unknown = null;
+  const activeJobs = new Set<Promise<void>>();
+
+  const startNextJob = async () => {
     const job = await input.claimNextJob({ workerId: input.workerId, lockSeconds: input.lockSeconds });
-    if (!job) break;
-    jobs.push(job);
+    if (!job) return false;
+
+    ranJob = true;
+    input.log("Claimed job", { workerId: input.workerId, jobId: job.id, type: job.type });
+    const jobRun = input
+      .runClaimedJob(job, input.workerId)
+      .catch((error) => {
+        runError ??= error;
+      })
+      .finally(() => {
+        activeJobs.delete(jobRun);
+      });
+    activeJobs.add(jobRun);
+    return true;
+  };
+
+  while (!runError && !input.shouldStop() && activeJobs.size < input.concurrency) {
+    const started = await startNextJob();
+    if (!started) break;
   }
-  return jobs;
+
+  while (activeJobs.size > 0) {
+    await Promise.race(activeJobs);
+
+    while (!runError && !input.shouldStop() && activeJobs.size < input.concurrency) {
+      const started = await startNextJob();
+      if (!started) break;
+    }
+  }
+
+  if (runError) throw runError;
+  return ranJob;
 }

@@ -4,6 +4,7 @@ import { AppError } from "@/lib/errors";
 import { createReadUrlFromOssUrl } from "@/server/providers/oss";
 import {
   createClientReviewTask,
+  expirePriorActiveClientReviews,
   getNextClientReviewVersion,
   getClientReviewSecretByTaskId,
   getClientReviewTaskByTokenHash,
@@ -98,6 +99,30 @@ export const clientReviewScenes = [
 ] as const;
 
 export type ClientReviewScene = (typeof clientReviewScenes)[number];
+
+export type ExternalReviewItem = ReturnType<typeof summarizeClientReviewItemsForExternal>[number];
+
+export type ClientReviewArchive = Array<{
+  nodeKey: string;
+  nodeLabel: string;
+  order: number;
+  series: Array<{
+    seriesKey: string;
+    seriesLabel: string | null;
+    versions: Array<{
+      taskId: string;
+      version: number;
+      status: string;
+      generatedAt: string;
+      submittedAt: string | null;
+      reviewedAt: string | null;
+      reviewerName: string | null;
+      feedback: string | null;
+      isTextNode: boolean;
+      items?: ExternalReviewItem[];
+    }>;
+  }>;
+}>;
 
 export const createClientReviewInputSchema = z.object({
   reviewType: z.enum([
@@ -226,6 +251,12 @@ export async function createWorkflowClientReview(input: {
     payload: spec.payload,
     items: spec.items,
   });
+  await expirePriorActiveClientReviews({
+    projectId: input.projectId,
+    reviewType: spec.reviewType,
+    targetScopeId: spec.targetScopeId,
+    exceptTaskId: review.task.id,
+  });
 
   await markReviewCreatedProgress({
     projectId: input.projectId,
@@ -330,6 +361,12 @@ export async function createReviewForStoryboardScene(input: {
         },
       };
     }),
+  });
+  await expirePriorActiveClientReviews({
+    projectId: input.projectId,
+    reviewType: "storyboard_scene_images",
+    targetScopeId: input.sceneId,
+    exceptTaskId: review.task.id,
   });
 
   await updateStoryboardSceneStatus({
@@ -914,7 +951,7 @@ async function loadClientReviewContent(task: ClientReviewTaskView) {
   return {
     task,
     items: sortExternalReviewItemsForDisplay(task, hydratedItems),
-    history: await buildClientReviewHistory(task, creativeImageSource),
+    archive: await buildClientReviewArchive(task),
   };
 }
 
@@ -929,51 +966,134 @@ async function assertClientReviewVerificationCode(taskId: string, verificationCo
   }
 }
 
-async function buildClientReviewHistory(currentTask: ClientReviewTaskView, creativeImageSource: CreativeReviewImageSource) {
-  const tasks = await listProjectClientReviewTasks(currentTask.projectId);
-  const relevantTasks = tasks
-    .filter((task) => isExternallyVisibleReviewTask(task))
-    .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
+async function buildClientReviewArchive(currentTask: ClientReviewTaskView): Promise<ClientReviewArchive> {
+  const tasks = (await listProjectClientReviewTasks(currentTask.projectId))
+    .filter((task) => shouldIncludeReviewTaskInArchive(task))
+    .sort((left, right) => {
+      const leftNode = resolveReviewNode(left);
+      const rightNode = resolveReviewNode(right);
+      if (leftNode.order !== rightNode.order) return leftNode.order - rightNode.order;
+      return new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
+    });
 
-  return Promise.all(
-    relevantTasks.map(async (task) => {
-      const items = await listClientReviewItems(task.id);
-      const hydratedItems = await hydrateClientReviewItems(task, items, creativeImageSource);
-      return {
-        task: sanitizeClientReviewTaskForExternal(task),
-        items: summarizeClientReviewItemsForExternal(sortExternalReviewItemsForDisplay(task, hydratedItems)),
-        isCurrent: task.id === currentTask.id,
+  const nodeMap = new Map<string, {
+    nodeKey: string;
+    nodeLabel: string;
+    order: number;
+    series: Map<string, {
+      seriesKey: string;
+      seriesLabel: string | null;
+      sortHint: number;
+      versions: ClientReviewArchive[number]["series"][number]["versions"];
+    }>;
+  }>();
+
+  for (const task of tasks) {
+    const node = resolveReviewNode(task);
+    const seriesKey = `${task.reviewType}:${task.targetScopeId}`;
+    const nodeEntry =
+      nodeMap.get(node.nodeKey) ??
+      {
+        ...node,
+        series: new Map<string, {
+          seriesKey: string;
+          seriesLabel: string | null;
+          sortHint: number;
+          versions: ClientReviewArchive[number]["series"][number]["versions"];
+        }>(),
       };
-    })
-  );
+    const seriesEntry =
+      nodeEntry.series.get(seriesKey) ??
+      {
+        seriesKey,
+        seriesLabel: null,
+        sortHint: task.batchNumber ?? task.roundNumber ?? nodeEntry.series.size + 1,
+        versions: [],
+      };
+    const isTextNode = isTextReviewNode(task);
+    const version: ClientReviewArchive[number]["series"][number]["versions"][number] = {
+      taskId: task.id,
+      version: task.version,
+      status: task.status,
+      generatedAt: task.createdAt,
+      submittedAt: task.submittedAt,
+      reviewedAt: task.reviewedAt,
+      reviewerName: task.reviewerName,
+      feedback: task.feedback,
+      isTextNode,
+    };
+
+    if (isTextNode) {
+      const items = await listClientReviewItems(task.id);
+      version.items = summarizeClientReviewItemsForExternal(sortExternalReviewItemsForDisplay(task, items));
+    }
+
+    seriesEntry.versions.push(version);
+    nodeEntry.series.set(seriesKey, seriesEntry);
+    nodeMap.set(node.nodeKey, nodeEntry);
+  }
+
+  return Array.from(nodeMap.values())
+    .sort((left, right) => left.order - right.order)
+    .map((node) => {
+      const series = Array.from(node.series.values())
+        .sort((left, right) => left.sortHint - right.sortHint)
+        .map((entry, index, entries) => ({
+          seriesKey: entry.seriesKey,
+          seriesLabel: entries.length > 1 ? buildArchiveSeriesLabel(node.nodeKey, entry.sortHint || index + 1) : null,
+          versions: [...entry.versions].sort((left, right) => right.version - left.version),
+        }));
+      return {
+        nodeKey: node.nodeKey,
+        nodeLabel: node.nodeLabel,
+        order: node.order,
+        series,
+      };
+    });
 }
 
-function isExternallyVisibleReviewTask(task: ClientReviewTaskView) {
-  return task.status !== "draft" && task.status !== "revoked";
+function buildArchiveSeriesLabel(nodeKey: string, index: number) {
+  if (nodeKey === "creative_round_1" || nodeKey === "creative_round_2" || nodeKey === "a_copy_review") {
+    return `第${index}轮`;
+  }
+  return `批次${index}`;
 }
 
-function sanitizeClientReviewTaskForExternal(task: ClientReviewTaskView) {
-  return {
-    id: task.id,
-    title: task.title,
-    summary: task.summary,
-    status: task.status,
-    reviewType: task.reviewType,
-    targetScopeType: task.targetScopeType,
-    targetScopeId: task.targetScopeId,
-    version: task.version,
-    submittedAt: task.submittedAt,
-    reviewedAt: task.reviewedAt,
-    sopKey: task.sopKey,
-    reviewScene: task.reviewScene,
-    roundNumber: task.roundNumber,
-    batchNumber: task.batchNumber,
-    feedback: task.feedback,
-    reviewerName: task.reviewerName,
-    reviewerContact: task.reviewerContact,
-    createdAt: task.createdAt,
-    updatedAt: task.updatedAt,
-  };
+export function resolveReviewNode(task: { reviewType: string; reviewScene?: string | null }) {
+  if (task.reviewType === "brief_confirmation") return { nodeKey: "brief_confirmation", nodeLabel: "Brief 确认", order: 1 };
+  if (task.reviewType === "project_proposal" && task.reviewScene === "creative_round_1") {
+    return { nodeKey: "creative_round_1", nodeLabel: "创意提案 Round 1", order: 2 };
+  }
+  if (task.reviewType === "project_proposal" && task.reviewScene === "creative_round_2") {
+    return { nodeKey: "creative_round_2", nodeLabel: "创意提案 Round 2", order: 3 };
+  }
+  if (task.reviewType === "quote_confirmation") return { nodeKey: "quote_confirmation", nodeLabel: "报价确认", order: 4 };
+  if (task.reviewType === "contract_confirmation") return { nodeKey: "contract_confirmation", nodeLabel: "合同确认", order: 5 };
+  if (task.reviewType === "script_package" && task.reviewScene !== "production_setup") {
+    return { nodeKey: "script_package", nodeLabel: "完整剧本确认", order: 6 };
+  }
+  if (task.reviewType === "script_package" && task.reviewScene === "production_setup") {
+    return { nodeKey: "production_setup", nodeLabel: "人物/场景设定", order: 7 };
+  }
+  if (task.reviewType === "storyboard_image_batch" || task.reviewType === "storyboard_scene_images") {
+    return { nodeKey: "storyboard_image_batch", nodeLabel: "分镜图片审核", order: 8 };
+  }
+  if (task.reviewType === "a_copy_review" || task.reviewScene === "a_copy_round") {
+    return { nodeKey: "a_copy_review", nodeLabel: "A copy 审核", order: 9 };
+  }
+  if (task.reviewType === "b_copy_review" || task.reviewScene === "b_copy_final") {
+    return { nodeKey: "b_copy_review", nodeLabel: "B copy 定稿", order: 10 };
+  }
+  return { nodeKey: task.reviewType, nodeLabel: task.reviewType, order: 999 };
+}
+
+export function isTextReviewNode(task: { reviewType: string; reviewScene?: string | null }) {
+  const node = resolveReviewNode(task);
+  return node.order === 1 || node.order === 4 || node.order === 5 || node.order === 6;
+}
+
+export function shouldIncludeReviewTaskInArchive(task: { status: string }) {
+  return task.status !== "draft";
 }
 
 function summarizeClientReviewItemsForExternal(items: ClientReviewItemView[]) {
@@ -1023,6 +1143,7 @@ function summarizeClientReviewItemMetadata(metadata: Record<string, unknown>) {
     "totalAmount",
     "status",
     "version",
+    "brief",
   ]) {
     if (metadata[key] !== undefined) summary[key] = metadata[key];
   }

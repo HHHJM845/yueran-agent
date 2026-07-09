@@ -104,6 +104,60 @@ test("new client review links include the verification code hash fragment", asyn
   assert.doesNotMatch(useCaseSource, /reviewUrl: `\$\{getLocalReviewOrigin\(input\.origin\)\}\/client-review\/\$\{credentials\.token\}`/);
 });
 
+test("creating a new client review version expires older active tasks in the same series", async () => {
+  const { readFileSync } = await import("node:fs");
+  const repositorySource = readFileSync(new URL("../repositories/client-reviews.ts", import.meta.url), "utf8");
+  const useCaseSource = readFileSync(new URL("./client-review.ts", import.meta.url), "utf8");
+
+  assert.match(repositorySource, /export async function expirePriorActiveClientReviews/);
+  assert.match(repositorySource, /status = 'expired'/);
+  assert.match(repositorySource, /status = 'active'/);
+  assert.match(repositorySource, /id <> \$4/);
+  assert.match(repositorySource, /target_scope_id = \$3/);
+  assert.match(useCaseSource, /expirePriorActiveClientReviews\(\{/);
+  assert.match(useCaseSource, /exceptTaskId: review\.task\.id/);
+});
+
+test("client review archive groups nodes in business order and keeps all non-draft versions", async () => {
+  const { resolveReviewNode, isTextReviewNode, shouldIncludeReviewTaskInArchive } = await import("./client-review.ts");
+  const { readFileSync } = await import("node:fs");
+  const useCaseSource = readFileSync(new URL("./client-review.ts", import.meta.url), "utf8");
+
+  const nodeCases = [
+    [{ reviewType: "brief_confirmation" }, { nodeKey: "brief_confirmation", nodeLabel: "Brief 确认", order: 1 }],
+    [{ reviewType: "project_proposal", reviewScene: "creative_round_1" }, { nodeKey: "creative_round_1", nodeLabel: "创意提案 Round 1", order: 2 }],
+    [{ reviewType: "project_proposal", reviewScene: "creative_round_2" }, { nodeKey: "creative_round_2", nodeLabel: "创意提案 Round 2", order: 3 }],
+    [{ reviewType: "quote_confirmation" }, { nodeKey: "quote_confirmation", nodeLabel: "报价确认", order: 4 }],
+    [{ reviewType: "contract_confirmation" }, { nodeKey: "contract_confirmation", nodeLabel: "合同确认", order: 5 }],
+    [{ reviewType: "script_package", reviewScene: null }, { nodeKey: "script_package", nodeLabel: "完整剧本确认", order: 6 }],
+    [{ reviewType: "script_package", reviewScene: "production_setup" }, { nodeKey: "production_setup", nodeLabel: "人物/场景设定", order: 7 }],
+    [{ reviewType: "storyboard_image_batch" }, { nodeKey: "storyboard_image_batch", nodeLabel: "分镜图片审核", order: 8 }],
+    [{ reviewType: "a_copy_review" }, { nodeKey: "a_copy_review", nodeLabel: "A copy 审核", order: 9 }],
+    [{ reviewType: "b_copy_review" }, { nodeKey: "b_copy_review", nodeLabel: "B copy 定稿", order: 10 }],
+  ];
+
+  for (const [input, expected] of nodeCases) {
+    assert.deepEqual(resolveReviewNode(input), expected);
+  }
+
+  assert.equal(isTextReviewNode({ reviewType: "brief_confirmation" }), true);
+  assert.equal(isTextReviewNode({ reviewType: "quote_confirmation" }), true);
+  assert.equal(isTextReviewNode({ reviewType: "contract_confirmation" }), true);
+  assert.equal(isTextReviewNode({ reviewType: "script_package", reviewScene: null }), true);
+  assert.equal(isTextReviewNode({ reviewType: "script_package", reviewScene: "production_setup" }), false);
+  assert.equal(isTextReviewNode({ reviewType: "storyboard_image_batch" }), false);
+
+  assert.equal(shouldIncludeReviewTaskInArchive({ status: "draft" }), false);
+  assert.equal(shouldIncludeReviewTaskInArchive({ status: "active" }), true);
+  assert.equal(shouldIncludeReviewTaskInArchive({ status: "expired" }), true);
+  assert.equal(shouldIncludeReviewTaskInArchive({ status: "revoked" }), true);
+
+  assert.match(useCaseSource, /archive: await buildClientReviewArchive\(task\)/);
+  assert.match(useCaseSource, /items\?: ExternalReviewItem\[\]/);
+  assert.match(useCaseSource, /isTextNode/);
+  assert.doesNotMatch(useCaseSource, /isExternallyVisibleReviewTask\(task\)[\s\S]*revoked/);
+});
+
 test("brief confirmation approval auto-generates risk check after client approval", async () => {
   const { readFileSync } = await import("node:fs");
   const useCaseSource = readFileSync(new URL("./client-review.ts", import.meta.url), "utf8");

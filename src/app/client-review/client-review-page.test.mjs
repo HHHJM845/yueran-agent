@@ -12,7 +12,7 @@ function componentSource(name) {
   return source.slice(start, next === -1 ? source.length : next);
 }
 
-test("storyboard image batch review uses per-shot OK decisions without scoring or package decision buttons", () => {
+test("storyboard image batch review uses per-shot direct decisions without scoring or package decision buttons", () => {
   assert.match(source, /isStoryboardImageBatchReview/);
   assert.match(source, /分镜逐张审核/);
   assert.match(source, /computeStoryboardBatchDecision/);
@@ -21,8 +21,9 @@ test("storyboard image batch review uses per-shot OK decisions without scoring o
   assert.match(source, /type="hidden"\s+name=\{`decision-\$\{item\.itemId\}`\}/);
   assert.match(source, /setItemDecision\("approved"\)/);
   assert.match(source, /setItemDecision\("rejected"\)/);
-  assert.match(source, /不 OK 后请填写原因和修改意见/);
+  assert.match(source, /不通过后请填写原因和修改意见/);
   assert.doesNotMatch(source, /请选择 OK 或不 OK/);
+  assert.doesNotMatch(source, /不 OK 后请填写原因和修改意见/);
   assert.doesNotMatch(source, /showScore=\{isImageReview \|\| candidateImages\.length > 0\}/);
   assert.doesNotMatch(source, /整体通过/);
   assert.doesNotMatch(source, /整体打回/);
@@ -75,18 +76,20 @@ test("brief confirmation review mirrors the internal structured requirement temp
   assert.doesNotMatch(briefCard, /Open Questions/);
 });
 
-test("brief confirmation review uses one global feedback field and OK buttons", () => {
+test("brief confirmation review uses one global feedback field and Chinese decision buttons", () => {
   const briefCard = componentSource("BriefReviewItemCard");
 
   assert.match(source, /const isBriefConfirmationReview = displayedTask\?\.reviewType === "brief_confirmation"/);
   assert.match(source, /审核意见/);
-  assert.match(source, /name="decision" value="approved"[\s\S]*OK/);
-  assert.match(source, /name="decision" value="rejected"[\s\S]*不 OK/);
+  assert.match(source, /name="decision" value="approved"[\s\S]*通过/);
+  assert.match(source, /name="decision" value="rejected"[\s\S]*不通过/);
   assert.doesNotMatch(briefCard, /name=\{`feedback-\$\{item\.itemId\}`\}/);
   assert.doesNotMatch(briefCard, /name=\{`decision-\$\{item\.itemId\}`\}/);
+  assert.doesNotMatch(source, />OK</);
+  assert.doesNotMatch(source, /不 OK/);
 });
 
-test("client review item decisions use direct OK buttons instead of select menus", () => {
+test("client review item decisions use direct Chinese buttons instead of select menus", () => {
   const decisionFields = componentSource("ReviewDecisionFields");
 
   assert.match(decisionFields, /storyboard-review-direct-actions/);
@@ -95,9 +98,42 @@ test("client review item decisions use direct OK buttons instead of select menus
   assert.match(decisionFields, /current === "approved" \? "" : "approved"/);
   assert.match(decisionFields, /current === "rejected" \? "" : "rejected"/);
   assert.match(source, /itemDecision \|\| \(isCreativeRound1Submission \|\| isStoryboardImageBatchSubmission \? "rejected" : submittedDecision\)/);
+  assert.match(decisionFields, />通过</);
+  assert.match(decisionFields, />不通过</);
   assert.doesNotMatch(decisionFields, /<select/);
   assert.doesNotMatch(source, /单条结论/);
   assert.doesNotMatch(source, /跟随本轮结论/);
   assert.doesNotMatch(source, /确认通过/);
   assert.doesNotMatch(source, /打回修改/);
+});
+
+test("client review page renders project archive and same-series version comparison", () => {
+  assert.match(source, /type ClientReviewArchive/);
+  assert.match(source, /archive: ClientReviewArchive\[\]/);
+  assert.match(source, /setArchive\(payload\.data\.archive \?\? \[\]\)/);
+  assert.match(source, /ClientReviewVersionCompare/);
+  assert.match(source, /ProjectReviewArchive/);
+  assert.match(source, /项目审核档案/);
+  assert.match(source, /当前版本 vs 上一版本/);
+  assert.match(source, /版本 A/);
+  assert.match(source, /版本 B/);
+  assert.match(source, /该节点完整内容对比将在后续版本提供/);
+  assert.match(source, /历史版本只读/);
+  assert.doesNotMatch(source, /审核链接/);
+  assert.doesNotMatch(source, /验证码/);
+});
+
+test("client review archive uses the approved status labels", () => {
+  const statusLabel = componentSource("reviewStatusLabel");
+
+  assert.match(statusLabel, /draft: "草稿（内部，档案区不展示）"/);
+  assert.match(statusLabel, /active: "待审核"/);
+  assert.match(statusLabel, /submitted: "已提交"/);
+  assert.match(statusLabel, /approved: "已通过"/);
+  assert.match(statusLabel, /rejected: "未通过"/);
+  assert.match(statusLabel, /expired: "已过期"/);
+  assert.match(statusLabel, /revoked: "已撤销"/);
+  assert.doesNotMatch(statusLabel, /已打回/);
+  assert.doesNotMatch(statusLabel, /已撤回/);
+  assert.doesNotMatch(statusLabel, /审核中/);
 });

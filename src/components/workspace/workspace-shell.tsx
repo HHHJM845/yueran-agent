@@ -40,7 +40,7 @@ import {
   WandSparkles,
   XCircle,
 } from "lucide-react";
-import type { JobSummary, ProjectStage, ProjectSummary, Role } from "@/domain/types";
+import type { JobEvent, JobSummary, ProjectStage, ProjectSummary, Role } from "@/domain/types";
 import { projectStages } from "@/domain/types";
 import { stageLabels, stageStepLabels, statusLabels, workflowModules } from "@/domain/stage-machine";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -104,7 +104,6 @@ import {
   generateCreativeDirections,
   generateCreativeExpansions,
   generateDirectionStyleImage,
-  generateRound2DeepeningOutline,
   generateRound2DeepeningScript,
   generateRiskCheck,
   generateDocumentDrafts,
@@ -122,6 +121,7 @@ import {
   confirmRound2DeepeningScript,
   reviewContract,
   reviewQuote,
+  retryJob,
   retryFeishuDelivery,
   saveArchiveRecord,
   saveContract,
@@ -133,6 +133,7 @@ import {
   saveStandardizedScriptEdit,
   saveProductionReferencePrompt,
   regenerateProductionReferencePrompts,
+  subscribeToJobEvents,
   updateChangeRequestStatus,
   revisePlainScriptPackage,
   transcribeScriptRevisionAudio,
@@ -232,10 +233,10 @@ const roleLabels: Record<Role, string> = {
 };
 
 const riskAlertLabels: Record<NonNullable<RiskCheckCardView["overallAlert"]>, string> = {
-  low: "落地风险低",
-  medium: "需要补充确认",
-  high: "落地风险偏高",
-  redline: "命中红线",
+  low: "健康可执行",
+  medium: "中等可承受",
+  high: "可承受待确认",
+  redline: "需专项确认",
 };
 
 function BrandLogo({ className, size = 30 }: { className?: string; size?: number }) {
@@ -1826,6 +1827,8 @@ function WorkspaceCenter({
         />
       </div>
 
+      <AiJobProgressPanel jobs={jobs} onRefresh={refreshSelectedWorkspace} />
+
       <div className="workspace-main-area" data-active-stage={selectedStage}>
             <StagePanel stage="brand_requirement_intake" selectedStage={selectedStage}>
               <div className="grid gap-5">
@@ -2951,9 +2954,6 @@ function ScriptStoryboardModule({
                 <FileText size={18} />
                 <h3 className="ds-text-section-title">脚本设定（完整剧本）</h3>
               </div>
-              <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-                从已确认的创意、报价和合同生成大白话剧本，连续修订后再沉淀为可发送给甲方的标准剧本。
-              </p>
             </div>
             <Badge variant="outline">SOP 5</Badge>
           </div>
@@ -2965,9 +2965,6 @@ function ScriptStoryboardModule({
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <p className="text-sm font-medium">生成的大白话剧本</p>
-                  <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
-                    这里保存 AI 生成和每轮修订后的可读版本，方便创意团队用自然语言继续打磨。
-                  </p>
                 </div>
                 <Button type="button" disabled={!canEdit || generatingPlainScript} onClick={() => void handleGeneratePlainScript()}>
                   {generatingPlainScript ? <Loader2 className="animate-spin" size={15} /> : <WandSparkles size={15} />}
@@ -2977,7 +2974,7 @@ function ScriptStoryboardModule({
               {generatingPlainScript && (
                 <div className="mt-3 flex items-center gap-2 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-sm text-[var(--text-secondary)]">
                   <Loader2 className="animate-spin" size={15} />
-                  正在生成大白话剧本，完成后会保存到当前项目并刷新工作区。
+                  大白话剧本生成中。
                 </div>
               )}
               {sop5Flow.scriptSetup.plainScript ? (
@@ -2986,16 +2983,13 @@ function ScriptStoryboardModule({
                 </div>
               ) : (
                 <p className="mt-3 rounded-card-sm border border-dashed border-[var(--border-soft)] bg-[var(--surface-card)] p-4 text-sm leading-6 text-[var(--text-secondary)]">
-                  暂无大白话剧本。请先生成，系统会根据已确认材料调用真实文本模型并写入数据库。
+                  暂无大白话剧本。
                 </p>
               )}
             </div>
 
             <div className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3">
               <p className="text-sm font-medium">连续修订</p>
-              <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
-                每次提交会记录一轮文字指令，并更新同一个剧本包。
-              </p>
               <div className="mt-3 flex flex-wrap gap-2 text-xs">
                 <span className={cn("rounded-card-sm border border-[var(--border-soft)] px-3 py-1 font-medium", revisionInputMode === "text" ? "bg-[var(--surface-soft)]" : "bg-[var(--surface-card)] text-[var(--text-secondary)]")}>
                   文字输入
@@ -3006,7 +3000,7 @@ function ScriptStoryboardModule({
                   variant={isListeningRevisionVoice ? "default" : "outline"}
                   disabled={!canEdit || !scriptPackageId || revisingPackageId !== null || isTranscribingRevisionVoice}
                   onClick={() => void (isListeningRevisionVoice ? stopRevisionVoiceInput() : startRevisionVoiceInput())}
-                  title="点击后录音并交给豆包语音模型转成修改意见"
+                  title="录音转成修改意见"
                 >
                   {isTranscribingRevisionVoice ? <Loader2 size={14} className="animate-spin" /> : <Mic size={14} />}
                   {isTranscribingRevisionVoice ? "转写中" : isListeningRevisionVoice ? "停止录音" : "语音输入"}
@@ -3031,7 +3025,7 @@ function ScriptStoryboardModule({
                   ))
                 ) : (
                   <p className="rounded-card-sm border border-dashed border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-xs leading-5 text-[var(--text-secondary)]">
-                    暂无修订对话。提交文字意见后，记录会随项目一起保存，刷新后仍可回看。
+                    暂无修订记录。
                   </p>
                 )}
               </div>
@@ -3064,9 +3058,6 @@ function ScriptStoryboardModule({
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-medium">标准剧本</p>
-                <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
-                  确认提交后，系统会把大白话版本整理为可审核、可拆分的标准剧本。
-                </p>
               </div>
               <div className="flex flex-wrap gap-2">
                 {scriptPackageId && !sop5Flow.scriptSetup.standardizedScript && (
@@ -3112,7 +3103,7 @@ function ScriptStoryboardModule({
             {standardizingPackageId && (
               <div className="mt-3 flex items-center gap-2 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-sm text-[var(--text-secondary)]">
                 <Loader2 className="animate-spin" size={15} />
-                正在整理标准剧本，完成后会保存为可拆分版本。
+                标准剧本生成中。
               </div>
             )}
             {editingStandardizedScript ? (
@@ -3151,7 +3142,7 @@ function ScriptStoryboardModule({
               </div>
             ) : (
               <p className="mt-3 rounded-card-sm border border-dashed border-[var(--border-soft)] bg-[var(--surface-card)] p-4 text-sm leading-6 text-[var(--text-secondary)]">
-                暂无标准剧本。完成大白话剧本后点击“确认提交”，系统会生成结构化版本。
+                暂无标准剧本。
               </p>
             )}
             <ClientReviewLaunchBox
@@ -3159,7 +3150,7 @@ function ScriptStoryboardModule({
               reviewType="script_package"
               targetScopeId={scriptPackageId}
               title="发送标准剧本给甲方"
-              detail="把当前标准剧本生成甲方审核链接，并回写审核记录。"
+              detail="生成甲方审核链接。"
               disabled={!scriptPackageId || !sop5Flow.scriptSetup.standardizedScript || editingStandardizedScript}
               disabledReason={
                 !scriptPackageId
@@ -3182,9 +3173,6 @@ function ScriptStoryboardModule({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <h3 className="text-lg font-semibold tracking-tight text-[var(--text-primary)]">文字分镜拆解</h3>
-            <p className="mt-2 max-w-3xl text-sm font-medium leading-6 text-[var(--text-secondary)]">
-              标准剧本生成后即可调用文本模型拆解详细文字分镜。
-            </p>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
             {latestPackage && (
@@ -3217,7 +3205,7 @@ function ScriptStoryboardModule({
         {splittingPackageId && (
           <div className="mt-3 flex items-center gap-2 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3 text-sm text-[var(--text-secondary)]">
             <Loader2 className="animate-spin" size={15} />
-            文字分镜拆解中，完成后自动刷新场次、分镜和人物场景。
+            文字分镜拆解中。
           </div>
         )}
         {!splittingPackageId && splitMessage && <Feedback tone="success" text={splitMessage} />}
@@ -3227,7 +3215,7 @@ function ScriptStoryboardModule({
             <div className="ds-card-soft p-3">
               <p className="text-sm font-semibold tracking-tight text-[var(--text-secondary)]">文字分镜</p>
               <p className="mt-1 text-sm font-medium leading-6 text-[var(--text-primary)]">
-                暂无文字分镜。生成标准剧本后可自动拆分并写入数据库。
+                暂无文字分镜。
               </p>
             </div>
           ) : (
@@ -3358,7 +3346,6 @@ function ScriptStoryboardModule({
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3">
           <div>
             <p className="text-base font-semibold tracking-tight text-[var(--text-primary)]">确认文字分镜</p>
-            <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">确认后同步人物/场景引用，供后续分镜图读取。</p>
           </div>
           <Button
             type="button"
@@ -3375,9 +3362,6 @@ function ScriptStoryboardModule({
         <div className="flex items-start justify-between gap-3">
           <div>
             <h3 className="ds-text-section-title">人物场景设定</h3>
-            <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
-              先确认人物和场景清单，再按每张卡片里的当前提示词生成设定图候选。
-            </p>
           </div>
           <Badge variant="outline">{activeProductionEntities.length} 个有效设定</Badge>
         </div>
@@ -3386,7 +3370,6 @@ function ScriptStoryboardModule({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-sm font-medium">清单确认区</p>
-              <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">AI 抽取的人物和场景先在这里确认；路人群众可移入忽略列表。</p>
             </div>
             <Button type="button" size="sm" disabled={!canEdit || !isStoryboardSequenceConfirmed || activeProductionEntities.length === 0 || regeneratingReferencePrompts} onClick={() => void handleConfirmEntityList()}>
               {regeneratingReferencePrompts ? <Loader2 className="animate-spin" size={14} /> : <CheckCircle2 size={14} />}
@@ -3412,7 +3395,7 @@ function ScriptStoryboardModule({
               </Button>
             </div>
             {activeProductionEntities.length === 0 ? (
-              <p className="text-sm leading-6 text-[var(--text-secondary)]">暂无人物或场景设定。请先自动拆分文字分镜，或手动新增需要生成设定图的人物和场景。</p>
+              <p className="text-sm leading-6 text-[var(--text-secondary)]">暂无人物或场景设定。</p>
             ) : (
               activeProductionEntities.map((entity) => {
                 const draft = entityDrafts[entity.id] ?? { name: entity.name, description: entity.description };
@@ -3470,7 +3453,6 @@ function ScriptStoryboardModule({
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <p className="text-sm font-medium">设定图生成区</p>
-              <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">每张卡片按当前可见提示词生成，候选图会横向追加。</p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="outline">{isEntityListConfirmed ? "清单已确认" : "清单待确认"}</Badge>
@@ -3538,7 +3520,7 @@ function ScriptStoryboardModule({
                     <div className="relative min-h-[21rem] overflow-hidden rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)]" aria-label={`${entity.name} 主候选画布`}>
                       {referenceImages.length === 0 ? (
                         <div className="flex h-full min-h-[21rem] items-center justify-center p-5 text-center text-xs leading-5 text-[var(--text-secondary)]">
-                          还没有候选图。确认当前提示词后点击“生成”。
+                          暂无候选图。
                         </div>
                       ) : (
                         <>
@@ -3622,7 +3604,7 @@ function ScriptStoryboardModule({
 	                      value={getReferencePrompt(activeReference)}
 	                      onChange={(event) => activeReference && setPromptDrafts((current) => ({ ...current, [activeReference.id]: event.target.value }))}
 	                      disabled={!canEdit || !activeReference || entity.status === "locked"}
-	                      placeholder="请先确认清单，系统会根据剧本和视觉风格生成提示词。"
+	                      placeholder="暂无提示词。"
 	                      className="min-h-44 resize-y rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-3 text-xs leading-5"
 	                      aria-label={`${entity.name} 生成提示词`}
 	                    />
@@ -3673,9 +3655,6 @@ function ScriptStoryboardModule({
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-sm font-medium">提交人物场景设定审核</p>
-              <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
-                审核 metadata 使用 sop_5 / production_setup / round 1；甲方通过后设定和参考集会锁定，打回后回到 needs_revision。
-              </p>
               {latestSetupReview && (
                 <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
                   最近一轮：v{latestSetupReview.version} · {clientReviewStatusLabel(latestSetupReview.status)} · {formatDateTime(latestSetupReview.updatedAt)}
@@ -4317,9 +4296,6 @@ function StoryboardImageCanvasModule({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="text-lg font-semibold tracking-tight text-[var(--text-primary)]">分镜图片全量提交审核</h3>
-              <p className="mt-2 max-w-3xl text-sm font-medium leading-6 text-[var(--text-secondary)]">
-                保存当前全量包后生成甲方审核链接；不 OK 的分镜回到上方继续修图。
-              </p>
             </div>
             <Badge variant="outline">{approvedShotCount}/{shots.length} 已通过</Badge>
           </div>
@@ -4411,9 +4387,6 @@ function StoryboardImageCanvasModule({
               <h3 className="text-lg font-semibold tracking-tight text-[var(--text-primary)]">本场甲方审核明细</h3>
               <Badge variant="outline">{clientReviewStatusLabel(latestSceneReview.status)}</Badge>
             </div>
-            <p className="mt-2 text-sm font-medium leading-6 text-[var(--text-secondary)]">
-              逐条保留甲方 OK / 不 OK 结果和修改意见。
-            </p>
             <div className="mt-3 grid gap-2">
               {latestReviewItems.map((item) => (
                 <div key={item.id} className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3 text-sm">
@@ -4857,7 +4830,7 @@ function StoryboardVideoCanvasModule({
         </div>
         <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {downloadableVideos.length === 0 ? (
-            <p className="rounded-card-sm bg-[var(--surface-soft)] p-3 text-sm leading-6 text-[var(--text-secondary)] sm:col-span-2 xl:col-span-4">生成好的视频会显示在这里。</p>
+            <p className="rounded-card-sm bg-[var(--surface-soft)] p-3 text-sm leading-6 text-[var(--text-secondary)] sm:col-span-2 xl:col-span-4">暂无视频素材。</p>
           ) : (
             downloadableVideos.map((video) => {
               const shot = shots.find((item) => item.id === video.shotId);
@@ -5302,7 +5275,7 @@ function ReviewCutStageModule({
             <label className="grid gap-2 rounded-card-sm border border-dashed border-[var(--border-soft)] bg-[var(--surface-soft)] p-3 text-sm">
               <span className="text-sm font-semibold tracking-tight text-[var(--text-secondary)]">{uploadTitle}</span>
               <span className="text-sm font-medium leading-6 text-[var(--text-primary)]">
-                {selectedCutFile ? selectedCutFile.name : latestCut?.videoUrl ? "已保存成片，可重新选择文件生成新版本。" : "选择 mp4、mov 或 webm 文件。"}
+                {selectedCutFile ? selectedCutFile.name : latestCut?.videoUrl ? "已保存成片。" : "选择 mp4、mov 或 webm 文件。"}
               </span>
               <input
                 type="file"
@@ -5342,7 +5315,7 @@ function ReviewCutStageModule({
           reviewScene={cutType === "a_copy" ? "a_copy_round" : "b_copy_final"}
           roundNumber={latestCut?.roundNumber ?? null}
           title={`甲方 ${stageName} 审核链接`}
-          detail="甲方观看完整视频并提交时间戳批注。"
+          detail="生成甲方审核链接。"
           disabled={!latestCut || latestCut.status !== "internal_approved"}
           disabledReason={!latestCut ? "请先上传成片版本。" : "请先完成内部审核通过，再发给甲方。"}
           tasks={clientReviewTasks}
@@ -5774,9 +5747,24 @@ function BriefIntakeWorkflowCard({
     (task) => task.reviewType === "brief_confirmation" && (!task.targetScopeId || task.targetScopeId === project.id)
   );
   const latestStructuringJob = jobs.find((job) => job.type === "requirement_structuring") ?? null;
+  const latestArtifactKey = latest ? `${latest.id}:${latest.version}:${latest.updatedAt}` : "";
+  const previousLatestArtifactKeyRef = useRef(latestArtifactKey);
+  const resultSectionRef = useRef<HTMLElement | null>(null);
   const reviewCutAssetIds = new Set(reviewCuts.map((cut) => cut.assetId).filter((assetId): assetId is string => Boolean(assetId)));
   const briefAssets = assets.filter((asset) => !reviewCutAssetIds.has(asset.id));
   const briefAssetAnalyses = assetAnalyses.filter((analysis) => briefAssets.some((asset) => asset.id === analysis.assetId));
+
+  useEffect(() => {
+    previousLatestArtifactKeyRef.current = latestArtifactKey;
+  }, [project.id]);
+
+  useEffect(() => {
+    if (!latestArtifactKey || previousLatestArtifactKeyRef.current === latestArtifactKey) return;
+    previousLatestArtifactKeyRef.current = latestArtifactKey;
+    window.requestAnimationFrame(() => {
+      resultSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }, [latestArtifactKey]);
 
   return (
     <>
@@ -5786,21 +5774,19 @@ function BriefIntakeWorkflowCard({
           assets={briefAssets}
           assetAnalyses={briefAssetAnalyses}
           latest={latest}
+          structuringJob={latestStructuringJob}
           onRefresh={onRefresh}
         />
       </section>
-      <section className="ds-card-soft p-4 lg:col-span-2">
+      <section ref={resultSectionRef} className="ds-card-soft scroll-mt-24 p-4 lg:col-span-2">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="text-lg font-semibold tracking-tight text-[var(--text-primary)]">标准化 Brief 表格</p>
           </div>
           {latest && <span className="ds-pill bg-[var(--surface-card)] text-[var(--text-secondary)]">v{latest.version} · {formatDateTime(latest.updatedAt)}</span>}
         </div>
-        {latest ? (
-          <StructuredRequirementPreview artifact={latest} />
-        ) : (
-          <BriefStructuringJobNotice job={latestStructuringJob} />
-        )}
+        {(!latest || latestStructuringJob) && <BriefStructuringJobNotice job={latestStructuringJob} />}
+        {latest && <StructuredRequirementPreview artifact={latest} />}
       </section>
       {openQuestions.length > 0 && (
         <BriefMissingInfoDeposit
@@ -5809,6 +5795,7 @@ function BriefIntakeWorkflowCard({
           assets={briefAssets}
           assetAnalyses={briefAssetAnalyses}
           openQuestions={openQuestions}
+          structuringJob={latestStructuringJob}
           onRefresh={onRefresh}
         />
       )}
@@ -5829,12 +5816,14 @@ function BriefRawInputPool({
   assets,
   assetAnalyses,
   latest,
+  structuringJob,
   onRefresh,
 }: {
   project: ProjectSummary;
   assets: AssetView[];
   assetAnalyses: AssetAnalysisView[];
   latest: ArtifactView | null;
+  structuringJob: JobSummary | null;
   onRefresh: () => Promise<void>;
 }) {
   const [requirementText, setRequirementText] = useState("");
@@ -5850,6 +5839,7 @@ function BriefRawInputPool({
   const briefJobPollRef = useRef(0);
   const succeededAnalyses = assetAnalyses.filter((analysis) => analysis.status === "succeeded");
   const unparsedAssets = assets.filter((asset) => asset.parseStatus === "queued" || asset.parseStatus === "failed");
+  const structuringJobRunning = isBriefStructuringJobRunning(structuringJob);
 
   useEffect(() => {
     return () => {
@@ -6128,11 +6118,11 @@ function BriefRawInputPool({
         <button
           type="button"
           onClick={() => void handleSubmit()}
-          disabled={submitting}
+          disabled={submitting || structuringJobRunning}
           className="inline-flex h-9 items-center justify-center gap-2 rounded-card-sm bg-[var(--accent)] px-3 text-sm font-medium text-[var(--accent-foreground)] disabled:opacity-60"
         >
-          {submitting ? <Loader2 className="animate-spin" size={15} /> : <WandSparkles size={15} />}
-          {submitting ? "在生成中" : latest ? "更新 Brief" : "AI 整理为标准 Brief"}
+          {submitting || structuringJobRunning ? <Loader2 className="animate-spin" size={15} /> : <WandSparkles size={15} />}
+          {submitting || structuringJobRunning ? "在生成中" : latest ? "更新 Brief" : "AI 整理为标准 Brief"}
         </button>
       </div>
 
@@ -6213,6 +6203,7 @@ function BriefMissingInfoDeposit({
   assets,
   assetAnalyses,
   openQuestions,
+  structuringJob,
   onRefresh,
 }: {
   project: ProjectSummary;
@@ -6220,6 +6211,7 @@ function BriefMissingInfoDeposit({
   assets: AssetView[];
   assetAnalyses: AssetAnalysisView[];
   openQuestions: string[];
+  structuringJob: JobSummary | null;
   onRefresh: () => Promise<void>;
 }) {
   const [answerDrafts, setAnswerDrafts] = useState<Record<string, string>>({});
@@ -6232,6 +6224,7 @@ function BriefMissingInfoDeposit({
   const succeededAnalyses = assetAnalyses.filter((analysis) => analysis.status === "succeeded");
   const visibleQuestions = openQuestions.filter((question) => !answeredQuestionKeys.has(normalizeBriefQuestionKey(question)));
   const missingQuestionText = visibleQuestions.map((question, index) => `${index + 1}. ${question}`).join("\n");
+  const structuringJobRunning = isBriefStructuringJobRunning(structuringJob);
 
   useEffect(() => {
     return () => {
@@ -6401,11 +6394,11 @@ function BriefMissingInfoDeposit({
         <button
           type="button"
           onClick={() => void handleSubmitAllAnswers()}
-          disabled={submittingBriefUpdate}
+          disabled={submittingBriefUpdate || structuringJobRunning}
           className="inline-flex h-9 items-center justify-center gap-2 rounded-card-sm bg-[var(--accent)] px-3 text-sm font-medium text-[var(--accent-foreground)] disabled:opacity-60"
         >
-          {submittingBriefUpdate ? <Loader2 className="animate-spin" size={15} /> : <WandSparkles size={15} />}
-          {submittingBriefUpdate ? "在生成中" : "提交并更新 Brief"}
+          {submittingBriefUpdate || structuringJobRunning ? <Loader2 className="animate-spin" size={15} /> : <WandSparkles size={15} />}
+          {submittingBriefUpdate || structuringJobRunning ? "在生成中" : "提交并更新 Brief"}
         </button>
       </div>
 
@@ -6471,10 +6464,13 @@ function BriefStructuringJobNotice({ job }: { job: JobSummary | null }) {
   const isFailed = job.status === "failed" || job.status === "cancelled";
   const isWaiting = job.status === "queued" || job.status === "retrying";
   const isRunning = job.status === "processing";
+  const isSucceeded = job.status === "succeeded";
   const toneClass = isFailed
     ? "border-[var(--cool-alert-bg)] bg-[var(--cool-alert-bg)] text-[var(--warning)]"
     : isRunning
       ? "border-[var(--accent-subtle)] bg-[var(--accent-subtle)] text-[var(--accent)]"
+      : isSucceeded
+        ? "border-[var(--macaron-teal-bg)] bg-[var(--macaron-teal-bg)] text-[var(--success)]"
       : "border-[var(--border-soft)] bg-[var(--surface-card)] text-[var(--text-secondary)]";
   const title = isFailed
     ? "Brief 生成失败"
@@ -6482,11 +6478,15 @@ function BriefStructuringJobNotice({ job }: { job: JobSummary | null }) {
       ? "Brief 正在生成"
       : isWaiting
         ? "Brief 生成任务已排队"
-        : "Brief 生成任务状态";
+        : isSucceeded
+          ? "Brief 已生成"
+          : "Brief 生成任务状态";
   const detail =
     isWaiting || isRunning
       ? "在生成中"
-      : job.userMessage ?? "任务已有状态记录，但还没有生成标准化 Brief。";
+      : isSucceeded
+        ? "标准化 Brief 已生成，结果如下。"
+        : job.userMessage ?? "任务已有状态记录，但还没有生成标准化 Brief。";
 
   return (
     <div className={cn("mt-3 rounded-card-sm border p-4 text-sm leading-6", toneClass)}>
@@ -6500,6 +6500,10 @@ function BriefStructuringJobNotice({ job }: { job: JobSummary | null }) {
       <p className="mt-2 text-xs opacity-80">任务：{job.title} · {formatDateTime(job.updatedAt)}</p>
     </div>
   );
+}
+
+function isBriefStructuringJobRunning(job: JobSummary | null) {
+  return Boolean(job && isRunningJobStatus(job.status));
 }
 
 function BriefInternalConfirmBox({
@@ -6600,22 +6604,17 @@ function StructuredRequirementPreview({ artifact }: { artifact: ArtifactView }) 
 
           return (
           <div key={label} className="grid gap-1.5 border-b border-[var(--border-soft)] pb-3 last:border-b-0">
-            <span
-              className={cn(
-                "text-sm font-semibold tracking-tight",
-                isHighlightedField ? "text-[var(--accent)]" : "text-[var(--text-secondary)]"
-              )}
-            >
+            <span className="text-sm font-semibold tracking-tight text-[var(--text-secondary)]">
               {label}
             </span>
             <span
               className={cn(
-                "text-base font-medium leading-7",
+                "text-base leading-7",
                 isEmptyValue
                   ? "text-[var(--text-tertiary)]"
                   : isHighlightedField
-                    ? "text-[var(--accent)]"
-                    : "text-[var(--text-primary)]"
+                    ? "font-semibold text-[var(--text-primary)]"
+                    : "font-medium text-[var(--text-primary)]"
               )}
             >
               {renderBriefRichText(formattedValue)}
@@ -6630,7 +6629,7 @@ function StructuredRequirementPreview({ artifact }: { artifact: ArtifactView }) 
 
 const briefHighlightedFieldLabels = new Set(["产品/服务", "视频目标", "核心卖点", "时间节点", "预算/报价"]);
 
-// Supports lightweight markers in standardized Brief values: **粗体**, ==重点背景==, {red:文字}, {bg-red:文字}.
+// Supports lightweight markers in standardized Brief values, rendered as bold text only.
 function renderBriefRichText(text: string): ReactNode {
   if (!text || text === "未提及") return text;
   const pattern = /(\*\*[^*]+\*\*|==[^=]+==|\{(?:red|blue|green|bg-red|bg-blue|bg-green):[^}]+\})/g;
@@ -6654,21 +6653,13 @@ function renderBriefRichToken(token: string, key: number): ReactNode {
     return <strong key={key} className="font-semibold text-[var(--text-primary)]">{token.slice(2, -2)}</strong>;
   }
   if (token.startsWith("==") && token.endsWith("==")) {
-    return <mark key={key} className="brief-rich-bg rounded-card-sm bg-[rgba(248,207,92,0.28)] px-1 text-[var(--text-primary)]">{token.slice(2, -2)}</mark>;
+    return <strong key={key} className="font-semibold text-[var(--text-primary)]">{token.slice(2, -2)}</strong>;
   }
 
   const match = token.match(/^\{(red|blue|green|bg-red|bg-blue|bg-green):([^}]+)\}$/);
   if (!match) return token;
-  const [, tone, content] = match;
-  const toneClass: Record<string, string> = {
-    red: "brief-rich-highlight text-[var(--danger)] font-medium",
-    blue: "brief-rich-highlight text-[var(--accent)] font-medium",
-    green: "brief-rich-highlight text-[var(--success)] font-medium",
-    "bg-red": "brief-rich-bg rounded-card-sm bg-[rgba(184,83,80,0.12)] px-1 text-[var(--text-primary)]",
-    "bg-blue": "brief-rich-bg rounded-card-sm bg-[var(--accent-subtle)] px-1 text-[var(--text-primary)]",
-    "bg-green": "brief-rich-bg rounded-card-sm bg-[var(--macaron-teal-bg)] px-1 text-[var(--text-primary)]",
-  };
-  return <span key={key} className={toneClass[tone] ?? "brief-rich-highlight"}>{content}</span>;
+  const [, , content] = match;
+  return <strong key={key} className="font-semibold text-[var(--text-primary)]">{content}</strong>;
 }
 
 function formatArtifactValue(value: unknown) {
@@ -7057,7 +7048,8 @@ function CreativeDirectionsCard({
   const currentGenerationDirections = shouldScopeToFocusedDirections ? focusedFlow.visibleDirections : selectedDirections;
   const currentGenerationDirectionIds = currentGenerationDirections.map((direction) => direction.id);
   const isRound1StyleGenerationStep = focusedFlow.currentTask.key === "prepare_round_1_materials" || focusedFlow.currentTask.key === "select_directions";
-  const currentGenerationRequiredSceneCount = focusedFlow.currentTask.key === "deepen_confirmed_direction" ? 4 : 0;
+  const currentGenerationRequiredSceneCount =
+    focusedFlow.currentTask.key === "deepen_confirmed_direction" ? ROUND_2_DEEPENING_SCENE_COUNT : 0;
   const round2StoryboardExpansionIds = collectRound2StoryboardExpansionIds(artifacts, currentGenerationDirections);
   const currentGenerationExpansions = currentGenerationDirections.flatMap((direction) =>
     expansions
@@ -7177,11 +7169,6 @@ function CreativeDirectionsCard({
 
     if (focusedFlow.primaryAction.key === "generate_deepening_assets") {
       void handleGenerateSelectedAtmosphereImages();
-      return;
-    }
-
-    if (focusedFlow.primaryAction.key === "generate_deepening_outline") {
-      void handleGenerateRound2Outline();
       return;
     }
 
@@ -7503,10 +7490,6 @@ function CreativeDirectionsCard({
     }
   }
 
-  async function handleGenerateRound2Outline() {
-    await handleGenerateRound2Script();
-  }
-
   async function handleGenerateRound2Script() {
     if (currentGenerationDirections.length === 0) {
       setDirectionError("请至少保留 1 个创意方向，再继续深化。");
@@ -7517,7 +7500,7 @@ function CreativeDirectionsCard({
       (direction) => !findRound2WorkspaceArtifact(artifacts, direction.id, "round2_deepening_script")
     );
     if (directionsMissingScript.length === 0) {
-      setMessage("方向深化故事已生成，请确认后继续精选 4 个精彩场景。");
+      setMessage(`方向深化故事已生成，请确认后继续精选 ${ROUND_2_DEEPENING_SCENE_COUNT} 个精彩场景。`);
       return;
     }
 
@@ -7526,45 +7509,7 @@ function CreativeDirectionsCard({
     setDirectionError(null);
 
     try {
-      const outlineMissingDirections = directionsMissingScript.filter(
-        (direction) => !findRound2WorkspaceArtifact(artifacts, direction.id, "round2_deepening_outline")
-      );
       const errors: string[] = [];
-
-      if (outlineMissingDirections.length > 0) {
-        const outlineResults = await Promise.all(
-          outlineMissingDirections.map(async (direction) => ({
-            direction,
-            result: await generateRound2DeepeningOutline(project.id, direction.id),
-          }))
-        );
-        const outlineJobIds: string[] = [];
-        for (const { direction, result } of outlineResults) {
-          if (result.ok) {
-            outlineJobIds.push(result.data.jobId);
-          } else {
-            errors.push(`${direction.title}：${result.error.message}`);
-          }
-        }
-
-        if (outlineJobIds.length > 0) {
-          setMessage(`正在准备 ${outlineJobIds.length} 个方向深化故事上下文，完成后会继续生成 700-800 字完整故事。`);
-          await onRefresh();
-          const outlineWaitResult = await waitForCreativeJobs(outlineJobIds, "方向深化故事上下文");
-          errors.push(...outlineWaitResult.failedMessages);
-          if (outlineWaitResult.timedOutCount > 0) {
-            setMessage(`${outlineWaitResult.timedOutCount} 个方向深化故事上下文仍在后台处理中。完成后再次点击即可继续生成完整故事。`);
-            await onRefresh();
-            return;
-          }
-        }
-      }
-
-      if (errors.length > 0) {
-        setDirectionError(errors.slice(0, 3).join("；"));
-        await onRefresh();
-        return;
-      }
 
       const scriptResults = await Promise.all(
         directionsMissingScript.map(async (direction) => ({
@@ -7690,7 +7635,7 @@ function CreativeDirectionsCard({
       if (errors.length > 0) {
         setDirectionError(errors.slice(0, 3).join("；"));
       } else {
-        setMessage("完整故事已确认，现在可以精选 4 个精彩场景。");
+        setMessage(`完整故事已确认，现在可以精选 ${ROUND_2_DEEPENING_SCENE_COUNT} 个精彩场景。`);
       }
       await onRefresh();
     } finally {
@@ -7833,30 +7778,35 @@ function CreativeDirectionsCard({
         (direction) => freshExpansions.filter((expansion) => expansion.directionId === direction.id).length < currentGenerationRequiredSceneCount
       );
       if (missingStoryboardDirections.length > 0) {
-        setDirectionError("请先从已确认完整故事中精选 4 个精彩场景，再生成深化视觉图。");
+        setDirectionError(`请先从已确认完整故事中精选 ${ROUND_2_DEEPENING_SCENE_COUNT} 个精彩场景，再生成深化视觉图。`);
         await onRefresh();
         return;
       }
 
       if (freshExpansions.length === 0) {
-        setDirectionError("当前方向还没有可用于生图的精彩场景。请先精选 4 个精彩场景。");
+        setDirectionError(`当前方向还没有可用于生图的精彩场景。请先精选 ${ROUND_2_DEEPENING_SCENE_COUNT} 个精彩场景。`);
         await onRefresh();
         return;
       }
 
-      const imageJobIds: string[] = [];
-      for (const expansion of freshExpansions) {
+      const imageRequests = freshExpansions.flatMap((expansion) => {
         const existingImageCount = freshGeneratedImages.filter((image) => image.expansionId === expansion.id && isGeneratedImageRunningOrDone(image)).length;
         const missingImageCount = Math.max(0, 1 - existingImageCount);
-        if (missingImageCount === 0) continue;
+        return Array.from({ length: missingImageCount }, () => expansion);
+      });
 
-        for (let index = 0; index < missingImageCount; index += 1) {
-          const result = await generateAtmosphereImage(project.id, expansion.directionId, expansion.id);
-          if (result.ok) {
-            imageJobIds.push(result.data.jobId);
-          } else {
-            errors.push(`${expansion.title}：${result.error.message}`);
-          }
+      const imageJobIds: string[] = [];
+      const imageResults = await Promise.all(
+        imageRequests.map(async (expansion) => ({
+          expansion,
+          result: await generateAtmosphereImage(project.id, expansion.directionId, expansion.id),
+        }))
+      );
+      for (const { expansion, result } of imageResults) {
+        if (result.ok) {
+          imageJobIds.push(result.data.jobId);
+        } else {
+          errors.push(`${expansion.title}：${result.error.message}`);
         }
       }
 
@@ -9379,7 +9329,7 @@ function Round2DeepeningScriptPanel({
         <div>
           <p className="text-base font-semibold tracking-tight text-[var(--text-primary)]">Round 2 方向深化故事</p>
           <p className="mt-1 line-clamp-2 text-xs leading-5 text-[var(--text-secondary)]">
-            方向深化会直接产出 700-800 字完整故事；人工确认后，才能精选 4 个精彩场景用于生图。
+            方向深化会直接产出 700-800 字完整故事；人工确认后，才能精选 {ROUND_2_DEEPENING_SCENE_COUNT} 个精彩场景用于生图。
           </p>
         </div>
         <span className="ds-pill ds-selected-pill">保留 {flow.visibleDirections.length}</span>
@@ -9599,10 +9549,9 @@ function CreativeStoryAtmosphereCell({
           <p className="line-clamp-2 text-base font-semibold tracking-tight text-[var(--text-primary)]">
             {expansion.sortOrder}. {expansion.title}
           </p>
-          <span className="ds-pill bg-[var(--surface-soft)] text-[var(--text-secondary)]">{expansion.productionDifficulty || "待评估"}</span>
         </div>
         <div className="mt-3 grid gap-1.5 border-b border-[var(--border-soft)] pb-2">
-          <span className="text-sm font-semibold tracking-tight text-[var(--text-secondary)]">一句话概念</span>
+          <span className="text-sm font-semibold tracking-tight text-[var(--text-secondary)]">小分镜</span>
           <span className="text-sm font-medium leading-6 text-[var(--text-primary)]">{expansion.oneLiner}</span>
         </div>
         {expansion.visualHighlights.length > 0 && (
@@ -9611,9 +9560,8 @@ function CreativeStoryAtmosphereCell({
             <span className="text-sm font-medium leading-6 text-[var(--text-primary)]">{expansion.visualHighlights.slice(0, 4).join("、")}</span>
           </div>
         )}
-        <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+        <div className="mt-3 grid gap-2 text-xs">
           <MiniMetric label="画面风格" value={expansion.visualStyle || "待确认"} />
-          <MiniMetric label="风险备注" value={expansion.riskNotes || "暂无"} />
         </div>
       </div>
 
@@ -9763,6 +9711,7 @@ const ROUND_1_STYLE_VARIANTS: Array<{ key: Round1StyleVariant; label: string }> 
   { key: "pixar_3d", label: "三维皮克斯风格" },
   { key: "realistic", label: "写实风格" },
 ];
+const ROUND_2_DEEPENING_SCENE_COUNT = 2;
 
 function findRound1DirectionStyleImage(images: GeneratedImageView[], directionId: string, styleVariant: Round1StyleVariant) {
   return rankGeneratedImagesForDisplay(
@@ -12298,13 +12247,13 @@ function buildReviewLinkWithVerificationCode(url: string, code: string) {
 
 function clientReviewStatusLabel(status: string) {
   const labels: Record<string, string> = {
-    draft: "草稿",
-    active: "待甲方审核",
+    draft: "草稿（内部，档案区不展示）",
+    active: "待审核",
     submitted: "已提交",
     approved: "已通过",
-    rejected: "已打回",
+    rejected: "未通过",
     expired: "已过期",
-    revoked: "已撤回",
+    revoked: "已撤销",
   };
   return labels[status] ?? status;
 }
@@ -13290,4 +13239,251 @@ function StateLine({ icon, text }: { icon: React.ReactNode; text: string }) {
       {text}
     </div>
   );
+}
+
+function AiJobProgressPanel({ jobs, onRefresh }: { jobs: JobSummary[]; onRefresh: () => Promise<void> }) {
+  const visibleJobs = useMemo(
+    () =>
+      jobs
+        .filter((job) => isAiProgressJob(job) && (isRunningJobStatus(job.status) || job.status === "failed"))
+        .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
+        .slice(0, 6),
+    [jobs]
+  );
+  const runningJobs = visibleJobs.filter((job) => isRunningJobStatus(job.status));
+  const failedCount = visibleJobs.filter((job) => job.status === "failed").length;
+
+  if (visibleJobs.length === 0) return null;
+
+  const activeCount = runningJobs.length;
+  const hasActiveJobs = activeCount > 0;
+
+  return (
+    <section className="mb-4 rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-card)] p-4 shadow-card" aria-label="AI 任务进度">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            {hasActiveJobs ? <Loader2 className="animate-spin text-[var(--accent)]" size={17} /> : <AlertCircle className="text-[var(--warning)]" size={17} />}
+            <h3 className="text-base font-semibold leading-6 text-[var(--text-primary)]">AI 任务进度</h3>
+          </div>
+          <p className="mt-1 text-sm leading-5 text-[var(--text-secondary)]">
+            {hasActiveJobs
+              ? `正在执行 ${activeCount} 个生成任务，工作台每 3 秒刷新一次，事件流每 2 秒同步。`
+              : `${failedCount} 个生成任务需要处理。`}
+          </p>
+        </div>
+        <span className={cn("ds-pill", hasActiveJobs ? "ds-pill-teal" : "ds-pill-yellow")}>{hasActiveJobs ? "正在工作" : "需要重试"}</span>
+      </div>
+
+      <div className="mt-4 grid gap-3">
+        {visibleJobs.map((job) => (
+          <AiJobProgressItem key={job.id} job={job} onRefresh={onRefresh} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AiJobProgressItem({ job, onRefresh }: { job: JobSummary; onRefresh: () => Promise<void> }) {
+  const [events, setEvents] = useState<JobEvent[]>([]);
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
+  const latestSequenceRef = useRef(0);
+  const running = isRunningJobStatus(job.status);
+
+  useEffect(() => {
+    let mounted = true;
+    latestSequenceRef.current = 0;
+
+    async function loadInitialEvents() {
+      const result = await fetchJob(job.id);
+      if (!mounted || !result.ok) return;
+      const initialEvents = result.data.events.map((item) => item.event);
+      latestSequenceRef.current = initialEvents.reduce((max, event) => Math.max(max, Number(event.sequence ?? 0)), 0);
+      setEvents(initialEvents.slice(-8));
+    }
+
+    void loadInitialEvents();
+
+    if (!running) {
+      return () => {
+        mounted = false;
+      };
+    }
+
+    const unsubscribe = subscribeToJobEvents(
+      job.id,
+      latestSequenceRef.current,
+      (event) => {
+        latestSequenceRef.current = Math.max(latestSequenceRef.current, Number(event.sequence ?? 0));
+        setEvents((current) => [...current, event].slice(-8));
+      },
+      () => undefined
+    );
+
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, [job.id, running]);
+
+  async function handleRetry() {
+    setRetrying(true);
+    setRetryError(null);
+    try {
+      const result = await retryJob(job.id);
+      if (result.ok) {
+        await onRefresh();
+      } else {
+        setRetryError(result.error.message);
+      }
+    } finally {
+      setRetrying(false);
+    }
+  }
+
+  const latestEvents = events
+    .filter((event) => event.title || event.userMessage)
+    .slice(-3)
+    .reverse();
+  const progressTone = jobProgressTone(job.status);
+
+  return (
+    <div className="rounded-card-sm border border-[var(--border-soft)] bg-[var(--surface-soft)] p-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            {running ? <Loader2 className="animate-spin text-[var(--accent)]" size={16} /> : job.status === "succeeded" ? <CheckCircle2 className="text-[var(--success)]" size={16} /> : <AlertCircle className="text-[var(--warning)]" size={16} />}
+            <p className="text-sm font-semibold leading-5 text-[var(--text-primary)]">{jobTypeDisplayName(job.type)}</p>
+            <span className={cn("ds-pill", progressTone)}>{jobStatusDisplayName(job.status)}</span>
+          </div>
+          <p className="mt-1 text-sm leading-5 text-[var(--text-secondary)]">{sanitizeJobUserMessage(job.userMessage) || job.title}</p>
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-2 text-right text-xs leading-5 text-[var(--text-secondary)]">
+          <div>
+            <div>{formatJobElapsed(job)}</div>
+            <div>更新 {formatDateTime(job.updatedAt)}</div>
+          </div>
+          {job.status === "failed" && (
+            <Button size="sm" variant="secondary" type="button" onClick={handleRetry} disabled={retrying}>
+              {retrying ? <Loader2 className="animate-spin" size={14} /> : <RefreshCcw size={14} />}
+              重试
+            </Button>
+          )}
+        </div>
+      </div>
+      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/70">
+        <div className={cn("h-full rounded-full transition-all", running ? "w-1/3 animate-pulse bg-[var(--accent)]" : "w-full bg-[var(--warning)]")} />
+      </div>
+      {retryError && <p className="mt-2 text-xs leading-5 text-[var(--warning)]">{retryError}</p>}
+      {latestEvents.length > 0 && (
+        <div className="mt-3 grid gap-1.5 border-t border-[var(--border-soft)] pt-3">
+          {latestEvents.map((event) => (
+            <div key={`${event.sequence ?? event.id ?? event.type}-${event.at}`} className="flex gap-2 text-xs leading-5 text-[var(--text-secondary)]">
+              <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--accent)]/70" />
+              <span className="min-w-0">
+                <span className="font-semibold text-[var(--text-primary)]">{jobEventDisplayName(event.type)}</span>
+                {event.title ? ` · ${sanitizeJobUserMessage(event.title)}` : ""}
+                {event.userMessage ? ` · ${sanitizeJobUserMessage(event.userMessage)}` : ""}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function isAiProgressJob(job: JobSummary) {
+  return [
+    "requirement_structuring",
+    "asset_understanding",
+    "creative_direction_generation",
+    "creative_expansion_generation",
+    "atmosphere_image_generation",
+    "storyboard_split_generation",
+    "production_reference_image_generation",
+    "storyboard_image_generation",
+    "storyboard_video_generation",
+    "proposal_generation",
+    "quote_contract_generation",
+    "document_export",
+    "feishu_delivery",
+  ].includes(job.type);
+}
+
+function isRunningJobStatus(status: JobSummary["status"]) {
+  return status === "queued" || status === "processing" || status === "retrying";
+}
+
+function jobTypeDisplayName(type: JobSummary["type"]) {
+  const labels: Record<JobSummary["type"], string> = {
+    requirement_structuring: "Brief 结构化",
+    asset_understanding: "素材解析",
+    tag_scoring: "标签评分",
+    creative_direction_generation: "创意方向卡片",
+    creative_expansion_generation: "故事与场景生成",
+    atmosphere_image_generation: "视觉图片生成",
+    storyboard_split_generation: "文字分镜拆解",
+    production_reference_image_generation: "人物场景设定图",
+    storyboard_image_generation: "分镜图片生成",
+    storyboard_video_generation: "AI 视频生成",
+    proposal_generation: "提案生成",
+    quote_contract_generation: "报价合同草稿",
+    document_export: "文档导出",
+    feishu_delivery: "飞书交付",
+  };
+  return labels[type] ?? "AI 任务";
+}
+
+function jobStatusDisplayName(status: JobSummary["status"]) {
+  if (status === "queued") return "排队中";
+  if (status === "processing") return "生成中";
+  if (status === "retrying") return "自动重试";
+  if (status === "succeeded") return "已完成";
+  if (status === "failed") return "失败";
+  return "已取消";
+}
+
+function jobProgressTone(status: JobSummary["status"]) {
+  if (status === "succeeded") return "ds-pill-teal";
+  if (status === "failed" || status === "cancelled") return "ds-pill-yellow";
+  if (status === "retrying") return "ds-pill-pink";
+  return "bg-[var(--surface-card)] text-[var(--accent)]";
+}
+
+function jobEventDisplayName(type: JobEvent["type"]) {
+  if (type === "job.started") return "任务开始";
+  if (type === "job.queued") return "已入队";
+  if (type === "job.retrying") return "等待重试";
+  if (type === "job.completed") return "任务完成";
+  if (type === "job.failed") return "任务失败";
+  if (type === "step.started") return "步骤开始";
+  if (type === "step.completed") return "步骤完成";
+  if (type === "step.failed") return "步骤失败";
+  if (type === "tool.started") return "调用开始";
+  if (type === "tool.completed") return "调用完成";
+  if (type === "tool.failed") return "调用失败";
+  if (type === "artifact.created") return "产物已保存";
+  if (type === "artifact.patch") return "产物已更新";
+  if (type === "stage.updated") return "阶段已更新";
+  if (type === "delivery.updated") return "交付已更新";
+  if (type === "approval.required") return "等待确认";
+  return "任务事件";
+}
+
+function formatJobElapsed(job: JobSummary) {
+  const started = Date.parse(job.createdAt);
+  const ended = isRunningJobStatus(job.status) ? Date.now() : Date.parse(job.updatedAt);
+  if (!Number.isFinite(started) || !Number.isFinite(ended)) return "";
+  const totalSeconds = Math.max(0, Math.round((ended - started) / 1000));
+  if (totalSeconds < 60) return `${totalSeconds} 秒`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return seconds > 0 ? `${minutes} 分 ${seconds} 秒` : `${minutes} 分钟`;
+}
+
+function sanitizeJobUserMessage(value: string | null | undefined) {
+  if (!value) return "";
+  return value.replace(/豆包模型|豆包|OpenAI|Seedream|火山方舟/g, "AI").trim();
 }

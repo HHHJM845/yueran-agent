@@ -145,7 +145,7 @@ export async function runCreativeDirectionGenerationJob(jobId: string, options: 
 
     const response = await callArkJson({
       model: env.ARK_TEXT_STRUCTURING_MODEL,
-      timeoutMs: 180_000,
+      timeoutMs: 300_000,
       maxOutputTokens: 3000,
       telemetry: {
         projectId: job.projectId,

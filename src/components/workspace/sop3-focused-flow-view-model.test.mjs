@@ -299,7 +299,7 @@ test("creative direction generation returns card story outlines in one model cal
   const directionGenerationSource = readFileSync(new URL("../../server/use-cases/generate-creative-directions.ts", import.meta.url), "utf8");
   const expansionGenerationSource = readFileSync(new URL("../../server/use-cases/generate-creative-expansions.ts", import.meta.url), "utf8");
   const round1EnqueueStart = expansionGenerationSource.indexOf("export async function enqueueCreativeExpansionGeneration");
-  const round1EnqueueEnd = expansionGenerationSource.indexOf("export async function enqueueRound2DeepeningOutlineGeneration", round1EnqueueStart);
+  const round1EnqueueEnd = expansionGenerationSource.indexOf("export async function enqueueRound2DeepeningScriptGeneration", round1EnqueueStart);
   const round1RunStart = expansionGenerationSource.indexOf("await updateJobStatus(jobId", expansionGenerationSource.indexOf("export async function runCreativeExpansionGenerationJob"));
   const round1RunEnd = expansionGenerationSource.indexOf("try {", round1RunStart);
   assert.notEqual(round1EnqueueStart, -1);
@@ -311,7 +311,7 @@ test("creative direction generation returns card story outlines in one model cal
 
   assert.match(directionGenerationSource, /storyOutline/);
   assert.match(directionGenerationSource, /createCreativeExpansions/);
-  assert.match(directionGenerationSource, /timeoutMs: 180_000/);
+  assert.match(directionGenerationSource, /timeoutMs: 300_000/);
   assert.match(directionGenerationSource, /简短故事梗概/);
   assert.match(directionGenerationSource, /savedDirections\.map\(\(direction, index\)[\s\S]*storyOutlines\[index\]/);
   assert.doesNotMatch(directionGenerationSource, /runCreativeExpansionGenerationJob|enqueueCreativeExpansionGeneration|generateRound1StoryOutlinesForDirections/);
@@ -491,21 +491,18 @@ test("buildSop3FocusedFlow does not count legacy Round 1 outlines as Round 2 sto
           decisionPayload: { retainedDirectionIds: ["direction-1"] },
         }),
       ],
-      artifacts: [
-        artifact("outline-1", "direction-1", "round2_deepening_outline"),
-        artifact("script-1", "direction-1", "round2_deepening_script", "confirmed"),
-      ],
+      artifacts: [artifact("script-1", "direction-1", "round2_deepening_script", "confirmed")],
       expansions: legacyRound1Expansions,
     })
   );
 
   assert.equal(view.currentTask.key, "deepen_confirmed_direction");
   assert.equal(view.primaryAction.key, "split_deepening_storyboard");
-  assert.match(view.currentTask.title, /精选 4 个精彩场景/);
+  assert.match(view.currentTask.title, /精选 2 个精彩场景/);
   assert.equal(view.progressNodes.find((node) => node.key === "direction_deepening").summary, "完整故事 1/1");
 });
 
-test("buildSop3FocusedFlow requires direction deepening story, confirmation, then split before Round 2 images", () => {
+test("buildSop3FocusedFlow generates direction deepening story directly before confirmation and Round 2 images", () => {
   const selected = fourDirections.map((item, index) => ({ ...item, isSelected: index === 0 }));
   const round1 = round("round-1", 1, ["direction-1"], {
     clientReviewTaskId: "review-1",
@@ -521,23 +518,15 @@ test("buildSop3FocusedFlow requires direction deepening story, confirmation, the
     ],
   };
 
-  const outlineReady = buildSop3FocusedFlow(
-    flowInput({
-      ...base,
-      artifacts: [artifact("outline-1", "direction-1", "round2_deepening_outline")],
-    })
-  );
-  assert.equal(outlineReady.primaryAction.key, "generate_deepening_script");
-  assert.match(outlineReady.currentTask.title, /方向深化故事/);
-  assert.match(outlineReady.currentTask.description, /700-800 字/);
+  const noDeepeningStory = buildSop3FocusedFlow(flowInput(base));
+  assert.equal(noDeepeningStory.primaryAction.key, "generate_deepening_script");
+  assert.match(noDeepeningStory.currentTask.title, /方向深化故事/);
+  assert.match(noDeepeningStory.currentTask.description, /700-800 字/);
 
   const scriptDraft = buildSop3FocusedFlow(
     flowInput({
       ...base,
-      artifacts: [
-        artifact("outline-1", "direction-1", "round2_deepening_outline"),
-        artifact("script-1", "direction-1", "round2_deepening_script", "draft"),
-      ],
+      artifacts: [artifact("script-1", "direction-1", "round2_deepening_script", "draft")],
     })
   );
   assert.equal(scriptDraft.primaryAction.key, "confirm_deepening_script");
@@ -546,23 +535,19 @@ test("buildSop3FocusedFlow requires direction deepening story, confirmation, the
   const scriptConfirmed = buildSop3FocusedFlow(
     flowInput({
       ...base,
-      artifacts: [
-        artifact("outline-1", "direction-1", "round2_deepening_outline"),
-        artifact("script-1", "direction-1", "round2_deepening_script", "confirmed"),
-      ],
+      artifacts: [artifact("script-1", "direction-1", "round2_deepening_script", "confirmed")],
     })
   );
   assert.equal(scriptConfirmed.primaryAction.key, "split_deepening_storyboard");
-  assert.match(scriptConfirmed.currentTask.title, /精选.*4/);
+  assert.match(scriptConfirmed.currentTask.title, /精选.*2/);
 
   const splitReady = buildSop3FocusedFlow(
     flowInput({
       ...base,
-      expansions: [1, 2, 3, 4].map((index) => expansion(`expansion-${index}`, "direction-1", index)),
+      expansions: [1, 2].map((index) => expansion(`expansion-${index}`, "direction-1", index)),
       artifacts: [
-        artifact("outline-1", "direction-1", "round2_deepening_outline"),
         artifact("script-1", "direction-1", "round2_deepening_script", "confirmed"),
-        round2SplitArtifact("split-1", "direction-1", ["expansion-1", "expansion-2", "expansion-3", "expansion-4"]),
+        round2SplitArtifact("split-1", "direction-1", ["expansion-1", "expansion-2"]),
       ],
     })
   );
@@ -576,7 +561,7 @@ test("buildSop3FocusedFlow does not count Round 1 direction style images as Roun
     clientReviewTaskId: "review-1",
     retainedDirectionIds: ["direction-1"],
   });
-  const deepeningExpansions = [1, 2, 3, 4].map((index) => expansion(`expansion-${index}`, "direction-1", index));
+  const deepeningExpansions = [1, 2].map((index) => expansion(`expansion-${index}`, "direction-1", index));
   const view = buildSop3FocusedFlow(
     flowInput({
       directions: selected,
@@ -587,7 +572,6 @@ test("buildSop3FocusedFlow does not count Round 1 direction style images as Roun
         }),
       ],
       artifacts: [
-        artifact("outline-1", "direction-1", "round2_deepening_outline"),
         artifact("script-1", "direction-1", "round2_deepening_script", "confirmed"),
         round2SplitArtifact("split-1", "direction-1", deepeningExpansions.map((item) => item.id)),
       ],
@@ -601,7 +585,7 @@ test("buildSop3FocusedFlow does not count Round 1 direction style images as Roun
   );
 
   assert.equal(view.primaryAction.key, "generate_deepening_assets");
-  assert.equal(view.currentTask.statusLabel, "深化视觉图 0/4");
+  assert.equal(view.currentTask.statusLabel, "深化视觉图 0/2");
 });
 
 test("buildSop3FocusedFlow keeps deepening generation action after materials are complete", () => {
@@ -610,7 +594,7 @@ test("buildSop3FocusedFlow keeps deepening generation action after materials are
     clientReviewTaskId: "review-1",
     retainedDirectionIds: ["direction-1"],
   });
-  const deepeningExpansions = [1, 2, 3, 4].map((index) => expansion(`expansion-${index}`, "direction-1", index));
+  const deepeningExpansions = [1, 2].map((index) => expansion(`expansion-${index}`, "direction-1", index));
   const view = buildSop3FocusedFlow(
     flowInput({
       directions: selected,
@@ -621,7 +605,6 @@ test("buildSop3FocusedFlow keeps deepening generation action after materials are
         }),
       ],
       artifacts: [
-        artifact("outline-1", "direction-1", "round2_deepening_outline"),
         artifact("script-1", "direction-1", "round2_deepening_script", "confirmed"),
         round2SplitArtifact("split-1", "direction-1", deepeningExpansions.map((item) => item.id)),
       ],

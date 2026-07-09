@@ -25,7 +25,6 @@ export type Sop3PrimaryActionKey =
   | "generate_round_1_materials"
   | "send_round_1_review"
   | "refresh_client_feedback"
-  | "generate_deepening_outline"
   | "generate_deepening_script"
   | "confirm_deepening_script"
   | "split_deepening_storyboard"
@@ -95,6 +94,7 @@ const ROUND_1_STYLE_VARIANTS = [
   { key: "pixar_3d", label: "三维皮克斯风格" },
   { key: "realistic", label: "写实风格" },
 ] as const;
+const ROUND_2_DEEPENING_SCENE_COUNT = 2;
 
 export function buildSop3FocusedFlow(input: Sop3FocusedFlowInput): Sop3FocusedFlowView {
   const sortedDirections = [...input.directions].sort((left, right) => left.sortOrder - right.sortOrder);
@@ -140,7 +140,7 @@ export function buildSop3FocusedFlow(input: Sop3FocusedFlowInput): Sop3FocusedFl
     directions: focusedDirections,
     expansions: round2StoryboardExpansions,
     generatedImages: input.generatedImages,
-    requiredSceneCount: 4,
+    requiredSceneCount: ROUND_2_DEEPENING_SCENE_COUNT,
     candidateCountPerScene: 1,
   });
   const round2DeepeningStats = buildRound2DeepeningStats({
@@ -311,7 +311,7 @@ export function buildSop3FocusedFlow(input: Sop3FocusedFlowInput): Sop3FocusedFl
       currentTask = {
         key: "deepen_confirmed_direction",
         title: "生成方向深化故事",
-        description: "基于甲方保留方向直接生成 700-800 字完整故事。系统会自动补齐必要上下文，人工确认后再精选 4 个精彩场景用于生图。",
+        description: `基于甲方保留方向直接生成 700-800 字完整故事。系统会自动补齐必要上下文，人工确认后再精选 ${ROUND_2_DEEPENING_SCENE_COUNT} 个精彩场景用于生图。`,
         statusLabel: `完整故事 ${round2DeepeningStats.scriptCount}/${focusedDirections.length}`,
       };
       primaryAction = {
@@ -324,39 +324,39 @@ export function buildSop3FocusedFlow(input: Sop3FocusedFlowInput): Sop3FocusedFl
       currentTask = {
         key: "deepen_confirmed_direction",
         title: "人工确认完整故事",
-        description: "请人工确认完整故事。确认后才能从故事中精选 4 个最适合生成图片的精彩场景。",
+        description: `请人工确认完整故事。确认后才能从故事中精选 ${ROUND_2_DEEPENING_SCENE_COUNT} 个最适合生成图片的精彩场景。`,
         statusLabel: `已确认 ${round2DeepeningStats.confirmedScriptCount}/${focusedDirections.length}`,
       };
       primaryAction = {
         key: "confirm_deepening_script",
         label: "确认完整故事",
-        description: "确认当前完整故事可作为精选四个精彩场景的依据。",
+        description: `确认当前完整故事可作为精选 ${ROUND_2_DEEPENING_SCENE_COUNT} 个精彩场景的依据。`,
         disabledReason: input.canEdit ? null : "当前角色不能确认完整故事。",
       };
     } else if (!round2DeepeningStats.hasAllStoryboardScenes) {
       currentTask = {
         key: "deepen_confirmed_direction",
-        title: "精选 4 个精彩场景",
-        description: "从已确认完整故事中选出 4 个最适合生成图片的精彩场景，再分别生成深化视觉图。",
+        title: `精选 ${ROUND_2_DEEPENING_SCENE_COUNT} 个精彩场景`,
+        description: `从已确认完整故事中选出 ${ROUND_2_DEEPENING_SCENE_COUNT} 个最适合生成图片的精彩场景，再分别生成深化视觉图。`,
         statusLabel: `精彩场景 ${round2MaterialStats.storyCardCount}/${round2MaterialStats.requiredStoryCardCount}`,
       };
       primaryAction = {
         key: "split_deepening_storyboard",
-        label: "精选 4 个精彩场景",
-        description: "系统会基于已确认完整故事选出四个可生图的精彩场景。",
+        label: `精选 ${ROUND_2_DEEPENING_SCENE_COUNT} 个精彩场景`,
+        description: `系统会基于已确认完整故事选出 ${ROUND_2_DEEPENING_SCENE_COUNT} 个可生图的精彩场景。`,
         disabledReason: input.canGenerate ? null : "当前角色不能精选精彩场景。",
       };
     } else {
       currentTask = {
         key: "deepen_confirmed_direction",
         title: "生成深化视觉图",
-        description: "完整故事已确认并精选 4 个精彩场景。现在为每个场景生成 1 张深化视觉图。",
+        description: `完整故事已确认并精选 ${ROUND_2_DEEPENING_SCENE_COUNT} 个精彩场景。现在为每个场景生成 1 张深化视觉图。`,
         statusLabel: round2MaterialStats.isComplete ? "已补齐" : `深化视觉图 ${round2MaterialStats.generatedImageCount}/${round2MaterialStats.requiredImageCount}`,
       };
       primaryAction = {
         key: "generate_deepening_assets",
         label: round2MaterialStats.hasAnyMaterial ? "继续补齐深化视觉图" : "生成深化视觉图",
-        description: "为已精选的 4 个精彩场景分别生成深化视觉图。",
+        description: `为已精选的 ${ROUND_2_DEEPENING_SCENE_COUNT} 个精彩场景分别生成深化视觉图。`,
         disabledReason: input.canGenerate ? null : "当前角色不能生成深化视觉图。",
       };
     }
@@ -524,10 +524,8 @@ type Round1StoryOutlineStats = {
 };
 
 type Round2DeepeningStats = {
-  outlineCount: number;
   scriptCount: number;
   confirmedScriptCount: number;
-  hasAllOutlines: boolean;
   hasAllScripts: boolean;
   hasAllConfirmedScripts: boolean;
   hasAllStoryboardScenes: boolean;
@@ -548,9 +546,6 @@ function buildRound2DeepeningStats(input: {
   artifacts: ArtifactView[];
   expansions: CreativeExpansionView[];
 }): Round2DeepeningStats {
-  const outlineCount = input.directions.filter((direction) =>
-    Boolean(findLatestSop3Artifact(input.artifacts, direction.id, "round2_deepening_outline"))
-  ).length;
   const scriptCount = input.directions.filter((direction) =>
     Boolean(findLatestSop3Artifact(input.artifacts, direction.id, "round2_deepening_script"))
   ).length;
@@ -558,18 +553,16 @@ function buildRound2DeepeningStats(input: {
     const artifact = findLatestSop3Artifact(input.artifacts, direction.id, "round2_deepening_script");
     return artifact?.status === "confirmed";
   }).length;
-  const directionsWithFourScenes = input.directions.filter(
-    (direction) => input.expansions.filter((expansion) => expansion.directionId === direction.id).length >= 4
+  const directionsWithEnoughScenes = input.directions.filter(
+    (direction) => input.expansions.filter((expansion) => expansion.directionId === direction.id).length >= ROUND_2_DEEPENING_SCENE_COUNT
   ).length;
 
   return {
-    outlineCount,
     scriptCount,
     confirmedScriptCount,
-    hasAllOutlines: input.directions.length > 0 && outlineCount === input.directions.length,
     hasAllScripts: input.directions.length > 0 && scriptCount === input.directions.length,
     hasAllConfirmedScripts: input.directions.length > 0 && confirmedScriptCount === input.directions.length,
-    hasAllStoryboardScenes: input.directions.length > 0 && directionsWithFourScenes === input.directions.length,
+    hasAllStoryboardScenes: input.directions.length > 0 && directionsWithEnoughScenes === input.directions.length,
   };
 }
 
