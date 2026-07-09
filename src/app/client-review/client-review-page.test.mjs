@@ -117,10 +117,36 @@ test("client review page renders project archive and same-series version compari
   assert.match(source, /当前版本 vs 上一版本/);
   assert.match(source, /版本 A/);
   assert.match(source, /版本 B/);
-  assert.match(source, /该节点完整内容对比将在后续版本提供/);
   assert.match(source, /历史版本只读/);
+  assert.match(source, /loadReviewVersionItems/);
+  assert.match(source, /\/api\/client-review\/\$\{token\}\/versions\/\$\{taskId\}/);
   assert.doesNotMatch(source, /审核链接/);
   assert.doesNotMatch(source, /验证码/);
+});
+
+test("client review archive compares image and video version snapshots", () => {
+  const compare = componentSource("ClientReviewVersionCompare");
+  const snapshot = componentSource("ReviewVersionSnapshot");
+  const archiveRow = componentSource("ArchiveVersionRow");
+  const readOnlyCard = componentSource("ReadOnlyReviewItemCard");
+
+  assert.match(compare, /ReviewVersionSnapshot[\s\S]*version=\{leftVersion\}[\s\S]*taskId=\{leftVersion\.taskId\}/);
+  assert.match(compare, /ReviewVersionSnapshot[\s\S]*version=\{rightVersion\}[\s\S]*taskId=\{rightVersion\.taskId\}/);
+  assert.match(compare, /grid gap-4 md:grid-cols-2/);
+  assert.doesNotMatch(compare, /canCompareText/);
+  assert.doesNotMatch(compare, /该节点完整内容对比将在后续版本提供/);
+  assert.match(snapshot, /loadReviewVersionItems\(token, taskId, verificationCode\)/);
+  assert.match(snapshot, /正在读取这个历史版本的完整内容/);
+  assert.match(snapshot, /暂时无法读取这个历史版本/);
+  assert.match(snapshot, /grid gap-3 sm:grid-cols-2/);
+  assert.match(archiveRow, /ReviewVersionSnapshot[\s\S]*taskId=\{version\.taskId\}/);
+  assert.doesNotMatch(archiveRow, /该节点完整内容对比将在后续版本提供/);
+  assert.match(readOnlyCard, /item\.itemType === "proposal"[\s\S]*CreativeProposalReviewItem/);
+  assert.match(readOnlyCard, /item\.itemType === "reference_asset"[\s\S]*GenericReviewItemCard/);
+  assert.match(readOnlyCard, /item\.itemType === "storyboard_shot_image"[\s\S]*GenericReviewItemCard/);
+  assert.match(readOnlyCard, /item\.itemType === "review_cut_video"[\s\S]*ReadOnlyReviewVideoCard/);
+  assert.match(source, /<video src=\{videoUrl\} controls/);
+  assert.doesNotMatch(source, /该节点完整内容对比将在后续版本提供/);
 });
 
 test("client review archive uses the approved status labels", () => {

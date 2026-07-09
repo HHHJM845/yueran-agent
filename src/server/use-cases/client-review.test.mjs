@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+process.env.ALIYUN_OSS_REGION ??= "oss-cn-test";
+process.env.ALIYUN_OSS_ENDPOINT ??= "https://oss-cn-test.aliyuncs.com";
+process.env.ALIYUN_OSS_BUCKET ??= "yueran-test";
+process.env.ALIYUN_OSS_ACCESS_KEY_ID ??= "test-access-key";
+process.env.ALIYUN_OSS_ACCESS_KEY_SECRET ??= "test-secret";
+
 test("normalizes generic review metadata for SOP scenes", async () => {
   const { normalizeClientReviewMetadata } = await import("./client-review.ts");
 
@@ -80,15 +86,19 @@ test("client review links require server-side key unlock before exposing payload
   const useCaseSource = readFileSync(new URL("./client-review.ts", import.meta.url), "utf8");
   const routeSource = readFileSync(new URL("../../app/api/client-review/[token]/route.ts", import.meta.url), "utf8");
   const unlockRouteSource = readFileSync(new URL("../../app/api/client-review/[token]/unlock/route.ts", import.meta.url), "utf8");
+  const versionRouteSource = readFileSync(new URL("../../app/api/client-review/[token]/versions/[taskId]/route.ts", import.meta.url), "utf8");
 
   assert.match(routeSource, /loadClientReviewUnlockPrompt/);
   assert.doesNotMatch(routeSource, /loadClientReviewByToken/);
   assert.match(unlockRouteSource, /unlockClientReviewByToken/);
+  assert.match(versionRouteSource, /loadClientReviewVersionByToken/);
+  assert.match(versionRouteSource, /x-client-review-code/);
   assert.match(useCaseSource, /getClientReviewSecretByTaskId/);
   assert.match(useCaseSource, /hashSecretWithSalt/);
   assert.match(useCaseSource, /timingSafeEqual/);
   assert.match(useCaseSource, /assertClientReviewVerificationCode\(baseTask\.id/);
   assert.match(useCaseSource, /loadClientReviewContent\(baseTask\)/);
+  assert.match(useCaseSource, /task\.projectId !== baseTask\.projectId/);
 });
 
 test("new client review links include the verification code hash fragment", async () => {
@@ -156,6 +166,93 @@ test("client review archive groups nodes in business order and keeps all non-dra
   assert.match(useCaseSource, /items\?: ExternalReviewItem\[\]/);
   assert.match(useCaseSource, /isTextNode/);
   assert.doesNotMatch(useCaseSource, /isExternallyVisibleReviewTask\(task\)[\s\S]*revoked/);
+});
+
+test("non-text client review archive versions hydrate from frozen item metadata", async () => {
+  const { hydrateFrozenReviewItems } = await import("./client-review.ts");
+  const { readFileSync } = await import("node:fs");
+  const useCaseSource = readFileSync(new URL("./client-review.ts", import.meta.url), "utf8");
+  const frozenHydrateSource = useCaseSource.slice(
+    useCaseSource.indexOf("export function hydrateFrozenReviewItems"),
+    useCaseSource.indexOf("async function hydrateClientReviewItems"),
+  );
+
+  const frozenItems = hydrateFrozenReviewItems(
+    {
+      id: "task-old",
+      projectId: "project-1",
+      reviewType: "project_proposal",
+      reviewScene: "creative_round_1",
+      targetScopeType: "proposal",
+      targetScopeId: "round-1",
+    },
+    [
+      {
+        id: "item-1",
+        reviewTaskId: "task-old",
+        projectId: "project-1",
+        itemType: "proposal",
+        itemId: "concept-1",
+        itemLabel: "旧版故事场景",
+        decision: "pending",
+        score: null,
+        feedback: "",
+        metadata: {
+          candidateImages: [
+            {
+              id: "old-image",
+              ossUrl: "https://yueran-test.oss-cn-test.aliyuncs.com/projects/project-1/generated-images/old-image/atmosphere.png",
+              imageUrl: "https://expired.example.com/signed-newer-image.png",
+              prompt: "旧版画面",
+              status: "succeeded",
+              sortOrder: 1,
+            },
+          ],
+        },
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        id: "item-2",
+        reviewTaskId: "task-old",
+        projectId: "project-1",
+        itemType: "storyboard_shot_image",
+        itemId: "shot-1",
+        itemLabel: "1-1-1",
+        decision: "pending",
+        score: null,
+        feedback: "",
+        metadata: {
+          imageUrl: "https://yueran-test.oss-cn-test.aliyuncs.com/projects/project-1/storyboard-images/shot-1.png",
+        },
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        id: "item-3",
+        reviewTaskId: "task-old",
+        projectId: "project-1",
+        itemType: "review_cut_video",
+        itemId: "cut-1",
+        itemLabel: "A copy v1",
+        decision: "pending",
+        score: null,
+        feedback: "",
+        metadata: {
+          videoUrl: "https://yueran-test.oss-cn-test.aliyuncs.com/projects/project-1/review-cuts/a-copy-v1.mp4",
+        },
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ],
+  );
+
+  const candidate = frozenItems[0].metadata.candidateImages[0];
+  assert.equal(candidate.ossUrl, "https://yueran-test.oss-cn-test.aliyuncs.com/projects/project-1/generated-images/old-image/atmosphere.png");
+  assert.match(candidate.imageUrl, /OSSAccessKeyId=test-access-key/);
+  assert.match(candidate.imageUrl, /generated-images\/old-image\/atmosphere\.png/);
+  assert.doesNotMatch(candidate.imageUrl, /signed-newer-image/);
+  assert.match(String(frozenItems[1].metadata.imageUrl), /storyboard-images\/shot-1\.png/);
+  assert.match(String(frozenItems[2].metadata.videoUrl), /review-cuts\/a-copy-v1\.mp4/);
+  assert.match(useCaseSource, /function summarizeClientReviewItemMetadata[\s\S]*"ossUrl"/);
+  assert.doesNotMatch(frozenHydrateSource, /buildProjectCreativeReviewImageSource|getCreativeProposalRound|freshImages/);
 });
 
 test("brief confirmation approval auto-generates risk check after client approval", async () => {
@@ -321,6 +418,49 @@ test("creative Round 1 review items recover story content from existing outlines
 
   assert.match(items[0].metadata.storyContent, /办公室开场/);
   assert.match(items[0].metadata.previewText, /复杂流程变清晰/);
+});
+
+test("creative proposal candidate image snapshots keep durable ossUrl references", async () => {
+  const { buildCreativeProposalReviewItems } = await import("./client-review.ts");
+
+  const items = buildCreativeProposalReviewItems({
+    round: {
+      id: "round-1",
+      roundNumber: 1,
+      directionIds: ["direction-1"],
+      concepts: [
+        {
+          id: "concept-1",
+          title: "清透科技 - 二维风格",
+          directionId: "direction-1",
+          sceneIndex: 1,
+          requiredImageCount: 1,
+          description: "二维风格：用插画讲清楚效率。",
+          sourceText: "",
+          imagePrompt: "清透办公室",
+          snapshot: { directionTitle: "清透科技", styleLabel: "二维风格" },
+          images: [
+            {
+              id: "snapshot-image-1",
+              ossUrl: "https://yueran-test.oss-cn-test.aliyuncs.com/projects/project-1/generated-images/snapshot-image-1/atmosphere.png",
+              prompt: "清透办公室",
+              status: "succeeded",
+              isSelected: true,
+              sortOrder: 1,
+            },
+          ],
+        },
+      ],
+    },
+    directions: [],
+    generatedImages: [],
+    expansions: [],
+  });
+
+  const candidate = items[0].metadata.candidateImages[0];
+  assert.equal(candidate.id, "snapshot-image-1");
+  assert.equal(candidate.ossUrl, "https://yueran-test.oss-cn-test.aliyuncs.com/projects/project-1/generated-images/snapshot-image-1/atmosphere.png");
+  assert.match(candidate.imageUrl, /OSSAccessKeyId=test-access-key/);
 });
 
 test("creative Round 2 review items stay scoped to scene concepts", async () => {

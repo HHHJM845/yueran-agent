@@ -5,6 +5,7 @@ import { createReadUrlFromOssUrl } from "@/server/providers/oss";
 import {
   createClientReviewTask,
   expirePriorActiveClientReviews,
+  getClientReviewTaskById,
   getNextClientReviewVersion,
   getClientReviewSecretByTaskId,
   getClientReviewTaskByTokenHash,
@@ -352,13 +353,14 @@ export async function createReviewForStoryboardScene(input: {
         itemType: "storyboard_shot_image",
         itemId: shot.id,
         itemLabel: `${shot.shotNumber}｜${shot.visualDescription.slice(0, 60)}`,
-        metadata: {
-          shotId: shot.id,
-          shotNumber: shot.shotNumber,
-          imageId: image?.id ?? null,
-          imageUrl: image?.ossUrl ?? null,
-          visualDescription: shot.visualDescription,
-        },
+          metadata: {
+            shotId: shot.id,
+            shotNumber: shot.shotNumber,
+            imageId: image?.id ?? null,
+            ossUrl: image?.ossUrl ?? null,
+            imageUrl: image?.ossUrl ?? null,
+            visualDescription: shot.visualDescription,
+          },
       };
     }),
   });
@@ -704,6 +706,7 @@ async function buildWorkflowReviewSpec(input: {
             version: reviewCut.version,
             roundNumber: reviewCut.roundNumber,
             status: reviewCut.status,
+            ossUrl: reviewCut.videoUrl,
             videoUrl: reviewCut.videoUrl,
             durationSeconds: reviewCut.durationSeconds,
             previewText: reviewCut.description,
@@ -795,6 +798,7 @@ async function buildWorkflowReviewSpec(input: {
             shotNumber: shot.shotNumber,
             sceneId: shot.sceneId,
             imageId: image?.id ?? null,
+            ossUrl: image?.ossUrl ?? null,
             imageUrl: image?.ossUrl ?? null,
             previousDecision: previousFeedback?.status ?? null,
             previousFeedback: previousFeedback?.feedback ?? "",
@@ -937,6 +941,25 @@ export async function unlockClientReviewByToken(token: string, rawInput: unknown
   const task = await getClientReviewTaskForToken(token);
   await assertClientReviewVerificationCode(task.id, input.verificationCode);
   return loadClientReviewContent(task);
+}
+
+export async function loadClientReviewVersionByToken(token: string, taskId: string, rawInput: unknown) {
+  const input = unlockClientReviewSchema.parse(rawInput);
+  const baseTask = await getClientReviewTaskForToken(token);
+  await assertClientReviewVerificationCode(baseTask.id, input.verificationCode);
+  const task = await getClientReviewTaskById(taskId);
+  if (!task || task.projectId !== baseTask.projectId || !shouldIncludeReviewTaskInArchive(task)) {
+    throw new AppError({
+      status: 404,
+      code: "client_review_version_not_found",
+      userMessage: "没有找到这个历史审核版本。请刷新页面后重试，或联系项目团队确认入口是否仍有效。",
+    });
+  }
+  const items = await listClientReviewItems(task.id);
+  return {
+    task,
+    items: summarizeClientReviewItemsForExternal(sortExternalReviewItemsForDisplay(task, hydrateFrozenReviewItems(task, items))),
+  };
 }
 
 export async function loadClientReviewByToken(token: string) {
@@ -1132,6 +1155,7 @@ function summarizeClientReviewItemMetadata(metadata: Record<string, unknown>) {
     "concept",
     "styleLabel",
     "imageUrl",
+    "ossUrl",
     "videoUrl",
     "durationSeconds",
     "candidateImages",
@@ -1148,6 +1172,49 @@ function summarizeClientReviewItemMetadata(metadata: Record<string, unknown>) {
     if (metadata[key] !== undefined) summary[key] = metadata[key];
   }
   return summary;
+}
+
+export function hydrateFrozenReviewItems(
+  task: Pick<ClientReviewTaskView, "reviewType" | "reviewScene" | "targetScopeType" | "targetScopeId" | "projectId">,
+  items: ClientReviewItemView[],
+) {
+  void task;
+  return items.map((item) => {
+    if (item.itemType === "proposal" || item.itemType === "reference_asset") {
+      const candidateImages = readFrozenCandidateImages(item.metadata.candidateImages);
+      return {
+        ...item,
+        metadata: {
+          ...item.metadata,
+          candidateImages,
+          candidateImageCount: candidateImages.length,
+        },
+      };
+    }
+    if (item.itemType === "storyboard_shot_image") {
+      const ossUrl = readStringField(item.metadata, "ossUrl") || readStringField(item.metadata, "imageUrl");
+      return {
+        ...item,
+        metadata: {
+          ...item.metadata,
+          ossUrl: ossUrl || item.metadata.ossUrl,
+          imageUrl: ossUrl ? signFrozenMediaUrl(ossUrl, "storyboard-shot-image.png") : item.metadata.imageUrl,
+        },
+      };
+    }
+    if (item.itemType === "review_cut_video") {
+      const ossUrl = readStringField(item.metadata, "ossUrl") || readStringField(item.metadata, "videoUrl");
+      return {
+        ...item,
+        metadata: {
+          ...item.metadata,
+          ossUrl: ossUrl || item.metadata.ossUrl,
+          videoUrl: ossUrl ? signFrozenMediaUrl(ossUrl, "review-cut-video.mp4") : item.metadata.videoUrl,
+        },
+      };
+    }
+    return item;
+  });
 }
 
 async function hydrateClientReviewItems(task: {
@@ -1283,6 +1350,7 @@ function buildCreativeReviewCandidateImages(
     .slice(0, 4)
     .map((image, index) => ({
       id: image.id,
+      ossUrl: image.ossUrl,
       imageUrl: createReadUrlFromOssUrl(image.ossUrl ?? "", 60 * 60, {
         disposition: "inline",
         fileName: `creative-candidate-${image.sortOrder ?? index + 1}.png`,
@@ -1320,6 +1388,7 @@ function buildProductionSetupCandidateImages(input: {
     .slice(0, 4)
     .map((image, index) => ({
       id: image.id,
+      ossUrl: image.ossUrl,
       imageUrl: createReadUrlFromOssUrl(image.ossUrl ?? "", 60 * 60, {
         disposition: "inline",
         fileName: `production-reference-${index + 1}.png`,
@@ -1339,9 +1408,39 @@ function readCandidateImages(value: unknown) {
     .filter((item) => typeof item.imageUrl === "string" && item.imageUrl.trim());
 }
 
+function readFrozenCandidateImages(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => (item && typeof item === "object" ? (item as Record<string, unknown>) : null))
+    .filter((item): item is Record<string, unknown> => Boolean(item))
+    .map((item, index) => {
+      const ossUrl = readStringField(item, "ossUrl") || readStringField(item, "imageUrl");
+      return {
+        ...item,
+        id: readStringField(item, "id") || `candidate-${index + 1}`,
+        ossUrl: ossUrl || item.ossUrl,
+        imageUrl: ossUrl ? signFrozenMediaUrl(ossUrl, `review-candidate-${index + 1}.png`) : item.imageUrl,
+        sortOrder: readNumberField(item, "sortOrder") || index + 1,
+      };
+    })
+    .filter((item) => typeof item.imageUrl === "string" && item.imageUrl.trim());
+}
+
+function signFrozenMediaUrl(ossUrl: string, fileName: string) {
+  return createReadUrlFromOssUrl(ossUrl, 60 * 60, {
+    disposition: "inline",
+    fileName,
+  });
+}
+
 function readStringField(record: Record<string, unknown>, key: string) {
   const value = record[key];
   return typeof value === "string" ? value.trim() : "";
+}
+
+function readNumberField(record: Record<string, unknown>, key: string) {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 export async function submitClientReviewByToken(token: string, rawInput: unknown) {

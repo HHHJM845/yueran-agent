@@ -201,6 +201,21 @@ export async function getClientReviewTaskByTokenHash(accessTokenHash: string) {
   return result.rows[0] ? mapTask(result.rows[0]) : null;
 }
 
+export async function getClientReviewTaskById(taskId: string) {
+  const result = await query<ClientReviewTaskRow>(
+    `select id, project_id, module_key, review_type, target_scope_type, target_scope_id,
+            title, summary, version, status, expires_at, submitted_at, reviewed_at,
+            sop_key, review_scene, round_number, batch_number, review_payload_version,
+            payload_json, decision_payload_json, reviewer_name, reviewer_contact, feedback,
+            created_by, created_at, updated_at
+     from client_review_tasks
+     where id = $1
+     limit 1`,
+    [taskId]
+  );
+  return result.rows[0] ? mapTask(result.rows[0]) : null;
+}
+
 export async function getClientReviewSecretByTaskId(taskId: string) {
   const result = await query<{ verification_code_hash: string }>(
     `select verification_code_hash

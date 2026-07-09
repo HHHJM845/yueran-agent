@@ -269,7 +269,7 @@ export default function ClientReviewPage({ params }: { params: ClientReviewPageP
               </div>
               <span className="rounded-full border border-black/10 px-3 py-1 text-xs">{reviewStatusLabel(displayedTask.status)}</span>
             </div>
-            <ClientReviewVersionCompare archive={archive} currentTaskId={task.id} />
+            <ClientReviewVersionCompare archive={archive} currentTaskId={task.id} token={token} verificationCode={verificationCode} />
             {message && <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">{message}</div>}
             {error && <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">{error}</div>}
             <form action={submit} className="mt-6 grid gap-6">
@@ -404,7 +404,7 @@ export default function ClientReviewPage({ params }: { params: ClientReviewPageP
                 </>
               ) : null}
             </form>
-            <ProjectReviewArchive archive={archive} currentTaskId={task.id} />
+            <ProjectReviewArchive archive={archive} currentTaskId={task.id} token={token} verificationCode={verificationCode} />
           </>
         ) : null}
       </section>
@@ -470,7 +470,17 @@ function UnlockReviewGate({
   );
 }
 
-function ClientReviewVersionCompare({ archive, currentTaskId }: { archive: ClientReviewArchive[]; currentTaskId: string }) {
+function ClientReviewVersionCompare({
+  archive,
+  currentTaskId,
+  token,
+  verificationCode,
+}: {
+  archive: ClientReviewArchive[];
+  currentTaskId: string;
+  token: string | null;
+  verificationCode: string;
+}) {
   const currentSeries = findArchiveSeriesByTaskId(archive, currentTaskId);
   const versions = currentSeries?.versions ?? [];
   const currentVersion = versions.find((version) => version.taskId === currentTaskId) ?? versions[0] ?? null;
@@ -484,7 +494,6 @@ function ClientReviewVersionCompare({ archive, currentTaskId }: { archive: Clien
   const rightTaskId = rightTaskIdByCurrent[currentTaskId] || previousVersion?.taskId || "";
   const leftVersion = versions.find((version) => version.taskId === leftTaskId) ?? currentVersion;
   const rightVersion = versions.find((version) => version.taskId === rightTaskId) ?? previousVersion;
-  const canCompareText = leftVersion.isTextNode && (!rightVersion || rightVersion.isTextNode);
 
   return (
     <section className="mt-5 rounded-[24px] border border-black/10 bg-[#f7f5f0] p-4">
@@ -525,24 +534,27 @@ function ClientReviewVersionCompare({ archive, currentTaskId }: { archive: Clien
           </label>
         </div>
       </div>
-      {canCompareText ? (
-        <div className={["mt-4 grid gap-4", rightVersion ? "lg:grid-cols-2" : ""].join(" ")}>
-          <ReviewVersionSnapshot version={leftVersion} title="版本 A" />
-          {rightVersion ? <ReviewVersionSnapshot version={rightVersion} title="版本 B" /> : null}
-        </div>
-      ) : (
-        <div className="mt-4 grid gap-3 rounded-2xl border border-black/10 bg-white p-4 text-sm leading-6 text-black/60">
-          <p className="font-medium text-black">该节点完整内容对比将在后续版本提供。</p>
-          <p>
-            当前可查看版本号、生成时间、审核状态和提交反馈；图片与视频内容继续以当前审核任务区为准。
-          </p>
-        </div>
-      )}
+      <div className={rightVersion ? "mt-4 grid gap-4 md:grid-cols-2" : "mt-4 grid gap-4"}>
+        <ReviewVersionSnapshot key={leftVersion.taskId} version={leftVersion} title="版本 A" token={token} taskId={leftVersion.taskId} verificationCode={verificationCode} />
+        {rightVersion ? (
+          <ReviewVersionSnapshot key={rightVersion.taskId} version={rightVersion} title="版本 B" token={token} taskId={rightVersion.taskId} verificationCode={verificationCode} />
+        ) : null}
+      </div>
     </section>
   );
 }
 
-function ProjectReviewArchive({ archive, currentTaskId }: { archive: ClientReviewArchive[]; currentTaskId: string }) {
+function ProjectReviewArchive({
+  archive,
+  currentTaskId,
+  token,
+  verificationCode,
+}: {
+  archive: ClientReviewArchive[];
+  currentTaskId: string;
+  token: string | null;
+  verificationCode: string;
+}) {
   if (archive.length === 0) return null;
 
   return (
@@ -577,7 +589,13 @@ function ProjectReviewArchive({ archive, currentTaskId }: { archive: ClientRevie
                     {series.seriesLabel && <p className="mb-2 text-xs font-medium text-black/50">{series.seriesLabel}</p>}
                     <div className="grid gap-2">
                       {series.versions.map((version) => (
-                        <ArchiveVersionRow key={version.taskId} version={version} current={version.taskId === currentTaskId} />
+                        <ArchiveVersionRow
+                          key={version.taskId}
+                          version={version}
+                          current={version.taskId === currentTaskId}
+                          token={token}
+                          verificationCode={verificationCode}
+                        />
                       ))}
                     </div>
                   </div>
@@ -591,9 +609,21 @@ function ProjectReviewArchive({ archive, currentTaskId }: { archive: ClientRevie
   );
 }
 
-function ArchiveVersionRow({ version, current }: { version: ClientReviewArchiveVersion; current: boolean }) {
+function ArchiveVersionRow({
+  version,
+  current,
+  token,
+  verificationCode,
+}: {
+  version: ClientReviewArchiveVersion;
+  current: boolean;
+  token: string | null;
+  verificationCode: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
   return (
-    <details className="rounded-xl border border-black/10 bg-white p-3">
+    <details className="rounded-xl border border-black/10 bg-white p-3" onToggle={(event) => setExpanded(event.currentTarget.open)}>
       <summary className="cursor-pointer list-none">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2">
@@ -605,18 +635,56 @@ function ArchiveVersionRow({ version, current }: { version: ClientReviewArchiveV
         </div>
         {version.feedback && <p className="mt-2 text-xs leading-5 text-black/55">提交反馈：{version.feedback}</p>}
       </summary>
-      {version.isTextNode ? (
+      {expanded ? (
         <div className="mt-3">
-          <ReviewVersionSnapshot version={version} title={`v${version.version}`} compact />
+          <ReviewVersionSnapshot version={version} title={`v${version.version}`} compact token={token} taskId={version.taskId} verificationCode={verificationCode} />
         </div>
-      ) : (
-        <p className="mt-3 rounded-xl bg-[#f7f5f0] p-3 text-sm leading-6 text-black/55">该节点完整内容对比将在后续版本提供。</p>
-      )}
+      ) : null}
     </details>
   );
 }
 
-function ReviewVersionSnapshot({ version, title, compact = false }: { version: ClientReviewArchiveVersion; title: string; compact?: boolean }) {
+function ReviewVersionSnapshot({
+  version,
+  title,
+  compact = false,
+  token,
+  taskId,
+  verificationCode,
+}: {
+  version: ClientReviewArchiveVersion;
+  title: string;
+  compact?: boolean;
+  token?: string | null;
+  taskId?: string;
+  verificationCode?: string;
+}) {
+  const [loadedItems, setLoadedItems] = useState<{ taskId: string; items: ClientReviewItem[] } | null>(null);
+  const [itemsError, setItemsError] = useState<{ taskId: string; message: string } | null>(null);
+  const inlineItems = version.items ?? null;
+
+  useEffect(() => {
+    if (inlineItems || !token || !taskId || !verificationCode) return;
+    let cancelled = false;
+    void loadReviewVersionItems(token, taskId, verificationCode)
+      .then((items) => {
+        if (!cancelled) setLoadedItems({ taskId, items });
+      })
+      .catch((error) => {
+        if (!cancelled) setItemsError({ taskId, message: error instanceof Error ? error.message : "暂时无法读取这个历史版本。请稍后重试。" });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [inlineItems, taskId, token, verificationCode]);
+
+  const matchedLoadedItems = loadedItems && loadedItems.taskId === taskId ? loadedItems.items : null;
+  const matchedItemsError = itemsError && itemsError.taskId === taskId ? itemsError.message : null;
+  const displayItems = inlineItems ?? matchedLoadedItems ?? [];
+  const displayError = matchedItemsError;
+  const hasLoadedVersionItems = Boolean(loadedItems && loadedItems.taskId === taskId);
+  const loadingItems = Boolean(!inlineItems && token && taskId && verificationCode && !hasLoadedVersionItems && !displayError);
+
   return (
     <article className="rounded-2xl border border-black/10 bg-white p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -626,14 +694,21 @@ function ReviewVersionSnapshot({ version, title, compact = false }: { version: C
         </div>
         <span className="text-xs text-black/45">{formatReviewDate(version.generatedAt)}</span>
       </div>
-      {version.items && version.items.length > 0 ? (
-        <div className={["mt-3 grid gap-3", compact ? "" : "max-h-[720px] overflow-auto pr-1"].join(" ")}>
-          {version.items.map((item) => (
+      {loadingItems ? (
+        <div className="mt-3 flex items-center gap-2 rounded-xl bg-[#f7f5f0] p-3 text-sm leading-6 text-black/55">
+          <Loader2 className="animate-spin" size={15} />
+          正在读取这个历史版本的完整内容
+        </div>
+      ) : displayError ? (
+        <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-800">{displayError || "暂时无法读取这个历史版本。"}</p>
+      ) : displayItems.length > 0 ? (
+        <div className={compact ? "mt-3 grid gap-3" : "mt-3 grid gap-3 sm:grid-cols-2 max-h-[720px] overflow-auto pr-1"}>
+          {displayItems.map((item) => (
             <ReadOnlyReviewItemCard key={item.id} item={item} />
           ))}
         </div>
       ) : (
-        <p className="mt-3 rounded-xl bg-[#f7f5f0] p-3 text-sm leading-6 text-black/55">这个版本没有可展示的文本快照。</p>
+        <p className="mt-3 rounded-xl bg-[#f7f5f0] p-3 text-sm leading-6 text-black/55">这个版本没有可展示的审核内容。</p>
       )}
       {version.feedback && <p className="mt-3 rounded-xl bg-[#f7f5f0] p-3 text-sm leading-6 text-black/60">反馈：{version.feedback}</p>}
     </article>
@@ -645,12 +720,30 @@ function ReadOnlyReviewItemCard({ item }: { item: ClientReviewItem }) {
   if (item.itemType === "quote") return <QuoteReviewItemCard item={item} canSubmit={false} submitting={false} readOnly />;
   if (item.itemType === "contract") return <ContractReviewItemCard item={item} canSubmit={false} submitting={false} readOnly />;
   if (item.itemType === "script_direction") return <ScriptReviewItemCard item={item} canSubmit={false} submitting={false} readOnly />;
+  if (item.itemType === "proposal") return <CreativeProposalReviewItem item={item} canSubmit={false} submitting={false} readOnly />;
+  if (item.itemType === "reference_asset") return <GenericReviewItemCard item={item} canSubmit={false} submitting={false} readOnly />;
+  if (item.itemType === "storyboard_shot_image") return <GenericReviewItemCard item={item} canSubmit={false} submitting={false} variant="storyboard" readOnly />;
+  if (item.itemType === "review_cut_video") return <ReadOnlyReviewVideoCard item={item} />;
 
   return (
     <div className="rounded-2xl border border-black/10 bg-white p-3">
       <p className="text-sm font-semibold">{item.itemLabel}</p>
       <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-black/60">{reviewItemPreview(item)}</p>
     </div>
+  );
+}
+
+function ReadOnlyReviewVideoCard({ item }: { item: ClientReviewItem }) {
+  const videoUrl = readMetadataString(item.metadata, "videoUrl");
+
+  return (
+    <article className="rounded-2xl border border-black/10 bg-white p-3">
+      <div className="overflow-hidden rounded-xl bg-black">
+        {videoUrl ? <video src={videoUrl} controls className="aspect-video w-full bg-black" /> : <div className="flex aspect-video items-center justify-center text-sm text-white/60">这个视频版本暂时无法播放。</div>}
+      </div>
+      <p className="mt-3 text-sm font-semibold">{item.itemLabel}</p>
+      <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-black/60">{reviewItemPreview(item)}</p>
+    </article>
   );
 }
 
@@ -718,6 +811,16 @@ async function fetchReviewPayload<T>(url: string, init?: RequestInit): Promise<A
   } finally {
     window.clearTimeout(timeoutId);
   }
+}
+
+async function loadReviewVersionItems(token: string, taskId: string, verificationCode: string) {
+  const payload = await fetchReviewPayload<{ items: ClientReviewItem[] }>(`/api/client-review/${token}/versions/${taskId}`, {
+    headers: { "x-client-review-code": verificationCode },
+  });
+  if (!payload.ok) {
+    throw new Error(payload.error.message || "暂时无法读取这个历史版本。请稍后重试。");
+  }
+  return payload.data.items;
 }
 
 function toReviewPageError(error: unknown, fallback: string) {
@@ -859,10 +962,12 @@ function CreativeProposalReviewItem({
   item,
   canSubmit,
   submitting,
+  readOnly = false,
 }: {
   item: ClientReviewItem;
   canSubmit: boolean;
   submitting: boolean;
+  readOnly?: boolean;
 }) {
   const candidateImages = getCandidateImages(item.metadata.candidateImages);
   const sceneIndex = readMetadataNumber(item.metadata, "sceneIndex");
@@ -878,7 +983,7 @@ function CreativeProposalReviewItem({
       </div>
       <p className="mt-2 line-clamp-3 text-sm leading-6 text-black/60">{reviewItemPreview(item)}</p>
       <CandidateImageGallery images={candidateImages} title={item.itemLabel} />
-      <ReviewDecisionFields item={item} canSubmit={canSubmit} submitting={submitting} />
+      {!readOnly && <ReviewDecisionFields item={item} canSubmit={canSubmit} submitting={submitting} />}
     </article>
   );
 }
@@ -932,11 +1037,13 @@ function GenericReviewItemCard({
   canSubmit,
   submitting,
   variant = "default",
+  readOnly = false,
 }: {
   item: ClientReviewItem;
   canSubmit: boolean;
   submitting: boolean;
   variant?: "default" | "storyboard";
+  readOnly?: boolean;
 }) {
   if (item.itemType === "brief") {
     return <BriefReviewItemCard item={item} />;
@@ -994,7 +1101,7 @@ function GenericReviewItemCard({
             上一轮批注：{previousFeedback || "甲方未填写单条批注。"}
           </p>
         )}
-        <ReviewDecisionFields item={item} canSubmit={canSubmit} submitting={submitting} variant={variant} />
+        {!readOnly && <ReviewDecisionFields item={item} canSubmit={canSubmit} submitting={submitting} variant={variant} />}
       </div>
     </div>
   );
